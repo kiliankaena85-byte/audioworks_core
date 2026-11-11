@@ -1,0 +1,6 @@
+{
+  "name": "Audioworks — Аудиоролики, которые работают",
+  "description": "Аудиопродакшн полного цикла для бизнеса и амбициозных брендов. Превращаем простую озвучку в выразительный звук бренда для радио, стримингов и digital.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

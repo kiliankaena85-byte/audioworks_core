@@ -1,0 +1,80 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+
+  html {
+    font-family: var(--font-sans);
+    scroll-behavior: smooth;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+}
+
+.editorial-balance {
+  text-wrap: balance;
+}
+
+.editorial-pretty {
+  text-wrap: pretty;
+}
+
+@keyframes stream-marquee-left {
+  0% {
+    transform: translate3d(0%, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+@keyframes stream-marquee-right {
+  0% {
+    transform: translate3d(-50%, 0, 0);
+  }
+  100% {
+    transform: translate3d(0%, 0, 0);
+  }
+}
+
+.animate-stream-left {
+  animation: stream-marquee-left 34s linear infinite;
+}
+
+.animate-stream-right {
+  animation: stream-marquee-right 38s linear infinite;
+}
+
+.animate-stream-left-slow {
+  animation: stream-marquee-left 44s linear infinite;
+}
+
+@keyframes ken-burns-slow {
+  0% {
+    transform: scale3d(1, 1, 1) translate3d(0%, 0%, 0);
+  }
+  100% {
+    transform: scale3d(1.075, 1.075, 1) translate3d(-1.2%, -0.8%, 0);
+  }
+}
+
+.animate-ken-burns {
+  animation: ken-burns-slow 18s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-stream-left,
+  .animate-stream-right,
+  .animate-stream-left-slow,
+  .animate-ken-burns {
+    animation: none;
+  }
+}
