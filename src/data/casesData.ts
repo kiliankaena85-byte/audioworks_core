@@ -7,6 +7,10 @@ export type CaseId =
   | 'business-estate'
   | 'medical-clinics';
 
+export type CasePlaybackMode = 'full' | 'preview';
+
+export const DEFAULT_CASE_PREVIEW_DURATION_SEC = 4;
+
 export interface BrandCasePoster {
   id: CaseId;
   client: string;
@@ -18,6 +22,10 @@ export interface BrandCasePoster {
   audioUrl?: string;
   clipStartSec?: number;
   clipEndSec?: number;
+  /** Секунда старта короткого эфирного превью при наведении курсора */
+  previewStartSec?: number;
+  /** Длительность превью при наведении (3–5 секунд) */
+  previewDurationSec?: number;
   /** Фотографическая обложка журнального постера */
   coverImageUrl: string;
   coverImageAlt: string;
@@ -46,6 +54,8 @@ export const FLAGSHIP_STUDIO_REEL: BrandCasePoster = {
   audioUrl: AUDIOWORKS_WAV_URL,
   clipStartSec: 0,
   clipEndSec: AUDIOWORKS_TOTAL_DURATION_SEC,
+  previewStartSec: 7.2,
+  previewDurationSec: 4,
   coverImageUrl:
     'https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?auto=format&fit=crop&w=1600&q=85',
   coverImageAlt: 'Студийная консоль и микрофон продакшна Audioworks в мягком свете',
@@ -67,6 +77,8 @@ export const BRAND_CASES: BrandCasePoster[] = [
     audioUrl: AUDIOWORKS_WAV_URL,
     clipStartSec: 15.4,
     clipEndSec: 36.6,
+    previewStartSec: 15.6,
+    previewDurationSec: 4,
     coverImageUrl:
       'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?auto=format&fit=crop&w=1600&q=85',
     coverImageAlt: 'Утренний горячий кофе и ремесленная гастрономическая подача для кейса Дмитрогорский продукт',
@@ -86,6 +98,8 @@ export const BRAND_CASES: BrandCasePoster[] = [
     audioUrl: AUDIOWORKS_WAV_URL,
     clipStartSec: 36.8,
     clipEndSec: 56.4,
+    previewStartSec: 37.0,
+    previewDurationSec: 4,
     coverImageUrl:
       'https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?auto=format&fit=crop&w=1400&q=85',
     coverImageAlt: 'Современная фасадная архитектура жилого квартала бизнес-класса',
@@ -103,6 +117,8 @@ export const BRAND_CASES: BrandCasePoster[] = [
     quoteImage: '«Спокойный голос врача, с которого начинается выздоровление»',
     durationSec: 15,
     audioUrl: undefined,
+    previewStartSec: 0,
+    previewDurationSec: 4,
     coverImageUrl:
       'https://images.unsplash.com/photo-1629909613654-28e377c37b09?auto=format&fit=crop&w=1400&q=85',
     coverImageAlt: 'Светлый скандинавский интерьер многопрофильной клиники',
@@ -154,6 +170,90 @@ export function computeCaseHoverOffset(
   return {
     x: Object.is(x, -0) ? 0 : x,
     y: Object.is(y, -0) ? 0 : y,
+  };
+}
+
+export interface CasePreviewWindow {
+  startSec: number;
+  durationSec: number;
+  endSec: number;
+}
+
+/**
+ * Вычисляет точное окно короткого эфирного превью (3–5 секунд) для карточки кейса.
+ */
+export function getCasePreviewWindow(
+  item: Pick<
+    BrandCasePoster,
+    'clipStartSec' | 'durationSec' | 'previewStartSec' | 'previewDurationSec'
+  >
+): CasePreviewWindow {
+  const rawDuration = Number.isFinite(item.previewDurationSec)
+    ? Number(item.previewDurationSec)
+    : DEFAULT_CASE_PREVIEW_DURATION_SEC;
+  const boundedDuration = Math.min(5, Math.max(3, rawDuration));
+  const durationSec = Math.min(Math.max(1, item.durationSec), boundedDuration);
+  const startSec = Math.max(0, item.previewStartSec ?? item.clipStartSec ?? 0);
+  const endSec = Math.round((startSec + durationSec) * 100) / 100;
+
+  return {
+    startSec: Math.round(startSec * 100) / 100,
+    durationSec,
+    endSec,
+  };
+}
+
+/**
+ * Определяет, должно ли наведение курсора запускать короткое превью кейса:
+ * - Игнорирует касания на тач-экранах (`pointerType === 'touch'`).
+ * - Никогда не прерывает уже запущенный пользователем полный трек (`playbackMode === 'full'`).
+ */
+export function shouldStartHoverPreview(params: {
+  pointerType: string;
+  isPlaying: boolean;
+  playbackMode: CasePlaybackMode | null;
+}): boolean {
+  if (params.pointerType === 'touch') {
+    return false;
+  }
+  if (params.isPlaying && params.playbackMode === 'full') {
+    return false;
+  }
+  return true;
+}
+
+export interface CaseCardProgressState {
+  isActive: boolean;
+  mode: CasePlaybackMode | null;
+  ratio: number;
+  percent: number;
+}
+
+/**
+ * Вычисляет нормализованный прогресс воспроизведения (0..1 и 0..100%)
+ * индивидуально для конкретной карточки кейса (как для полного трека, так и для превью).
+ * Заполняется только у карточки, чей аудиоролик звучит прямо сейчас.
+ */
+export function computeCaseCardProgress(
+  caseId: CaseId,
+  isPlaying: boolean,
+  activeCaseId: CaseId | null | undefined,
+  rawProgress: number,
+  playbackMode: CasePlaybackMode | null = 'full'
+): CaseCardProgressState {
+  if (!isPlaying || activeCaseId !== caseId) {
+    return { isActive: false, mode: null, ratio: 0, percent: 0 };
+  }
+
+  const clamped = Number.isFinite(rawProgress)
+    ? Math.max(0, Math.min(1, rawProgress))
+    : 0;
+
+  return {
+    isActive: true,
+    mode: playbackMode ?? 'full',
+    ratio: Math.round(Math.max(0.02, clamped) * 1000) / 1000,
+    percent: Math.round(clamped * 100),
   };
 }
 

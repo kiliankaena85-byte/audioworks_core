@@ -2,13 +2,16 @@ import { useEffect, useState } from 'react';
 import { casePlayerEngine, CasePlayerSnapshot } from './audio/casePlayerEngine';
 import { ApproachSection } from './components/ApproachSection';
 import { CasesGallery } from './components/CasesGallery';
+import { CompactHeaderNav } from './components/CompactHeaderNav';
 import { FaqSection } from './components/FaqSection';
+import { FifteenSecDuel } from './components/FifteenSecDuel';
 import { FloatingCasePlayer } from './components/FloatingCasePlayer';
 import { Footer } from './components/Footer';
-import { HeroKoto } from './components/HeroKoto';
+import { HeroKotoLens } from './components/HeroKotoLens';
 import { LayaSimulationConsole } from './components/LayaSimulationConsole';
 import { PricingSection } from './components/PricingSection';
 import { QuickOrderDrawer } from './components/QuickOrderDrawer';
+import { TestimonialsSection } from './components/TestimonialsSection';
 import { FLAGSHIP_STUDIO_REEL, getOrderedCasesForPersona } from './data/casesData';
 import { OrderFormatId } from './data/pricingData';
 import { LayaDecisionProvider, useLayaDecision } from './engine/LayaContext';
@@ -51,7 +54,10 @@ function AudioworksExperience() {
   }, []);
 
   const orderedCases = getOrderedCasesForPersona(decision.choice);
-  const isCasePlayerVisible = caseSnap.isPlaying && caseSnap.activeCase !== null;
+  const isCasePlayerVisible =
+    caseSnap.isPlaying &&
+    caseSnap.playbackMode === 'full' &&
+    caseSnap.activeCase !== null;
 
   const handleOpenQuickOrder = (formatId: OrderFormatId | null = null) => {
     setDrawerInitialFormat(formatId);
@@ -60,19 +66,25 @@ function AudioworksExperience() {
 
   return (
     <div className="min-h-screen bg-[#F7F6F2] text-[#111111] dark:bg-[#0D0D0F] dark:text-[#F4F3EF] transition-colors duration-200">
+      <CompactHeaderNav
+        isDark={isDark}
+        onToggleTheme={() => setIsDark((prev) => !prev)}
+        isQuickOrderOpen={isQuickOrderOpen}
+        onOpenQuickOrder={() => handleOpenQuickOrder(null)}
+      />
+
       <main>
-        <HeroKoto
-          isDark={isDark}
-          onToggleTheme={() => setIsDark((prev) => !prev)}
-          isQuickOrderOpen={isQuickOrderOpen}
-          onOpenQuickOrder={() => handleOpenQuickOrder(null)}
-        />
+        <HeroKotoLens />
+        <FifteenSecDuel />
         <CasesGallery
           playerSnap={caseSnap}
           onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
+          onStartPreview={(item) => casePlayerEngine.startPreview(item)}
+          onStopPreview={(caseId) => casePlayerEngine.stopPreview(caseId)}
         />
         <ApproachSection />
         <PricingSection onSelectFormat={(formatId) => handleOpenQuickOrder(formatId)} />
+        <TestimonialsSection onOpenQuickOrder={() => handleOpenQuickOrder(null)} />
         <FaqSection />
       </main>
 

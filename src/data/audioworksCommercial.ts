@@ -136,6 +136,201 @@ export const HERO_KOTO_FRAMES: KotoShowreelFrame[] = [
 export const KOTO_MIC_WIDGET_IMAGE =
   'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?auto=format&fit=crop&w=600&q=80';
 
+export type CrashTestPhase = 'idle' | 'clutter' | 'stop_pause' | 'audioworks';
+
+export const CRASH_TEST_CLUTTER_DURATION_SEC = 4.0;
+export const CRASH_TEST_STOP_DURATION_SEC = 0.5;
+export const CRASH_TEST_TOTAL_INTRO_SEC =
+  CRASH_TEST_CLUTTER_DURATION_SEC + CRASH_TEST_STOP_DURATION_SEC;
+
+/**
+ * Вычисляет текущую фазу эфирного краш-теста по прошедшему времени с момента клика:
+ * - 0.0–4.0 сек: `clutter` (обычный рекламный блок — шум дороги и радийные штампы, линза сужена)
+ * - 4.0–4.5 сек: `stop_pause` (вспышка «СТОП. ПАУЗА 0.5 СЕК» — линза упруго раскрывается на 150%)
+ * - с 4.5 сек: `audioworks` (полноцветные сцены AudioWorks, эквалайзер и чистый шоурил)
+ */
+export function getCrashTestPhaseAtElapsed(elapsedSec: number): CrashTestPhase {
+  if (!Number.isFinite(elapsedSec) || elapsedSec < 0) {
+    return 'idle';
+  }
+  if (elapsedSec < CRASH_TEST_CLUTTER_DURATION_SEC) {
+    return 'clutter';
+  }
+  if (elapsedSec < CRASH_TEST_TOTAL_INTRO_SEC) {
+    return 'stop_pause';
+  }
+  return 'audioworks';
+}
+
+export const HERO_GREY_TRAFFIC_IMAGE =
+  'https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&w=2000&q=80';
+
+export const GREY_RADIO_MARQUEE_BASE = [
+  'выгодные условия...',
+  'скидки до конца месяца...',
+  'индивидуальный подход...',
+  'звоните прямо сейчас...',
+  'дом 42 корпус 1 скидка 20% по промокоду...',
+  'подробности об акции на сайте...',
+] as const;
+
+export interface LensShowreelFrame {
+  id: 'taste' | 'status' | 'studio';
+  indexLabel: string;
+  shortLabel: string;
+  kicker: string;
+  title: string;
+  imageUrl: string;
+  imageAlt: string;
+  fallbackGradient: string;
+  exposureClass: string;
+}
+
+/**
+ * 3 сочных полноцветных кадра мира AudioWorks внутри «Интерактивной линзы внимания»
+ */
+export const HERO_LENS_FRAMES: LensShowreelFrame[] = [
+  {
+    id: 'taste',
+    indexLabel: '01',
+    shortLabel: 'Вкус',
+    kicker: '01 · Вкус продукта',
+    title: 'Звук, который вызывает аппетит',
+    imageUrl:
+      'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=2000&q=85',
+    imageAlt: 'Тёплый утренний свет и ремесленный хлеб — кадр «Вкус продукта»',
+    fallbackGradient: 'bg-gradient-to-br from-[#3D1D14] via-[#26120C] to-[#120A08]',
+    exposureClass: 'brightness-[0.98] contrast-[1.05] saturate-[1.12]',
+  },
+  {
+    id: 'status',
+    indexLabel: '02',
+    shortLabel: 'Квартал',
+    kicker: '02 · Тихий статус',
+    title: 'Пауза и достоинство вместо кричащих скидок',
+    imageUrl:
+      'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=2000&q=85',
+    imageAlt: 'Вечерняя современная архитектура с панорамным светом — кадр «Тихий статус»',
+    fallbackGradient: 'bg-gradient-to-br from-[#132922] via-[#0D1D18] to-[#08110E]',
+    exposureClass: 'brightness-[0.97] contrast-[1.06] saturate-[1.08]',
+  },
+  {
+    id: 'studio',
+    indexLabel: '03',
+    shortLabel: 'Студия',
+    kicker: '03 · Студия AudioWorks',
+    title: 'Режиссура каждой секунды',
+    imageUrl:
+      'https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?auto=format&fit=crop&w=2000&q=85',
+    imageAlt: 'Звуковая студия AudioWorks в тёплом контровом свете — кадр «Студия AudioWorks»',
+    fallbackGradient: 'bg-gradient-to-br from-[#2B1812] via-[#1B1210] to-[#0E0D10]',
+    exposureClass: 'brightness-[1.22] contrast-[1.06] saturate-[1.12]',
+  },
+];
+
+export const KOTO_LENS_MANIFESTO_PARAGRAPH =
+  'В тишине кабинета любой ролик за 3 000 ₽ кажется нормальным. Но в реальном эфире он стоит между четырьмя чужими объявлениями и тонет в шуме дороги. Мы создаём ролики со сценарием, редкими голосами и чистыми правами — чтобы запомнили именно вас.';
+
+export interface DuelTranscriptPhrase {
+  startSec: number;
+  endSec: number;
+  text: string;
+  isAccent?: boolean;
+}
+
+export interface DuelSpotSpec {
+  id: 'radio_cliche' | 'audioworks_craft';
+  badge: string;
+  title: string;
+  durationSec: number;
+  durationLabel: string;
+  metricsLine: string;
+  verdict: string;
+  phrases: DuelTranscriptPhrase[];
+}
+
+/**
+ * Реальная пара 15-секундных роликов по одному брифу (кофейня «Зерно и Свет»):
+ * 1) Потоковый ролик «под радио» (0:14)
+ * 2) Режиссёрское исполнение AudioWorks (0:15)
+ */
+export const ZERNO_DUEL_DATA: {
+  clientName: string;
+  briefSummary: string;
+  radioSpot: DuelSpotSpec;
+  audioworksSpot: DuelSpotSpec;
+} = {
+  clientName: 'Кофейня «Зерно и Свет»',
+  briefSummary: 'Один и тот же бриф на 15 секунд: открытие новой точки на Ленинском и горячие завтраки весь день.',
+  radioSpot: {
+    id: 'radio_cliche',
+    badge: 'Обычный ролик «под радио»',
+    title: 'Попытка зачитать весь буклет за 14 секунд',
+    durationSec: 14,
+    durationLabel: '0:14',
+    metricsLine: '37 слов без пауз · адрес с корпусом · телефон и сайт с дефисом на слух',
+    verdict:
+      'Водитель в потоке машин не успевает записать ни корпус дома, ни промокод, ни телефон — объявление пролетает мимо ушей.',
+    phrases: [
+      { startSec: 0.0, endSec: 2.2, text: 'Внимание! Только в ноябре' },
+      {
+        startSec: 2.2,
+        endSec: 5.5,
+        text: 'сеть кофеен «Зерно и Свет» открыла пятую точку на Ленинском проспекте, дом 42, корпус 1.',
+      },
+      {
+        startSec: 5.5,
+        endSec: 8.8,
+        text: 'Авторский раф, свежая выпечка, завтраки весь день, скидка 20% по промокоду ОСЕНЬ,',
+      },
+      {
+        startSec: 8.8,
+        endSec: 11.4,
+        text: 'звоните 495-700-ровно-21.',
+      },
+      {
+        startSec: 11.4,
+        endSec: 14.2,
+        text: 'Подробности об акции на сайте зерно-дефис-свет.ру.',
+      },
+    ],
+  },
+  audioworksSpot: {
+    id: 'audioworks_craft',
+    badge: 'Исполнение AudioWorks',
+    title: 'Одна точная сцена и одно действие голосом',
+    durationSec: 15,
+    durationLabel: '0:15',
+    metricsLine: '24 слова · подсечка из ситуации водителя · команда в навигатор вместо диктовки цифр',
+    verdict:
+      'Тёплое электропиано и живая пауза после первых двух слов выхватывают внимание из пробки, а имя бренда повторяется дважды в самом выгодном контексте.',
+    phrases: [
+      {
+        startSec: 0.0,
+        endSec: 3.1,
+        text: 'Пробка на Ленинском… подождёт.',
+        isAccent: true,
+      },
+      {
+        startSec: 3.1,
+        endSec: 7.5,
+        text: 'Горячие завтраки весь день — в новой кофейне «Зерно и Свет».',
+      },
+      {
+        startSec: 7.5,
+        endSec: 11.0,
+        text: 'Просто скажите навигатору: «Зерно и Свет».',
+        isAccent: true,
+      },
+      {
+        startSec: 11.0,
+        endSec: 15.0,
+        text: 'Акция действует в ноябре. Подробности в кофейне.',
+      },
+    ],
+  },
+};
+
 export interface CommercialChapter {
   id:
     | 'cliche_stream'

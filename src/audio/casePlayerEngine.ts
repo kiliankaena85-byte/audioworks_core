@@ -1,9 +1,17 @@
-import { BRAND_CASES, BrandCasePoster, CaseId } from '../data/casesData';
+import { AUDIOWORKS_WAV_URL } from '../data/audioworksCommercial';
+import {
+  BRAND_CASES,
+  BrandCasePoster,
+  CaseId,
+  CasePlaybackMode,
+  getCasePreviewWindow,
+} from '../data/casesData';
 import { contrastAudioEngine } from './contrastAudioEngine';
 
 export interface CasePlayerSnapshot {
   activeCase: BrandCasePoster | null;
   isPlaying: boolean;
+  playbackMode: CasePlaybackMode | null;
   currentTimeSec: number;
   durationSec: number;
   progress: number; // 0..1
@@ -25,11 +33,14 @@ class CasePlayerEngine {
   private timers: number[] = [];
   private intervalId: number | null = null;
   private htmlAudio: HTMLAudioElement | null = null;
+  private previewHtmlAudio: HTMLAudioElement | null = null;
+  private gestureListenersBound = false;
   private clipStartSec = 0;
   private clipEndSec: number | null = null;
 
   private activeCase: BrandCasePoster | null = null;
   private isPlaying = false;
+  private playbackMode: CasePlaybackMode | null = null;
   private startCtxTime = 0;
   private durationSec = 15;
   private listeners = new Set<CasePlayerListener>();
@@ -42,7 +53,34 @@ class CasePlayerEngine {
     });
   }
 
+  private warmPreviewResources(): void {
+    if (typeof window === 'undefined') return;
+
+    if (!this.previewHtmlAudio) {
+      try {
+        const audio = new Audio(AUDIOWORKS_WAV_URL);
+        audio.preload = 'auto';
+        audio.load();
+        this.previewHtmlAudio = audio;
+      } catch {
+        // Ignore in non-DOM test environments
+      }
+    }
+
+    if (!this.gestureListenersBound) {
+      this.gestureListenersBound = true;
+      const unlock = () => {
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume().catch(() => {});
+        }
+      };
+      window.addEventListener('pointerdown', unlock, { passive: true });
+      window.addEventListener('keydown', unlock, { passive: true });
+    }
+  }
+
   public subscribe(listener: CasePlayerListener): () => void {
+    this.warmPreviewResources();
     this.listeners.add(listener);
     listener(this.getSnapshot());
     return () => {
@@ -55,6 +93,7 @@ class CasePlayerEngine {
       return {
         activeCase: null,
         isPlaying: false,
+        playbackMode: null,
         currentTimeSec: 0,
         durationSec: this.durationSec,
         progress: 0,
@@ -75,6 +114,7 @@ class CasePlayerEngine {
     return {
       activeCase: this.activeCase,
       isPlaying: this.isPlaying,
+      playbackMode: this.playbackMode ?? 'full',
       currentTimeSec: clampedElapsed,
       durationSec: this.durationSec,
       progress,
@@ -137,11 +177,15 @@ class CasePlayerEngine {
 
   public stop(): void {
     if (this.intervalId !== null) {
-      window.clearInterval(this.intervalId);
+      if (typeof window !== 'undefined') {
+        window.clearInterval(this.intervalId);
+      }
       this.intervalId = null;
     }
 
-    this.timers.forEach((t) => window.clearTimeout(t));
+    if (typeof window !== 'undefined') {
+      this.timers.forEach((t) => window.clearTimeout(t));
+    }
     this.timers = [];
 
     if (this.htmlAudio) {
@@ -162,35 +206,186 @@ class CasePlayerEngine {
 
     const oldNodes = [...this.activeNodes];
     this.activeNodes = [];
-    window.setTimeout(() => {
-      oldNodes.forEach((node) => {
-        try {
-          if ('stop' in node && typeof (node as OscillatorNode).stop === 'function') {
-            (node as OscillatorNode).stop();
+    if (oldNodes.length > 0 && typeof window !== 'undefined') {
+      window.setTimeout(() => {
+        oldNodes.forEach((node) => {
+          try {
+            if ('stop' in node && typeof (node as OscillatorNode).stop === 'function') {
+              (node as OscillatorNode).stop();
+            }
+            node.disconnect();
+          } catch {
+            // Ignore
           }
-          node.disconnect();
-        } catch {
-          // Ignore
-        }
-      });
-    }, 70);
+        });
+      }, 70);
+    }
 
     this.activeCase = null;
     this.isPlaying = false;
+    this.playbackMode = null;
     this.emit();
   }
 
+  /**
+   * Запускает мгновенное короткое превью (3–5 сек) при наведении курсора на карточку кейса.
+   * Никогда не прерывает уже запущенный полный трек (`playbackMode === 'full'`).
+   */
+  public startPreview(item: BrandCasePoster): void {
+    if (this.isPlaying && this.playbackMode === 'full') {
+      return;
+    }
+    if (
+      this.isPlaying &&
+      this.playbackMode === 'preview' &&
+      this.activeCase?.id === item.id
+    ) {
+      return;
+    }
+
+    contrastAudioEngine.stopAll();
+    this.stop();
+
+    const win = getCasePreviewWindow(item);
+    this.activeCase = item;
+    this.playbackMode = 'preview';
+    this.clipStartSec = item.audioUrl ? win.startSec : 0;
+    this.clipEndSec = item.audioUrl ? win.endSec : null;
+    this.durationSec = win.durationSec;
+    this.isPlaying = true;
+
+    if (item.audioUrl) {
+      this.warmPreviewResources();
+      const audio =
+        item.audioUrl === AUDIOWORKS_WAV_URL && this.previewHtmlAudio
+          ? this.previewHtmlAudio
+          : new Audio(item.audioUrl);
+      audio.preload = 'auto';
+      audio.volume = 0.9;
+      this.htmlAudio = audio;
+
+      const startAt = win.startSec;
+      const launchPreview = () => {
+        if (
+          this.htmlAudio !== audio ||
+          !this.isPlaying ||
+          this.playbackMode !== 'preview' ||
+          this.activeCase?.id !== item.id
+        ) {
+          return;
+        }
+        try {
+          audio.currentTime = startAt;
+        } catch {
+          // Ignore seek before metadata
+        }
+        audio.play().catch(() => {
+          if (
+            this.isPlaying &&
+            this.playbackMode === 'preview' &&
+            this.activeCase?.id === item.id
+          ) {
+            this.stop();
+          }
+        });
+      };
+
+      if (audio.readyState >= 1) {
+        launchPreview();
+      } else {
+        audio.addEventListener('loadedmetadata', launchPreview, { once: true });
+        audio.load();
+      }
+    } else {
+      const ctx = this.ensureContext();
+      if (!ctx || !this.masterGain) {
+        this.stop();
+        return;
+      }
+
+      this.startCtxTime = ctx.currentTime;
+      this.masterGain.gain.cancelScheduledValues(ctx.currentTime);
+      this.masterGain.gain.setValueAtTime(0.001, ctx.currentTime);
+      this.masterGain.gain.linearRampToValueAtTime(0.76, ctx.currentTime + 0.08);
+      this.masterGain.gain.setValueAtTime(
+        0.76,
+        ctx.currentTime + Math.max(0.15, win.durationSec - 0.3)
+      );
+      this.masterGain.gain.linearRampToValueAtTime(0.0001, ctx.currentTime + win.durationSec);
+
+      this.scheduleCaseComposition(ctx, this.masterGain, item.id, win.durationSec);
+
+      const unlockGuard = window.setTimeout(() => {
+        if (
+          this.isPlaying &&
+          this.playbackMode === 'preview' &&
+          this.activeCase?.id === item.id &&
+          ctx.state !== 'running'
+        ) {
+          this.stop();
+        }
+      }, 180);
+
+      const finishTimer = window.setTimeout(() => {
+        if (
+          this.isPlaying &&
+          this.playbackMode === 'preview' &&
+          this.activeCase?.id === item.id
+        ) {
+          this.stop();
+        }
+      }, win.durationSec * 1000 + 80);
+
+      this.timers.push(unlockGuard, finishTimer);
+    }
+
+    this.emit();
+    this.intervalId = window.setInterval(() => {
+      if (!this.isPlaying) return;
+      if (this.htmlAudio && this.clipEndSec !== null) {
+        const remaining = this.clipEndSec - this.htmlAudio.currentTime;
+        if (this.playbackMode === 'preview' && remaining <= 0.3 && remaining > 0) {
+          this.htmlAudio.volume = Math.max(0.04, (remaining / 0.3) * 0.9);
+        }
+        if (this.htmlAudio.currentTime >= this.clipEndSec) {
+          this.stop();
+          return;
+        }
+      }
+      this.emit();
+    }, 60);
+  }
+
+  /**
+   * Останавливает активное превью при уходе курсора с карточки,
+   * не затрагивая полный трек (`playbackMode === 'full'`).
+   */
+  public stopPreview(caseId?: CaseId): void {
+    if (!this.isPlaying || this.playbackMode !== 'preview') {
+      return;
+    }
+    if (caseId && this.activeCase?.id !== caseId) {
+      return;
+    }
+    this.stop();
+  }
+
   public toggleCase(item: BrandCasePoster): void {
-    if (this.isPlaying && this.activeCase?.id === item.id) {
+    if (
+      this.isPlaying &&
+      this.playbackMode === 'full' &&
+      this.activeCase?.id === item.id
+    ) {
       this.stop();
       return;
     }
 
-    // Останавливаем сцену первого экрана, чтобы два потока звука никогда не накладывались
+    // Останавливаем сцену первого экрана и любое активное превью
     contrastAudioEngine.stopAll();
     this.stop();
 
     this.activeCase = item;
+    this.playbackMode = 'full';
     this.clipStartSec = item.clipStartSec ?? 0;
     this.clipEndSec = item.clipEndSec ?? null;
     this.durationSec =

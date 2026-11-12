@@ -1,4 +1,4 @@
-import { Check, Pause, Play, Share2, Volume2 } from 'lucide-react';
+import { Check, Pause, Play, Share2 } from 'lucide-react';
 import {
   motion,
   useMotionValue,
@@ -13,25 +13,26 @@ import { formatAudioTime } from '../data/audioworksCommercial';
 import {
   BrandCasePoster,
   buildCaseShareUrl,
+  CaseCardProgressState,
   CaseId,
+  CasePlaybackMode,
+  computeCaseCardProgress,
   computeCaseHoverOffset,
   FLAGSHIP_STUDIO_REEL,
+  getCasePreviewWindow,
   getOrderedCasesForPersona,
   readSharedCaseIdFromLocation,
+  shouldStartHoverPreview,
 } from '../data/casesData';
 import { useLayaDecision } from '../engine/LayaContext';
+
+const HOVER_PREVIEW_DELAY_MS = 80;
 
 interface CasesGalleryProps {
   playerSnap: CasePlayerSnapshot;
   onToggleCase: (item: BrandCasePoster) => void;
-}
-
-function getWaveBarHeightClass(level: number): string {
-  if (level >= 0.78) return 'h-5';
-  if (level >= 0.6) return 'h-4';
-  if (level >= 0.44) return 'h-3';
-  if (level >= 0.28) return 'h-2';
-  return 'h-1.5';
+  onStartPreview?: (item: BrandCasePoster) => void;
+  onStopPreview?: (caseId: CaseId) => void;
 }
 
 function copyTextFallback(text: string): boolean {
@@ -59,10 +60,6 @@ interface CaseDepthMotionOptions {
   hoverScale?: number;
 }
 
-/**
- * Хук микро-интеракции и скролл-глубины обложки кейса:
- * сочетает вертикальный параллакс при скролле секции с мягким пружинным откликом на движение курсора.
- */
 function useCaseDepthMotion(
   containerRef: RefObject<HTMLElement | null>,
   {
@@ -70,7 +67,7 @@ function useCaseDepthMotion(
     hoverShiftX = 10,
     hoverShiftY = 8,
     restScale = 1.05,
-    hoverScale = 1.095,
+    hoverScale = 1.09,
   }: CaseDepthMotionOptions = {}
 ) {
   const prefersReducedMotion = useReducedMotion();
@@ -158,43 +155,66 @@ function useCaseDepthMotion(
   };
 }
 
-interface VinylSoundIndicatorProps {
-  isPlaying: boolean;
+interface UseCaseHoverPreviewOptions {
+  item: BrandCasePoster;
+  isGlobalPlaying: boolean;
+  globalPlaybackMode: CasePlaybackMode | null;
+  onStartPreview?: (item: BrandCasePoster) => void;
+  onStopPreview?: (caseId: CaseId) => void;
 }
 
-/**
- * Виниловый студийный индикатор звука: плавно вращается и пульсирует во время проигрывания кейса.
- */
-function VinylSoundIndicator({ isPlaying }: VinylSoundIndicatorProps) {
-  return (
-    <div
-      data-testid={isPlaying ? 'vinyl-indicator-playing' : 'vinyl-indicator-idle'}
-      aria-hidden="true"
-      className="relative w-12 h-12 flex items-center justify-center shrink-0"
-    >
-      {isPlaying && (
-        <span className="absolute inset-0 rounded-full border border-[#FF4820]/65 animate-ping opacity-40" />
-      )}
-      <div
-        className={`relative w-11 h-11 rounded-full bg-[#0F0F12] border flex items-center justify-center shadow-lg transition-colors duration-300 ${
-          isPlaying
-            ? 'border-[#FF4820]/80 animate-[spin_4s_linear_infinite]'
-            : 'border-white/22'
-        }`}
-      >
-        <span className="absolute inset-1.5 rounded-full border border-white/12" />
-        <span className="absolute inset-2.5 rounded-full border border-white/14" />
-        <span className="absolute top-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-white/40" />
-        <span
-          className={`relative w-3.5 h-3.5 rounded-full flex items-center justify-center transition-colors ${
-            isPlaying ? 'bg-[#FF4820]' : 'bg-white/35'
-          }`}
-        >
-          <span className="w-1 h-1 rounded-full bg-[#0F0F12]" />
-        </span>
-      </div>
-    </div>
-  );
+function useCaseHoverPreview({
+  item,
+  isGlobalPlaying,
+  globalPlaybackMode,
+  onStartPreview,
+  onStopPreview,
+}: UseCaseHoverPreviewOptions) {
+  const timerRef = useRef<number | null>(null);
+
+  const clearPendingTimer = () => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
+  const handlePreviewPointerEnter = (e: ReactPointerEvent<HTMLElement>) => {
+    if (!onStartPreview) return;
+    if (
+      !shouldStartHoverPreview({
+        pointerType: e.pointerType,
+        isPlaying: isGlobalPlaying,
+        playbackMode: globalPlaybackMode,
+      })
+    ) {
+      return;
+    }
+    clearPendingTimer();
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      onStartPreview(item);
+    }, HOVER_PREVIEW_DELAY_MS);
+  };
+
+  const handlePreviewPointerLeave = () => {
+    clearPendingTimer();
+    onStopPreview?.(item.id);
+  };
+
+  return {
+    handlePreviewPointerEnter,
+    handlePreviewPointerLeave,
+    clearPendingTimer,
+  };
 }
 
 interface ShareCaseButtonProps {
@@ -208,46 +228,98 @@ function ShareCaseButton({ item, isCopied, onShare }: ShareCaseButtonProps) {
     <button
       type="button"
       onClick={() => onShare(item)}
-      aria-label={`Поделиться кейсом «${item.client}»`}
-      className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap backdrop-blur-md border shrink-0 ${
+      aria-label={isCopied ? 'Ссылка скопирована' : `Поделиться кейсом «${item.client}»`}
+      title={isCopied ? 'Ссылка скопирована' : 'Поделиться кейсом'}
+      className={`h-11 w-11 rounded-full inline-flex items-center justify-center transition-colors cursor-pointer backdrop-blur-md border shrink-0 ${
         isCopied
           ? 'bg-white text-[#111111] border-white'
-          : 'bg-black/42 hover:bg-black/65 text-white/90 hover:text-white border-white/22'
+          : 'bg-black/40 hover:bg-black/65 text-white/85 hover:text-white border-white/18'
       }`}
     >
       {isCopied ? (
-        <>
-          <Check className="w-3.5 h-3.5 text-[#FF4820]" aria-hidden="true" />
-          <span>Скопировано</span>
-        </>
+        <Check className="w-4 h-4 text-[#FF4820]" aria-hidden="true" />
       ) : (
-        <>
-          <Share2 className="w-3.5 h-3.5" aria-hidden="true" />
-          <span>Поделиться</span>
-        </>
+        <Share2 className="w-4 h-4" aria-hidden="true" />
       )}
     </button>
   );
 }
 
+interface CaseAudioProgressBarProps {
+  item: BrandCasePoster;
+  progress: CaseCardProgressState;
+  currentTimeSec: number;
+}
+
+function CaseAudioProgressBar({
+  item,
+  progress,
+  currentTimeSec,
+}: CaseAudioProgressBarProps) {
+  const prefersReducedMotion = useReducedMotion();
+  const previewWindow = getCasePreviewWindow(item);
+  const targetDurationSec =
+    progress.mode === 'preview' ? previewWindow.durationSec : item.durationSec;
+
+  return (
+    <div
+      role="progressbar"
+      aria-label={`Прогресс воспроизведения: ${item.client}`}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={progress.percent}
+      aria-valuetext={
+        progress.isActive
+          ? `${progress.mode === 'preview' ? 'Превью ' : ''}${progress.percent}% (${formatAudioTime(currentTimeSec)} из ${formatAudioTime(targetDurationSec)})`
+          : 'Не воспроизводится'
+      }
+      data-testid={`case-progress-${item.id}`}
+      data-playing={progress.isActive ? 'true' : 'false'}
+      data-mode={progress.mode ?? 'idle'}
+      className={`h-1 w-full rounded-full overflow-hidden transition-colors duration-200 ${
+        progress.isActive ? 'bg-white/24' : 'bg-white/12'
+      }`}
+    >
+      <motion.div
+        initial={false}
+        animate={{ scaleX: progress.isActive ? progress.ratio : 0 }}
+        transition={{ duration: prefersReducedMotion ? 0 : 0.1, ease: 'linear' }}
+        className="h-full w-full rounded-full bg-[#FF4820] origin-left will-change-transform"
+      />
+    </div>
+  );
+}
+
 interface StudioCommercialStripProps {
-  isReelPlaying: boolean;
+  progress: CaseCardProgressState;
+  isGlobalPlaying: boolean;
+  globalPlaybackMode: CasePlaybackMode | null;
   isHighlighted: boolean;
   isCopied: boolean;
   currentTimeSec: number;
   onToggleCase: (item: BrandCasePoster) => void;
+  onStartPreview?: (item: BrandCasePoster) => void;
+  onStopPreview?: (caseId: CaseId) => void;
   onShare: (item: BrandCasePoster) => void;
 }
 
 function StudioCommercialStrip({
-  isReelPlaying,
+  progress,
+  isGlobalPlaying,
+  globalPlaybackMode,
   isHighlighted,
   isCopied,
   currentTimeSec,
   onToggleCase,
+  onStartPreview,
+  onStopPreview,
   onShare,
 }: StudioCommercialStripProps) {
   const stripRef = useRef<HTMLDivElement | null>(null);
+  const isReelFullPlaying = progress.isActive && progress.mode === 'full';
+  const isReelPreviewPlaying = progress.isActive && progress.mode === 'preview';
+  const reelPreviewWindow = getCasePreviewWindow(FLAGSHIP_STUDIO_REEL);
+
   const {
     imageMotionStyle,
     handlePointerEnter,
@@ -261,15 +333,33 @@ function StudioCommercialStrip({
     hoverScale: 1.085,
   });
 
+  const {
+    handlePreviewPointerEnter,
+    handlePreviewPointerLeave,
+    clearPendingTimer,
+  } = useCaseHoverPreview({
+    item: FLAGSHIP_STUDIO_REEL,
+    isGlobalPlaying,
+    globalPlaybackMode,
+    onStartPreview,
+    onStopPreview,
+  });
+
   return (
     <div
       ref={stripRef}
       id={`case-${FLAGSHIP_STUDIO_REEL.id}`}
       data-testid="flagship-studio-reel"
-      onPointerEnter={handlePointerEnter}
+      onPointerEnter={(e) => {
+        handlePointerEnter();
+        handlePreviewPointerEnter(e);
+      }}
       onPointerMove={handlePointerMove}
-      onPointerLeave={handlePointerLeave}
-      className={`scroll-mt-24 group relative overflow-hidden mb-8 lg:mb-10 rounded-3xl p-6 sm:p-9 lg:p-10 bg-[#141417] text-[#F4F3EF] border transition-colors flex flex-col lg:flex-row lg:items-center justify-between gap-6 ${
+      onPointerLeave={() => {
+        handlePointerLeave();
+        handlePreviewPointerLeave();
+      }}
+      className={`scroll-mt-24 group relative overflow-hidden mb-8 lg:mb-10 rounded-3xl p-6 sm:p-9 lg:p-11 bg-[#141417] text-[#F4F3EF] border transition-colors flex flex-col gap-6 ${
         isHighlighted ? 'border-[#FF4820]' : 'border-white/10'
       }`}
     >
@@ -279,70 +369,80 @@ function StudioCommercialStrip({
         referrerPolicy="no-referrer"
         decoding="async"
         style={imageMotionStyle}
-        className="pointer-events-none absolute -inset-6 w-[calc(100%+3rem)] h-[calc(100%+3rem)] max-w-none object-cover opacity-28 brightness-110 will-change-transform"
+        className="pointer-events-none absolute -inset-6 w-[calc(100%+3rem)] h-[calc(100%+3rem)] max-w-none object-cover opacity-26 brightness-110 will-change-transform"
       />
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#111114]/95 via-[#111114]/88 to-[#111114]/72"
       />
 
-      <div className="relative z-10 space-y-2 max-w-2xl">
-        <p className="inline-flex items-center gap-2 text-xs sm:text-sm font-semibold text-[#FF4820]">
-          <Volume2 className="w-4 h-4" aria-hidden="true" />
-          <span>{FLAGSHIP_STUDIO_REEL.tag}</span>
-        </p>
-        <h3 className="text-2xl sm:text-3xl font-bold tracking-tight leading-snug text-white editorial-balance">
-          {FLAGSHIP_STUDIO_REEL.headline}
-        </h3>
-        <p className="text-sm sm:text-base text-white/75 leading-relaxed editorial-pretty">
-          {FLAGSHIP_STUDIO_REEL.summary}
-        </p>
-      </div>
+      <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+        <div className="space-y-2 max-w-2xl">
+          <p className="text-xs sm:text-sm font-medium text-white/62">
+            {FLAGSHIP_STUDIO_REEL.tag}
+          </p>
+          <h3 className="text-2xl sm:text-3xl font-bold tracking-tight leading-snug text-white editorial-balance">
+            {FLAGSHIP_STUDIO_REEL.headline}
+          </h3>
+          <p className="text-sm sm:text-base text-white/70 leading-relaxed editorial-pretty">
+            {FLAGSHIP_STUDIO_REEL.summary}
+          </p>
+        </div>
 
-      <div className="relative z-10 flex flex-wrap items-center gap-3 shrink-0">
-        <VinylSoundIndicator isPlaying={isReelPlaying} />
+        <div className="flex items-center gap-3 shrink-0">
+          {isReelPreviewPlaying && (
+            <span
+              data-testid={`case-preview-status-${FLAGSHIP_STUDIO_REEL.id}`}
+              className="text-xs font-medium tabular-nums text-white/85 whitespace-nowrap shrink-0"
+            >
+              Превью · {formatAudioTime(currentTimeSec)} /{' '}
+              {formatAudioTime(reelPreviewWindow.durationSec)}
+            </span>
+          )}
 
-        <button
-          type="button"
-          onClick={() => onToggleCase(FLAGSHIP_STUDIO_REEL)}
-          aria-label={
-            isReelPlaying
-              ? 'Остановить промо-ролик Audioworks'
-              : 'Слушать промо-ролик Audioworks целиком (1:19)'
-          }
-          className={`inline-flex items-center gap-3.5 pr-6 pl-2 py-2 rounded-full text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
-            isReelPlaying
-              ? 'bg-[#FF4820] text-white'
-              : 'bg-white text-[#111111] hover:bg-white/92 active:scale-[0.99]'
-          }`}
-        >
-          <span
-            className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
-              isReelPlaying ? 'bg-black/20 text-white' : 'bg-[#FF4820] text-white'
+          <button
+            type="button"
+            onClick={() => {
+              clearPendingTimer();
+              onToggleCase(FLAGSHIP_STUDIO_REEL);
+            }}
+            aria-label={
+              isReelFullPlaying
+                ? 'Остановить промо-ролик Audioworks'
+                : 'Слушать промо-ролик Audioworks целиком'
+            }
+            className={`min-h-[44px] px-5 py-2.5 rounded-full inline-flex items-center gap-2.5 text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+              isReelFullPlaying
+                ? 'bg-[#FF4820] text-white'
+                : 'bg-white text-[#111111] hover:bg-[#FF4820] hover:text-white'
             }`}
           >
-            {isReelPlaying ? (
-              <Pause className="w-4 h-4 fill-current" aria-hidden="true" />
+            {isReelFullPlaying ? (
+              <Pause className="w-3.5 h-3.5 fill-current shrink-0" aria-hidden="true" />
             ) : (
-              <Play className="w-4 h-4 fill-current ml-0.5" aria-hidden="true" />
+              <Play className="w-3.5 h-3.5 fill-current shrink-0" aria-hidden="true" />
             )}
-          </span>
-          <span>{isReelPlaying ? 'Звучит промо-ролик' : 'Слушать нашу рекламу'}</span>
-        </button>
+            <span className="tabular-nums">
+              {isReelFullPlaying
+                ? `Пауза · ${formatAudioTime(currentTimeSec)}`
+                : `Слушать шоурил · ${formatAudioTime(FLAGSHIP_STUDIO_REEL.durationSec)}`}
+            </span>
+          </button>
 
-        <ShareCaseButton
+          <ShareCaseButton
+            item={FLAGSHIP_STUDIO_REEL}
+            isCopied={isCopied}
+            onShare={onShare}
+          />
+        </div>
+      </div>
+
+      <div className="relative z-10">
+        <CaseAudioProgressBar
           item={FLAGSHIP_STUDIO_REEL}
-          isCopied={isCopied}
-          onShare={onShare}
+          progress={progress}
+          currentTimeSec={currentTimeSec}
         />
-
-        <span className="text-xs sm:text-sm font-medium text-white/70 tabular-nums">
-          {isReelPlaying
-            ? `${formatAudioTime(currentTimeSec)} / ${formatAudioTime(
-                FLAGSHIP_STUDIO_REEL.durationSec
-              )}`
-            : formatAudioTime(FLAGSHIP_STUDIO_REEL.durationSec)}
-        </span>
       </div>
     </div>
   );
@@ -351,28 +451,37 @@ function StudioCommercialStrip({
 interface BrandCaseCardProps {
   item: BrandCasePoster;
   index: number;
-  isThisPlaying: boolean;
+  progress: CaseCardProgressState;
+  isGlobalPlaying: boolean;
+  globalPlaybackMode: CasePlaybackMode | null;
   isThisHighlighted: boolean;
   isCopied: boolean;
-  waveBars: number[];
   currentTimeSec: number;
   onToggleCase: (item: BrandCasePoster) => void;
+  onStartPreview?: (item: BrandCasePoster) => void;
+  onStopPreview?: (caseId: CaseId) => void;
   onShare: (item: BrandCasePoster) => void;
 }
 
 function BrandCaseCard({
   item,
   index,
-  isThisPlaying,
+  progress,
+  isGlobalPlaying,
+  globalPlaybackMode,
   isThisHighlighted,
   isCopied,
-  waveBars,
   currentTimeSec,
   onToggleCase,
+  onStartPreview,
+  onStopPreview,
   onShare,
 }: BrandCaseCardProps) {
   const cardRef = useRef<HTMLElement | null>(null);
   const isFlagshipWide = index === 0;
+  const isThisFullPlaying = progress.isActive && progress.mode === 'full';
+  const isThisPreviewPlaying = progress.isActive && progress.mode === 'preview';
+  const previewWindow = getCasePreviewWindow(item);
 
   const {
     imageMotionStyle,
@@ -384,7 +493,19 @@ function BrandCaseCard({
     hoverShiftX: 11,
     hoverShiftY: 9,
     restScale: 1.05,
-    hoverScale: 1.095,
+    hoverScale: 1.09,
+  });
+
+  const {
+    handlePreviewPointerEnter,
+    handlePreviewPointerLeave,
+    clearPendingTimer,
+  } = useCaseHoverPreview({
+    item,
+    isGlobalPlaying,
+    globalPlaybackMode,
+    onStartPreview,
+    onStopPreview,
   });
 
   if (isFlagshipWide) {
@@ -396,69 +517,100 @@ function BrandCaseCard({
         id={`case-${item.id}`}
         data-testid={`case-poster-${index}`}
         data-case-id={item.id}
-        onPointerEnter={handlePointerEnter}
+        onPointerEnter={(e) => {
+          handlePointerEnter();
+          handlePreviewPointerEnter(e);
+        }}
         onPointerMove={handlePointerMove}
-        onPointerLeave={handlePointerLeave}
-        className={`scroll-mt-24 group lg:col-span-2 relative overflow-hidden rounded-3xl border transition-colors grid grid-cols-1 lg:grid-cols-12 items-stretch min-h-[460px] lg:min-h-[490px] ${
+        onPointerLeave={() => {
+          handlePointerLeave();
+          handlePreviewPointerLeave();
+        }}
+        className={`scroll-mt-24 group lg:col-span-2 relative overflow-hidden rounded-3xl border transition-colors grid grid-cols-1 lg:grid-cols-12 items-stretch min-h-[420px] lg:min-h-[460px] ${
           isThisHighlighted
             ? 'border-[#FF4820]'
             : 'border-[#111111]/10 dark:border-white/10'
         }`}
       >
-        {/* Left Half: Warm Brand Editorial Typography */}
         <div
-          className={`lg:col-span-6 ${item.editorialSurfaceBg} text-[#F4F3EF] p-8 sm:p-11 lg:p-14 flex flex-col justify-between gap-8`}
+          className={`lg:col-span-6 ${item.editorialSurfaceBg} text-[#F4F3EF] p-6 sm:p-11 lg:p-14 flex flex-col justify-between gap-8`}
         >
-          <div className="flex flex-wrap items-center justify-between gap-3 text-xs sm:text-sm text-white/72">
-            <span>{item.tag}</span>
-            <span className="text-white/58">{item.client}</span>
-          </div>
+          <p className="text-xs sm:text-sm font-medium text-white/65">
+            {item.tag} · {item.client}
+          </p>
 
-          <div className="space-y-5 my-auto">
-            <p className="text-sm sm:text-base italic text-white/78 editorial-pretty">
-              {item.quoteImage}
-            </p>
-
-            <h3 className="text-3xl sm:text-4xl lg:text-[2.7rem] font-bold tracking-tight leading-[1.06] text-white editorial-balance">
+          <div className="space-y-4 my-auto">
+            <h3 className="text-3xl sm:text-4xl lg:text-[2.6rem] font-bold tracking-tight leading-[1.06] text-white editorial-balance">
               {item.headline}
             </h3>
 
-            <p className="text-base sm:text-lg leading-relaxed text-white/78 editorial-pretty">
+            <p className="text-base sm:text-lg leading-relaxed text-white/75 editorial-pretty">
               {item.summary}
             </p>
           </div>
 
-          <div className="pt-6 border-t border-white/12 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3.5">
-              <VinylSoundIndicator isPlaying={isThisPlaying} />
-              <div className="space-y-0.5">
-                <p className="text-xs font-semibold text-white/90">
-                  {isThisPlaying ? 'Сейчас в эфире' : 'Эфирный мастер-ролик'}
-                </p>
-                <p className="text-xs text-white/58 tabular-nums">
-                  Хронометраж · {formatAudioTime(item.durationSec)}
-                </p>
-              </div>
-            </div>
+          <div className="space-y-4 pt-2">
+            <CaseAudioProgressBar
+              item={item}
+              progress={progress}
+              currentTimeSec={currentTimeSec}
+            />
 
-            <div aria-hidden="true" className="flex items-end gap-1 h-6">
-              {(isThisPlaying ? waveBars : [0.28, 0.5, 0.35, 0.65, 0.3]).map(
-                (barHeight, idx) => (
-                  <span
-                    key={idx}
-                    className={`w-1 rounded-full transition-all duration-100 ${
-                      isThisPlaying ? 'bg-[#FF4820]' : 'bg-white/28'
-                    } ${getWaveBarHeightClass(barHeight)}`}
-                  />
-                )
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearPendingTimer();
+                    onToggleCase(item);
+                  }}
+                  aria-label={
+                    isThisFullPlaying
+                      ? `Остановить кейс «${item.client}»`
+                      : `Слушать кейс «${item.client}»`
+                  }
+                  className={`min-h-[44px] px-5 py-2.5 rounded-full inline-flex items-center gap-2.5 text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    isThisFullPlaying
+                      ? 'bg-[#FF4820] text-white'
+                      : 'bg-white text-[#111111] hover:bg-[#FF4820] hover:text-white'
+                  }`}
+                >
+                  {isThisFullPlaying ? (
+                    <Pause className="w-3.5 h-3.5 fill-current shrink-0" aria-hidden="true" />
+                  ) : (
+                    <Play className="w-3.5 h-3.5 fill-current shrink-0" aria-hidden="true" />
+                  )}
+                  <span className="tabular-nums">
+                    {isThisFullPlaying
+                      ? `Пауза · ${formatAudioTime(currentTimeSec)}`
+                      : `Слушать · ${formatAudioTime(item.durationSec)}`}
+                  </span>
+                </button>
+
+                <ShareCaseButton item={item} isCopied={isCopied} onShare={onShare} />
+              </div>
+
+              {isThisFullPlaying && (
+                <span className="text-xs font-medium tabular-nums text-white/75 whitespace-nowrap shrink-0">
+                  {formatAudioTime(currentTimeSec)} / {formatAudioTime(item.durationSec)}
+                </span>
+              )}
+
+              {isThisPreviewPlaying && (
+                <span
+                  data-testid={`case-preview-status-${item.id}`}
+                  className="text-xs font-medium tabular-nums text-white/88 whitespace-nowrap shrink-0"
+                >
+                  Превью · {formatAudioTime(currentTimeSec)} /{' '}
+                  {formatAudioTime(previewWindow.durationSec)}
+                </span>
               )}
             </div>
           </div>
         </div>
 
-        {/* Right Half: Full-Height Atmospheric Photography with Framer Motion Parallax + Frosted Glass Controls */}
         <div
-          className={`lg:col-span-6 relative min-h-[320px] lg:min-h-full overflow-hidden ${item.posterGradientClass} flex flex-col justify-end p-6 sm:p-9 lg:p-11`}
+          className={`lg:col-span-6 relative min-h-[260px] sm:min-h-[300px] lg:min-h-full overflow-hidden ${item.posterGradientClass}`}
         >
           <motion.img
             src={item.coverImageUrl}
@@ -470,54 +622,13 @@ function BrandCaseCard({
           />
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/78 via-black/22 to-black/18"
+            className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-black/15"
           />
-
-          <div className="relative z-10 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <button
-                type="button"
-                onClick={() => onToggleCase(item)}
-                aria-label={
-                  isThisPlaying
-                    ? `Остановить кейс «${item.client}»`
-                    : `Слушать кейс «${item.client}»`
-                }
-                className={`inline-flex items-center gap-3.5 pr-6 pl-2 py-2 rounded-full text-sm font-semibold transition-all cursor-pointer whitespace-nowrap backdrop-blur-md border ${
-                  isThisPlaying
-                    ? 'bg-[#FF4820] border-[#FF4820] text-white shadow-[0_10px_30px_rgba(255,72,32,0.4)]'
-                    : 'bg-black/48 hover:bg-black/68 border-white/28 text-white active:scale-[0.99]'
-                }`}
-              >
-                <span
-                  className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
-                    isThisPlaying ? 'bg-black/22 text-white' : 'bg-[#FF4820] text-white'
-                  }`}
-                >
-                  {isThisPlaying ? (
-                    <Pause className="w-4 h-4 fill-current" aria-hidden="true" />
-                  ) : (
-                    <Play className="w-4 h-4 fill-current ml-0.5" aria-hidden="true" />
-                  )}
-                </span>
-                <span>{isThisPlaying ? 'Звучит в эфире' : 'Слушать эфирный ролик'}</span>
-              </button>
-
-              <ShareCaseButton item={item} isCopied={isCopied} onShare={onShare} />
-            </div>
-
-            <span className="text-xs sm:text-sm font-semibold text-white/90 tabular-nums drop-shadow-xs">
-              {isThisPlaying
-                ? `${formatAudioTime(currentTimeSec)} / ${formatAudioTime(item.durationSec)}`
-                : formatAudioTime(item.durationSec)}
-            </span>
-          </div>
         </div>
       </motion.article>
     );
   }
 
-  // Secondary Large Photographic Posters (Index 1 & 2) with Framer Motion Parallax & Scroll Depth
   return (
     <motion.article
       ref={cardRef}
@@ -526,10 +637,16 @@ function BrandCaseCard({
       id={`case-${item.id}`}
       data-testid={`case-poster-${index}`}
       data-case-id={item.id}
-      onPointerEnter={handlePointerEnter}
+      onPointerEnter={(e) => {
+        handlePointerEnter();
+        handlePreviewPointerEnter(e);
+      }}
       onPointerMove={handlePointerMove}
-      onPointerLeave={handlePointerLeave}
-      className={`scroll-mt-24 group lg:col-span-1 relative overflow-hidden rounded-3xl ${item.posterGradientClass} text-[#F4F3EF] border transition-colors min-h-[460px] lg:min-h-[490px] p-8 sm:p-10 lg:p-11 flex flex-col justify-between ${
+      onPointerLeave={() => {
+        handlePointerLeave();
+        handlePreviewPointerLeave();
+      }}
+      className={`scroll-mt-24 group lg:col-span-1 relative overflow-hidden rounded-3xl ${item.posterGradientClass} text-[#F4F3EF] border transition-colors min-h-[400px] sm:min-h-[440px] lg:min-h-[460px] p-6 sm:p-10 flex flex-col justify-between ${
         isThisHighlighted
           ? 'border-[#FF4820]'
           : 'border-[#111111]/10 dark:border-white/10'
@@ -546,87 +663,107 @@ function BrandCaseCard({
 
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#0A0C10]/94 via-[#0A0C10]/56 to-[#0A0C10]/38"
+        className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#0A0C10]/92 via-[#0A0C10]/48 to-[#0A0C10]/32"
       />
 
-      <div className="relative z-10 flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <p className="text-xs sm:text-sm font-medium text-white/85">{item.tag}</p>
-          <p className="text-xs sm:text-sm text-white/68">{item.client}</p>
-        </div>
-
-        <VinylSoundIndicator isPlaying={isThisPlaying} />
-      </div>
+      <p className="relative z-10 text-xs sm:text-sm font-medium text-white/78">
+        {item.tag} · {item.client}
+      </p>
 
       <div className="relative z-10 mt-auto pt-12 space-y-6">
-        <div className="space-y-3.5">
-          <p className="text-sm sm:text-base italic text-white/82 editorial-pretty">
-            {item.quoteImage}
-          </p>
-
-          <h3 className="text-2xl sm:text-3xl lg:text-[2.1rem] font-bold tracking-tight leading-[1.08] text-white editorial-balance">
+        <div className="space-y-3">
+          <h3 className="text-2xl sm:text-3xl font-bold tracking-tight leading-[1.08] text-white editorial-balance">
             {item.headline}
           </h3>
 
-          <p className="text-sm sm:text-base leading-relaxed text-white/80 editorial-pretty">
+          <p className="text-sm sm:text-base leading-relaxed text-white/76 editorial-pretty">
             {item.summary}
           </p>
         </div>
 
-        <div className="pt-5 border-t border-white/16 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <button
-              type="button"
-              onClick={() => onToggleCase(item)}
-              aria-label={
-                isThisPlaying
-                  ? `Остановить кейс «${item.client}»`
-                  : `Слушать кейс «${item.client}»`
-              }
-              className={`inline-flex items-center gap-3 pr-5 pl-2 py-2 rounded-full text-sm font-semibold transition-all cursor-pointer whitespace-nowrap backdrop-blur-md border ${
-                isThisPlaying
-                  ? 'bg-[#FF4820] border-[#FF4820] text-white'
-                  : 'bg-black/45 hover:bg-black/65 border-white/25 text-white active:scale-[0.99]'
-              }`}
-            >
-              <span
-                className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${
-                  isThisPlaying ? 'bg-black/20 text-white' : 'bg-[#FF4820] text-white'
+        <div className="space-y-3.5 pt-1">
+          <CaseAudioProgressBar
+            item={item}
+            progress={progress}
+            currentTimeSec={currentTimeSec}
+          />
+
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  clearPendingTimer();
+                  onToggleCase(item);
+                }}
+                aria-label={
+                  isThisFullPlaying
+                    ? `Остановить кейс «${item.client}»`
+                    : `Слушать кейс «${item.client}»`
+                }
+                className={`min-h-[44px] px-5 py-2.5 rounded-full inline-flex items-center gap-2.5 text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap backdrop-blur-md border shrink-0 ${
+                  isThisFullPlaying
+                    ? 'bg-[#FF4820] border-[#FF4820] text-white'
+                    : 'bg-black/45 hover:bg-black/65 border-white/22 text-white'
                 }`}
               >
-                {isThisPlaying ? (
-                  <Pause className="w-3.5 h-3.5 fill-current" aria-hidden="true" />
+                {isThisFullPlaying ? (
+                  <Pause className="w-3.5 h-3.5 fill-current shrink-0" aria-hidden="true" />
                 ) : (
-                  <Play className="w-3.5 h-3.5 fill-current ml-0.5" aria-hidden="true" />
+                  <Play className="w-3.5 h-3.5 fill-current shrink-0" aria-hidden="true" />
                 )}
+                <span className="tabular-nums">
+                  {isThisFullPlaying
+                    ? `Пауза · ${formatAudioTime(currentTimeSec)}`
+                    : `Слушать · ${formatAudioTime(item.durationSec)}`}
+                </span>
+              </button>
+
+              <ShareCaseButton item={item} isCopied={isCopied} onShare={onShare} />
+            </div>
+
+            {isThisFullPlaying && (
+              <span className="text-xs font-medium tabular-nums text-white/80 whitespace-nowrap shrink-0">
+                {formatAudioTime(currentTimeSec)} / {formatAudioTime(item.durationSec)}
               </span>
-              <span>{isThisPlaying ? 'Звучит в эфире' : 'Слушать эфирный ролик'}</span>
-            </button>
+            )}
 
-            <ShareCaseButton item={item} isCopied={isCopied} onShare={onShare} />
+            {isThisPreviewPlaying && (
+              <span
+                data-testid={`case-preview-status-${item.id}`}
+                className="text-xs font-medium tabular-nums text-white/88 whitespace-nowrap shrink-0"
+              >
+                Превью · {formatAudioTime(currentTimeSec)} /{' '}
+                {formatAudioTime(previewWindow.durationSec)}
+              </span>
+            )}
           </div>
-
-          <span className="text-xs sm:text-sm font-medium text-white/80 tabular-nums">
-            {isThisPlaying
-              ? `${formatAudioTime(currentTimeSec)} / ${formatAudioTime(item.durationSec)}`
-              : formatAudioTime(item.durationSec)}
-          </span>
         </div>
       </div>
     </motion.article>
   );
 }
 
-export function CasesGallery({ playerSnap, onToggleCase }: CasesGalleryProps) {
+export function CasesGallery({
+  playerSnap,
+  onToggleCase,
+  onStartPreview,
+  onStopPreview,
+}: CasesGalleryProps) {
   const { decision } = useLayaDecision();
   const orderedCases = getOrderedCasesForPersona(decision.choice);
   const [copiedCaseId, setCopiedCaseId] = useState<CaseId | null>(null);
   const [highlightedCaseId, setHighlightedCaseId] = useState<CaseId | null>(null);
 
-  const isReelPlaying =
-    playerSnap.isPlaying && playerSnap.activeCase?.id === FLAGSHIP_STUDIO_REEL.id;
+  const activeCaseId = playerSnap.activeCase?.id ?? null;
+  const reelProgress = computeCaseCardProgress(
+    FLAGSHIP_STUDIO_REEL.id,
+    playerSnap.isPlaying,
+    activeCaseId,
+    playerSnap.progress,
+    playerSnap.playbackMode
+  );
 
-  // Переход по прямой ссылке на конкретный кейс (?case=<id>#case-<id>)
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const sharedId = readSharedCaseIdFromLocation(
@@ -703,47 +840,59 @@ export function CasesGallery({ playerSnap, onToggleCase }: CasesGalleryProps) {
     <section
       id="work"
       aria-labelledby="work-heading"
-      className="scroll-mt-20 py-24 lg:py-36 border-t border-[#111111]/8 dark:border-[#F4F3EF]/10"
+      className="scroll-mt-20 py-20 sm:py-28 lg:py-36 border-t border-[#111111]/8 dark:border-[#F4F3EF]/10"
     >
-      <div className="max-w-7xl mx-auto px-6 lg:px-12">
-        {/* Spacious Magazine Header */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12">
         <div className="max-w-3xl mb-12 lg:mb-16">
+          <p className="text-sm font-medium text-[#111111]/55 dark:text-[#F4F3EF]/55 mb-3">
+            Портфолио
+          </p>
           <h2
             id="work-heading"
-            className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF] mb-4"
+            className="text-3xl sm:text-5xl font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF] mb-3"
           >
             Наши работы
           </h2>
-          <p className="text-lg sm:text-xl text-[#111111]/68 dark:text-[#F4F3EF]/68 editorial-pretty">
-            Как звучат бренды, когда за дело берется продакшн.
+          <p className="text-base sm:text-xl text-[#111111]/68 dark:text-[#F4F3EF]/68 editorial-pretty">
+            Как звучат бренды, когда за дело берётся продакшн. Наведите курсор на
+            карточку для короткого превью или включите ролик целиком.
           </p>
         </div>
 
-        {/* Studio Own Commercial Strip (1:19 Full Studio Recording) */}
         <StudioCommercialStrip
-          isReelPlaying={isReelPlaying}
+          progress={reelProgress}
+          isGlobalPlaying={playerSnap.isPlaying}
+          globalPlaybackMode={playerSnap.playbackMode}
           isHighlighted={highlightedCaseId === FLAGSHIP_STUDIO_REEL.id}
           isCopied={copiedCaseId === FLAGSHIP_STUDIO_REEL.id}
           currentTimeSec={playerSnap.currentTimeSec}
           onToggleCase={onToggleCase}
+          onStartPreview={onStartPreview}
+          onStopPreview={onStopPreview}
           onShare={handleShareCase}
         />
 
-        {/* Koto Studio Photographic Poster Grid: 1 Full-Width Flagship Split + 2 Photographic Posters Beneath */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
           {orderedCases.map((item, index) => (
             <BrandCaseCard
               key={item.id}
               item={item}
               index={index}
-              isThisPlaying={
-                playerSnap.isPlaying && playerSnap.activeCase?.id === item.id
-              }
+              progress={computeCaseCardProgress(
+                item.id,
+                playerSnap.isPlaying,
+                activeCaseId,
+                playerSnap.progress,
+                playerSnap.playbackMode
+              )}
+              isGlobalPlaying={playerSnap.isPlaying}
+              globalPlaybackMode={playerSnap.playbackMode}
               isThisHighlighted={highlightedCaseId === item.id}
               isCopied={copiedCaseId === item.id}
-              waveBars={playerSnap.waveBars}
               currentTimeSec={playerSnap.currentTimeSec}
               onToggleCase={onToggleCase}
+              onStartPreview={onStartPreview}
+              onStopPreview={onStopPreview}
               onShare={handleShareCase}
             />
           ))}

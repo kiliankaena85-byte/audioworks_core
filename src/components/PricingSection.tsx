@@ -13,17 +13,17 @@ export function PricingSection({ onSelectFormat }: PricingSectionProps) {
     <section
       id="pricing"
       aria-labelledby="pricing-heading"
-      className="scroll-mt-24 py-28 lg:py-40 border-t border-[#111111]/8 dark:border-[#F4F3EF]/10"
+      className="scroll-mt-24 py-20 sm:py-28 lg:py-40 border-t border-[#111111]/8 dark:border-[#F4F3EF]/10"
     >
-      <div className="max-w-7xl mx-auto px-6 lg:px-12">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12">
         {/* Spacious Editorial Header (Koto Studio Two-Tone Typography) */}
-        <div className="max-w-4xl mb-16 lg:mb-24">
-          <p className="text-sm font-medium text-[#111111]/55 dark:text-[#F4F3EF]/55 mb-5">
-            Форматы и смета · Аудиопродакшн полного цикла
+        <div className="max-w-4xl mb-12 sm:mb-16 lg:mb-24">
+          <p className="text-sm font-medium text-[#111111]/55 dark:text-[#F4F3EF]/55 mb-4 sm:mb-5">
+            Стоимость
           </p>
           <h2
             id="pricing-heading"
-            className="text-4xl sm:text-5xl lg:text-[3.5rem] font-bold tracking-tight leading-[1.06] text-[#111111] dark:text-[#F4F3EF] mb-6"
+            className="text-3xl sm:text-5xl lg:text-[3.5rem] font-bold tracking-tight leading-[1.06] text-[#111111] dark:text-[#F4F3EF] mb-5 sm:mb-6"
           >
             <span className="block">Три формата работы.</span>
             <span className="block text-[#111111]/42 dark:text-[#F4F3EF]/42">
@@ -50,13 +50,9 @@ export function PricingSection({ onSelectFormat }: PricingSectionProps) {
                 <div className="rounded-2xl py-7 sm:py-9 lg:py-10 px-4 sm:px-6 -mx-4 sm:-mx-6 transition-colors duration-200 group-hover:bg-[#EFECE5]/85 dark:group-hover:bg-[#16161B]">
                   {/* Laya AI Recommendation Tag */}
                   {isRecommended && (
-                    <div className="mb-4">
-                      <span className="inline-flex items-center gap-2 text-xs font-semibold text-[#FF4820]">
-                        <span
-                          className="w-1.5 h-1.5 rounded-full bg-[#FF4820]"
-                          aria-hidden="true"
-                        />
-                        <span>Рекомендуем под вашу задачу</span>
+                    <div className="mb-3">
+                      <span className="text-xs font-semibold text-[#FF4820]">
+                        Рекомендуем под вашу задачу
                       </span>
                     </div>
                   )}
@@ -84,7 +80,7 @@ export function PricingSection({ onSelectFormat }: PricingSectionProps) {
                     </div>
 
                     {/* Column 3: Price • Turnaround & Stretched Native Order Button */}
-                    <div className="lg:col-span-4 flex flex-wrap sm:flex-nowrap items-center justify-between lg:justify-end gap-6 pt-2 lg:pt-0">
+                    <div className="lg:col-span-4 flex flex-wrap sm:flex-nowrap items-center justify-between lg:justify-end gap-4 sm:gap-6 pt-2 lg:pt-0">
                       <div className="text-left lg:text-right tabular-nums">
                         <span className="text-2xl sm:text-3xl font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF] whitespace-nowrap">
                           {row.priceFormatted}
@@ -99,7 +95,7 @@ export function PricingSection({ onSelectFormat }: PricingSectionProps) {
                         type="button"
                         onClick={() => onSelectFormat(row.id)}
                         aria-label={`Заказать: ${row.title} (${row.priceFormatted})`}
-                        className="inline-flex items-center gap-2 px-5 py-3 rounded-full text-sm font-semibold transition-all whitespace-nowrap shrink-0 bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] group-hover:bg-[#FF4820] group-hover:text-white cursor-pointer after:absolute after:inset-0 after:rounded-2xl after:content-[''] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+                        className="min-h-[44px] inline-flex items-center justify-center gap-2 px-5 py-3 rounded-full text-sm font-semibold transition-all whitespace-nowrap shrink-0 bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] group-hover:bg-[#FF4820] group-hover:text-white cursor-pointer after:absolute after:inset-0 after:rounded-2xl after:content-[''] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                       >
                         <span>Заказать</span>
                         <ArrowRight

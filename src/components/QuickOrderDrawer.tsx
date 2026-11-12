@@ -8,7 +8,6 @@ import {
   Square,
   Trash2,
   X,
-  Zap,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react';
@@ -457,10 +456,9 @@ export function QuickOrderDrawer({
               {/* Drawer Top Header */}
               <div className="flex items-start justify-between gap-4 mb-6">
                 <div>
-                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#FF4820] mb-1.5">
-                    <Zap className="w-3.5 h-3.5 fill-current" aria-hidden="true" />
-                    <span>Консьерж-сервис Audioworks</span>
-                  </span>
+                  <p className="text-xs font-medium text-[#111111]/55 dark:text-[#F4F3EF]/55 mb-1.5">
+                    Консьерж-сервис AudioWorks
+                  </p>
                   <h2
                     id="quick-order-title"
                     className="text-2xl sm:text-3xl font-bold tracking-tight"
@@ -473,7 +471,7 @@ export function QuickOrderDrawer({
                   type="button"
                   onClick={onClose}
                   aria-label="Закрыть шторку быстрого заказа"
-                  className="w-10 h-10 -mr-2 rounded-full flex items-center justify-center hover:bg-[#111111]/8 dark:hover:bg-[#F4F3EF]/10 transition-colors cursor-pointer shrink-0"
+                  className="w-11 h-11 -mr-2 rounded-full flex items-center justify-center hover:bg-[#111111]/8 dark:hover:bg-[#F4F3EF]/10 transition-colors cursor-pointer shrink-0"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -602,7 +600,7 @@ export function QuickOrderDrawer({
                             type="button"
                             onClick={() => setSelectedFormat(pill.id)}
                             aria-pressed={active}
-                            className={`px-4 py-2.5 rounded-full text-xs sm:text-sm font-semibold transition-all border cursor-pointer ${
+                            className={`min-h-[44px] px-4 py-2.5 rounded-full text-xs sm:text-sm font-semibold transition-all border cursor-pointer ${
                               active
                                 ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] border-transparent'
                                 : 'bg-transparent text-[#111111]/78 dark:text-[#F4F3EF]/78 border-[#111111]/15 dark:border-[#F4F3EF]/15 hover:border-[#111111]/40 dark:hover:border-[#F4F3EF]/40'
@@ -723,7 +721,7 @@ export function QuickOrderDrawer({
                           if (taskError) setTaskError(undefined);
                         }}
                         placeholder="О чем ролик или какая акция?"
-                        className="w-full px-4 py-3 rounded-2xl bg-transparent border border-[#111111]/15 dark:border-[#F4F3EF]/15 text-sm text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none focus:border-[#FF4820]"
+                        className="w-full px-4 py-3 rounded-2xl bg-transparent border border-[#111111]/15 dark:border-[#F4F3EF]/15 text-base sm:text-sm text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none focus:border-[#FF4820]"
                       />
                     </div>
 
@@ -739,7 +737,7 @@ export function QuickOrderDrawer({
                       <button
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
-                        className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full border border-[#111111]/15 dark:border-[#F4F3EF]/15 text-xs font-medium text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:border-[#111111]/40 dark:hover:border-[#F4F3EF]/40 transition-colors cursor-pointer"
+                        className="min-h-[44px] inline-flex items-center gap-2 px-3.5 py-2 rounded-full border border-[#111111]/15 dark:border-[#F4F3EF]/15 text-xs font-medium text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:border-[#111111]/40 dark:hover:border-[#F4F3EF]/40 transition-colors cursor-pointer"
                       >
                         <Paperclip className="w-3.5 h-3.5" aria-hidden="true" />
                         <span>
@@ -802,7 +800,7 @@ export function QuickOrderDrawer({
                             value={companyLine}
                             onChange={(e) => setCompanyLine(e.target.value)}
                             placeholder="Компания или бренд (запомним для заказа в 2 клика)"
-                            className="w-full px-4 py-3 rounded-2xl bg-transparent border border-[#111111]/15 dark:border-[#F4F3EF]/15 text-sm text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none focus:border-[#FF4820]"
+                            className="w-full px-4 py-3 rounded-2xl bg-transparent border border-[#111111]/15 dark:border-[#F4F3EF]/15 text-base sm:text-sm text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none focus:border-[#FF4820]"
                           />
                         )}
 
@@ -815,7 +813,7 @@ export function QuickOrderDrawer({
                             if (contactError) setContactError(undefined);
                           }}
                           placeholder="Имя и Телефон / @Telegram"
-                          className="w-full px-4 py-3.5 rounded-2xl bg-transparent border border-[#111111]/15 dark:border-[#F4F3EF]/15 text-sm text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none focus:border-[#FF4820]"
+                          className="w-full px-4 py-3.5 rounded-2xl bg-transparent border border-[#111111]/15 dark:border-[#F4F3EF]/15 text-base sm:text-sm text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none focus:border-[#FF4820]"
                         />
 
                         {contactError && (
@@ -842,10 +840,7 @@ export function QuickOrderDrawer({
 
             <div className="pt-6 mt-6 border-t border-[#111111]/10 dark:border-[#F4F3EF]/10 flex items-center justify-between text-xs text-[#111111]/55 dark:text-[#F4F3EF]/55">
               <span>Ответ продюсера и счёт — до 30 минут</span>
-              <span className="inline-flex items-center gap-1.5 font-medium">
-                <span aria-hidden="true" className="w-1.5 h-1.5 rounded-full bg-[#FF4820]" />
-                <span>СТУДИЯ В РАБОТЕ</span>
-              </span>
+              <span className="font-medium">По договору и ЭДО</span>
             </div>
           </motion.div>
         </div>

@@ -12,18 +12,18 @@ export function FaqSection() {
     <section
       id="faq"
       aria-labelledby="faq-heading"
-      className="scroll-mt-24 py-28 lg:py-40 border-t border-[#111111]/8 dark:border-[#F4F3EF]/10"
+      className="scroll-mt-24 py-20 sm:py-28 lg:py-40 border-t border-[#111111]/8 dark:border-[#F4F3EF]/10"
     >
-      <div className="max-w-7xl mx-auto px-6 lg:px-12">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-start">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-16 items-start">
           {/* Left Editorial Masthead */}
           <div className="lg:col-span-4 lg:sticky lg:top-28">
-            <p className="text-sm font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58 mb-5">
-              Частые вопросы · Коротко и по делу
+            <p className="text-sm font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58 mb-4 sm:mb-5">
+              Частые вопросы
             </p>
             <h2
               id="faq-heading"
-              className="text-4xl sm:text-5xl lg:text-[3.25rem] font-bold tracking-tight leading-[1.06] text-[#111111] dark:text-[#F4F3EF] editorial-balance mb-5"
+              className="text-3xl sm:text-5xl lg:text-[3.25rem] font-bold tracking-tight leading-[1.06] text-[#111111] dark:text-[#F4F3EF] editorial-balance mb-4 sm:mb-5"
             >
               Отвечаем до того, как вы спросите.
             </h2>
@@ -77,7 +77,7 @@ export function FaqSection() {
 
                       <span
                         aria-hidden="true"
-                        className={`mt-1 w-10 h-10 rounded-full border flex items-center justify-center shrink-0 transition-all duration-200 ${
+                        className={`mt-0.5 w-11 h-11 rounded-full border flex items-center justify-center shrink-0 transition-all duration-200 ${
                           isOpen
                             ? 'border-[#FF4820] bg-[#FF4820] text-white rotate-45'
                             : 'border-[#111111]/15 dark:border-[#F4F3EF]/18 text-[#111111] dark:text-[#F4F3EF] group-hover:border-[#FF4820] group-hover:text-[#FF4820]'

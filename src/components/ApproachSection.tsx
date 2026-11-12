@@ -9,18 +9,18 @@ export function ApproachSection() {
     <section
       id="approach"
       aria-labelledby="approach-heading"
-      className="scroll-mt-20 py-28 lg:py-40 border-t border-[#111111]/8 dark:border-[#F4F3EF]/10"
+      className="scroll-mt-20 py-20 sm:py-28 lg:py-40 border-t border-[#111111]/8 dark:border-[#F4F3EF]/10"
     >
-      <div className="max-w-7xl mx-auto px-6 lg:px-12">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12">
         {/* Quiet Section Label */}
-        <p className="text-sm font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58 mb-6">
+        <p className="text-sm font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58 mb-5 sm:mb-6">
           Почему продакшн, а не просто озвучка
         </p>
 
         {/* One Large, Calm Editorial Thesis */}
         <h2
           id="approach-heading"
-          className="max-w-5xl text-3xl sm:text-4xl lg:text-[3.15rem] font-bold tracking-tight leading-[1.12] text-[#111111] dark:text-[#F4F3EF] editorial-balance mb-16 lg:mb-24"
+          className="max-w-5xl text-2xl sm:text-4xl lg:text-[3.15rem] font-bold tracking-tight leading-[1.14] text-[#111111] dark:text-[#F4F3EF] editorial-balance mb-12 sm:mb-16 lg:mb-24"
         >
           {APPROACH_THESIS}
         </h2>
@@ -69,8 +69,8 @@ export function ApproachSection() {
             />
 
             <figcaption className="relative z-10 space-y-2">
-              <p className="text-xs font-medium text-[#FFB36B]">
-                Студийный контроль · ON AIR
+              <p className="text-xs font-medium text-white/68">
+                Студийный контроль
               </p>
               <p className="text-base sm:text-lg font-semibold leading-snug text-white editorial-pretty">
                 {APPROACH_STUDIO_PHOTO.caption}

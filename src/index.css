@@ -9,6 +9,11 @@
   html {
     font-family: var(--font-sans);
     scroll-behavior: smooth;
+    overflow-x: clip;
+  }
+
+  body {
+    overflow-x: clip;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -24,6 +29,15 @@
 
 .editorial-pretty {
   text-wrap: pretty;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 @keyframes stream-marquee-left {

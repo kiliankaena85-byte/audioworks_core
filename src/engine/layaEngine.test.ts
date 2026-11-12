@@ -241,9 +241,15 @@ test('Waves 1-4 & HeroKoto Guardrails: verifies Koto 4-frame showreel, manifesto
     computeCaseHoverOffset,
     readSharedCaseIdFromLocation,
   } = await import('../data/casesData');
-  const { HERO_KOTO_FRAMES, KOTO_MIC_WIDGET_IMAGE } = await import(
-    '../data/audioworksCommercial'
-  );
+  const {
+    getCrashTestPhaseAtElapsed,
+    GREY_RADIO_MARQUEE_BASE,
+    HERO_KOTO_FRAMES,
+    HERO_LENS_FRAMES,
+    KOTO_LENS_MANIFESTO_PARAGRAPH,
+    KOTO_MIC_WIDGET_IMAGE,
+    ZERNO_DUEL_DATA,
+  } = await import('../data/audioworksCommercial');
   const { contrastAudioEngine } = await import('../audio/contrastAudioEngine');
 
   // Verify hover parallax micro-interaction math (center neutrality, counter-shift, clamping)
@@ -252,6 +258,50 @@ test('Waves 1-4 & HeroKoto Guardrails: verifies Koto 4-frame showreel, manifesto
   assert.deepEqual(computeCaseHoverOffset(100, 200, sampleRect, 10, 8), { x: 10, y: 8 });
   assert.deepEqual(computeCaseHoverOffset(500, 500, sampleRect, 10, 8), { x: -10, y: -8 });
   assert.deepEqual(computeCaseHoverOffset(900, 900, sampleRect, 10, 8), { x: -10, y: -8 });
+
+  // Verify HeroKotoLens 3-phase Crash-Test timeline math
+  assert.equal(getCrashTestPhaseAtElapsed(-1), 'idle');
+  assert.equal(getCrashTestPhaseAtElapsed(0), 'clutter');
+  assert.equal(getCrashTestPhaseAtElapsed(3.9), 'clutter');
+  assert.equal(getCrashTestPhaseAtElapsed(4.0), 'stop_pause');
+  assert.equal(getCrashTestPhaseAtElapsed(4.45), 'stop_pause');
+  assert.equal(getCrashTestPhaseAtElapsed(4.5), 'audioworks');
+  assert.equal(getCrashTestPhaseAtElapsed(12.0), 'audioworks');
+
+  // Verify HeroKotoLens 3 vivid AudioWorks frames & manifesto copy
+  assert.equal(HERO_LENS_FRAMES.length, 3);
+  assert.deepEqual(
+    HERO_LENS_FRAMES.map((f) => f.id),
+    ['taste', 'status', 'studio']
+  );
+  assert.equal(HERO_LENS_FRAMES[0].title, 'Звук, который вызывает аппетит');
+  assert.equal(
+    HERO_LENS_FRAMES[1].title,
+    'Пауза и достоинство вместо кричащих скидок'
+  );
+  assert.equal(HERO_LENS_FRAMES[2].title, 'Режиссура каждой секунды');
+  assert.ok(KOTO_LENS_MANIFESTO_PARAGRAPH.includes('3 000 ₽'));
+  assert.ok(KOTO_LENS_MANIFESTO_PARAGRAPH.includes('четырьмя чужими объявлениями'));
+
+  // Verify Zerno i Svet 15-second A/B Duel data & exact filename classifier
+  const { classifyUploadedDuelFilename } = await import('../audio/duelAudioStore');
+  assert.equal(
+    classifyUploadedDuelFilename('Зерно и свет 15_РАДИР _mixdown.wav'),
+    'radio'
+  );
+  assert.equal(
+    classifyUploadedDuelFilename('Зерно и свет 15_mixdown.wav'),
+    'audioworks'
+  );
+  assert.equal(ZERNO_DUEL_DATA.clientName, 'Кофейня «Зерно и Свет»');
+  assert.equal(ZERNO_DUEL_DATA.radioSpot.durationSec, 14);
+  assert.equal(ZERNO_DUEL_DATA.audioworksSpot.durationSec, 15);
+  assert.equal(ZERNO_DUEL_DATA.radioSpot.phrases.length, 5);
+  assert.equal(ZERNO_DUEL_DATA.audioworksSpot.phrases.length, 4);
+  assert.equal(
+    ZERNO_DUEL_DATA.audioworksSpot.phrases[0].text,
+    'Пробка на Ленинском… подождёт.'
+  );
 
   // Verify Koto Manifesto dynamic second line across all 5 Laya personas
   assert.equal(
@@ -291,24 +341,66 @@ test('Waves 1-4 & HeroKoto Guardrails: verifies Koto 4-frame showreel, manifesto
     'Собственный контроль качества на каждом этапе — от текста до паспорта ролика'
   );
 
-  // Verify custom .mp3/.wav showreel connection state on contrastAudioEngine
+  // Verify Lens expansion & custom .mp3/.wav showreel state on contrastAudioEngine
   assert.equal(contrastAudioEngine.getSnapshot().hasCustomAudio, false);
+  assert.equal(contrastAudioEngine.getSnapshot().isLensExpanded, false);
+
+  contrastAudioEngine.expandLensWithAudioWorks();
+  assert.equal(contrastAudioEngine.getSnapshot().isLensExpanded, true);
+  assert.equal(contrastAudioEngine.getSnapshot().crashPhase, 'audioworks');
+
+  contrastAudioEngine.collapseLensToSpotlight();
+  assert.equal(contrastAudioEngine.getSnapshot().isLensExpanded, false);
+  assert.equal(contrastAudioEngine.getSnapshot().crashPhase, 'idle');
+
   contrastAudioEngine.loadCustomShowreel('blob:http://localhost:3000/welcome-reel', 'welcome.wav', false);
   const loadedSnap = contrastAudioEngine.getSnapshot();
   assert.equal(loadedSnap.hasCustomAudio, true);
   assert.equal(loadedSnap.customAudioName, 'welcome.wav');
   assert.equal(loadedSnap.mode, 'focus');
+  assert.equal(loadedSnap.isLensExpanded, true);
 
   contrastAudioEngine.resetCustomShowreel();
   const resetSnap = contrastAudioEngine.getSnapshot();
   assert.equal(resetSnap.hasCustomAudio, false);
   assert.equal(resetSnap.customAudioName, null);
+  assert.equal(resetSnap.isLensExpanded, false);
+
+  const {
+    CLIENT_TESTIMONIALS,
+    getTestimonialsForFilterAndPersona,
+    TESTIMONIAL_FILTERS,
+  } = await import('../data/testimonialsData');
+
+  assert.equal(CLIENT_TESTIMONIALS.length, 4);
+  assert.equal(TESTIMONIAL_FILTERS.length, 5);
+  assert.equal(
+    getTestimonialsForFilterAndPersona('all', 'default')[0].id,
+    'dmitrogorsky-fmcg'
+  );
+  assert.equal(
+    getTestimonialsForFilterAndPersona('all', 'real_estate')[0].id,
+    'forma-estate'
+  );
+  assert.equal(
+    getTestimonialsForFilterAndPersona('all', 'returning_vip')[0].id,
+    'zerno-fast-launch'
+  );
+  assert.equal(getTestimonialsForFilterAndPersona('medical', 'default').length, 1);
+  assert.equal(
+    getTestimonialsForFilterAndPersona('medical', 'default')[0].id,
+    'veramed-clinics'
+  );
 
   const dump = JSON.stringify({
     LAYA_CONTENT_DICTIONARY,
     LAYA_SIMULATION_TRACES,
     HERO_CINEMA_SCENES,
     HERO_KOTO_FRAMES,
+    HERO_LENS_FRAMES,
+    GREY_RADIO_MARQUEE_BASE,
+    KOTO_LENS_MANIFESTO_PARAGRAPH,
+    ZERNO_DUEL_DATA,
     FLAGSHIP_STUDIO_REEL,
     BRAND_CASES,
     APPROACH_THESIS,
@@ -317,6 +409,8 @@ test('Waves 1-4 & HeroKoto Guardrails: verifies Koto 4-frame showreel, manifesto
     EDITORIAL_PRICING_ROWS,
     QUICK_ORDER_PILLS,
     EDITORIAL_FAQ_ITEMS,
+    CLIENT_TESTIMONIALS,
+    TESTIMONIAL_FILTERS,
   }).toLowerCase();
 
   const forbidden = [
@@ -338,3 +432,177 @@ test('Waves 1-4 & HeroKoto Guardrails: verifies Koto 4-frame showreel, manifesto
     assert.equal(dump.includes(word), false, `Found banned term: ${word}`);
   }
 });
+
+test('CompactHeaderNav logic: includes Галерея, Стоимость, FAQ and resolves active section & scroll target', async () => {
+  const {
+    COMPACT_NAV_ITEMS,
+    computeSmoothScrollTargetY,
+    resolveActiveSectionId,
+  } = await import('../data/navigationData');
+
+  const labels = COMPACT_NAV_ITEMS.map((item) => item.label);
+  assert.equal(labels.includes('Галерея'), true);
+  assert.equal(labels.includes('Стоимость'), true);
+  assert.equal(labels.includes('FAQ'), true);
+
+  const sampleBounds = [
+    { id: 'duel' as const, top: 600, bottom: 1300 },
+    { id: 'work' as const, top: 1300, bottom: 2500 },
+    { id: 'pricing' as const, top: 3200, bottom: 4000 },
+    { id: 'testimonials' as const, top: 4000, bottom: 4800 },
+    { id: 'faq' as const, top: 4800, bottom: 5400 },
+  ];
+
+  // Above first tracked section -> null
+  assert.equal(resolveActiveSectionId(sampleBounds, 148, false), null);
+
+  // Scrolled into Галерея (#work)
+  const inGallery = sampleBounds.map((b) => ({
+    ...b,
+    top: b.top - 1400,
+    bottom: b.bottom - 1400,
+  }));
+  assert.equal(resolveActiveSectionId(inGallery, 148, false), 'work');
+
+  // Scrolled into intervening #approach section between #work and #pricing -> keeps 'work' active
+  const inApproachGap = sampleBounds.map((b) => ({
+    ...b,
+    top: b.top - 2600,
+    bottom: b.bottom - 2600,
+  }));
+  assert.equal(resolveActiveSectionId(inApproachGap, 148, false), 'work');
+
+  // At very bottom of page -> highlights 'faq'
+  assert.equal(resolveActiveSectionId(inApproachGap, 148, true), 'faq');
+
+  // Smooth scroll target calculation clamps at >= 0 and accounts for sticky header offset
+  assert.equal(computeSmoothScrollTargetY(500, 200, 68), 632);
+  assert.equal(computeSmoothScrollTargetY(-300, 100, 68), 0);
+});
+
+test('CasesGallery per-card audio progress bar: fills only for active playing case and resets others', async () => {
+  const { computeCaseCardProgress } = await import('../data/casesData');
+
+  // Idle -> all cards unfilled
+  assert.deepEqual(computeCaseCardProgress('dmitrogorsky', false, null, 0.5), {
+    isActive: false,
+    mode: null,
+    ratio: 0,
+    percent: 0,
+  });
+
+  // Playing Dmitrogorsky at 38% -> fills Dmitrogorsky, keeps others at 0
+  assert.deepEqual(
+    computeCaseCardProgress('dmitrogorsky', true, 'dmitrogorsky', 0.384, 'full'),
+    {
+      isActive: true,
+      mode: 'full',
+      ratio: 0.384,
+      percent: 38,
+    }
+  );
+  assert.deepEqual(
+    computeCaseCardProgress('business-estate', true, 'dmitrogorsky', 0.384, 'full'),
+    {
+      isActive: false,
+      mode: null,
+      ratio: 0,
+      percent: 0,
+    }
+  );
+
+  // Initial playback start (progress = 0) -> shows subtle 0.02 visual spark while percent is 0
+  assert.deepEqual(
+    computeCaseCardProgress('medical-clinics', true, 'medical-clinics', 0, 'preview'),
+    {
+      isActive: true,
+      mode: 'preview',
+      ratio: 0.02,
+      percent: 0,
+    }
+  );
+
+  // Clamps out-of-range and NaN values safely
+  assert.deepEqual(
+    computeCaseCardProgress('audioworks-reel', true, 'audioworks-reel', 1.4, 'full'),
+    {
+      isActive: true,
+      mode: 'full',
+      ratio: 1,
+      percent: 100,
+    }
+  );
+  assert.deepEqual(
+    computeCaseCardProgress('audioworks-reel', true, 'audioworks-reel', Number.NaN, 'preview'),
+    {
+      isActive: true,
+      mode: 'preview',
+      ratio: 0.02,
+      percent: 0,
+    }
+  );
+});
+
+test('CasesGallery hover preview (3-5s): resolves curated preview windows and protects active full tracks', async () => {
+  const {
+    BRAND_CASES,
+    FLAGSHIP_STUDIO_REEL,
+    getCasePreviewWindow,
+    shouldStartHoverPreview,
+  } = await import('../data/casesData');
+  const { casePlayerEngine } = await import('../audio/casePlayerEngine');
+
+  // Every case has a 3-5 second curated preview window
+  for (const item of [FLAGSHIP_STUDIO_REEL, ...BRAND_CASES]) {
+    const win = getCasePreviewWindow(item);
+    assert.equal(win.durationSec >= 3 && win.durationSec <= 5, true);
+    assert.equal(win.endSec, Math.round((win.startSec + win.durationSec) * 100) / 100);
+  }
+
+  assert.deepEqual(getCasePreviewWindow(FLAGSHIP_STUDIO_REEL), {
+    startSec: 7.2,
+    durationSec: 4,
+    endSec: 11.2,
+  });
+  assert.deepEqual(getCasePreviewWindow(BRAND_CASES[0]), {
+    startSec: 15.6,
+    durationSec: 4,
+    endSec: 19.6,
+  });
+
+  // Clamps custom preview durations strictly into [3..5] seconds
+  assert.equal(
+    getCasePreviewWindow({ durationSec: 20, previewStartSec: 2, previewDurationSec: 1 }).durationSec,
+    3
+  );
+  assert.equal(
+    getCasePreviewWindow({ durationSec: 20, previewStartSec: 2, previewDurationSec: 9 }).durationSec,
+    5
+  );
+
+  // Hover guard: blocks touch pointers & never interrupts full playback, allows idle or switching previews
+  assert.equal(
+    shouldStartHoverPreview({ pointerType: 'touch', isPlaying: false, playbackMode: null }),
+    false
+  );
+  assert.equal(
+    shouldStartHoverPreview({ pointerType: 'mouse', isPlaying: true, playbackMode: 'full' }),
+    false
+  );
+  assert.equal(
+    shouldStartHoverPreview({ pointerType: 'mouse', isPlaying: false, playbackMode: null }),
+    true
+  );
+  assert.equal(
+    shouldStartHoverPreview({ pointerType: 'mouse', isPlaying: true, playbackMode: 'preview' }),
+    true
+  );
+
+  // Engine state check in headless/node environment: startPreview -> stopPreview -> clean idle
+  assert.equal(casePlayerEngine.getSnapshot().playbackMode, null);
+  casePlayerEngine.stop();
+  assert.equal(casePlayerEngine.getSnapshot().isPlaying, false);
+});
+
+
+
