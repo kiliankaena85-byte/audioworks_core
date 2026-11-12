@@ -11,9 +11,13 @@ import { useLayaDecision } from '../engine/LayaContext';
 
 interface TestimonialsSectionProps {
   onOpenQuickOrder?: () => void;
+  onNavigateRelated?: (href: string) => void;
 }
 
-export function TestimonialsSection({ onOpenQuickOrder }: TestimonialsSectionProps) {
+export function TestimonialsSection({
+  onOpenQuickOrder,
+  onNavigateRelated,
+}: TestimonialsSectionProps) {
   const { decision } = useLayaDecision();
   const [activeFilter, setActiveFilter] = useState<TestimonialCategory>('all');
 
@@ -192,6 +196,11 @@ export function TestimonialsSection({ onOpenQuickOrder }: TestimonialsSectionPro
 
                       <a
                         href={item.relatedHref}
+                        onClick={(e) => {
+                          if (!onNavigateRelated) return;
+                          e.preventDefault();
+                          onNavigateRelated(item.relatedHref);
+                        }}
                         className={`min-h-[44px] inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap shrink-0 self-start sm:self-auto ${
                           isFeaturedDark
                             ? 'text-[#FFB38A] hover:text-white'

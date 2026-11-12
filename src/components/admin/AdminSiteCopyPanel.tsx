@@ -154,7 +154,7 @@ export function AdminSiteCopyPanel({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `audioworks-cms-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    link.download = `fmworks-cms-backup-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -200,7 +200,7 @@ export function AdminSiteCopyPanel({
     setConfirmingReset(false);
     setFeedback({
       kind: 'ok',
-      text: 'Все тексты, дуэль и портфолио возвращены к заводскому эталону студии AudioWorks.',
+      text: 'Все тексты, дуэль и портфолио возвращены к заводскому эталону студии FMWorks.',
     });
   };
 
@@ -951,7 +951,7 @@ export function AdminSiteCopyPanel({
               Резервное копирование и возврат к эталону студии
             </h2>
             <p className="text-xs text-[#111111]/60 dark:text-[#F4F3EF]/60">
-              Сохраните полный снимок настроек на компьютер в один файл .json или верните заводские тексты и кейсы AudioWorks.
+              Сохраните полный снимок настроек на компьютер в один файл .json или верните заводские тексты и кейсы FMWorks.
             </p>
           </div>
 
@@ -984,7 +984,7 @@ export function AdminSiteCopyPanel({
 
           <div className="space-y-3">
             <h3 className="text-sm font-bold text-[#111111] dark:text-[#F4F3EF]">
-              Сброс к заводскому эталону AudioWorks
+              Сброс к заводскому эталону FMWorks
             </h3>
             <p className="text-xs text-[#111111]/60 dark:text-[#F4F3EF]/60 max-w-2xl">
               Восстанавливает исходное портфолио, дуэль «Зерно и Свет», блок исследований внимания ЦНС, тарифы и FAQ на сервере.

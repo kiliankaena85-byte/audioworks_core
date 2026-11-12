@@ -1,9 +1,16 @@
-export type NavSectionId = 'duel' | 'work' | 'pricing' | 'testimonials' | 'faq';
+export type NavSectionId =
+  | 'hot-air'
+  | 'duel'
+  | 'work'
+  | 'pricing'
+  | 'testimonials'
+  | 'faq';
 
 export interface CompactNavItem {
   id: NavSectionId;
   label: string;
   href: `#${NavSectionId}`;
+  isHotCapsule?: boolean;
 }
 
 export interface SectionViewportBounds {
@@ -16,6 +23,7 @@ export const COMPACT_HEADER_HEIGHT_PX = 56;
 export const COMPACT_SCROLL_OFFSET_PX = 68;
 
 export const COMPACT_NAV_ITEMS: readonly CompactNavItem[] = [
+  { id: 'hot-air', label: '🔥 Горящий эфир', href: '#hot-air', isHotCapsule: true },
   { id: 'duel', label: 'Сравнение', href: '#duel' },
   { id: 'work', label: 'Галерея', href: '#work' },
   { id: 'pricing', label: 'Стоимость', href: '#pricing' },

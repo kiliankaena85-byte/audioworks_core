@@ -1,4 +1,4 @@
-import { Check, Pause, Play, Share2 } from 'lucide-react';
+import { ArrowUpRight, Check, Pause, Play, Share2 } from 'lucide-react';
 import {
   motion,
   useMotionValue,
@@ -37,6 +37,7 @@ interface CasesGalleryProps {
   onToggleCase: (item: BrandCasePoster) => void;
   onStartPreview?: (item: BrandCasePoster) => void;
   onStopPreview?: (caseId: CaseId) => void;
+  onOpenCaseDetail?: (caseId: CaseId) => void;
 }
 
 function copyTextFallback(text: string): boolean {
@@ -350,6 +351,7 @@ interface StudioCommercialStripProps {
   onStartPreview?: (item: BrandCasePoster) => void;
   onStopPreview?: (caseId: CaseId) => void;
   onShare: (item: BrandCasePoster) => void;
+  onOpenCaseDetail?: (caseId: CaseId) => void;
 }
 
 function StudioCommercialStrip({
@@ -365,6 +367,7 @@ function StudioCommercialStrip({
   onStartPreview,
   onStopPreview,
   onShare,
+  onOpenCaseDetail,
 }: StudioCommercialStripProps) {
   const stripRef = useRef<HTMLDivElement | null>(null);
   const isReelFullPlaying = progress.isActive && progress.mode === 'full';
@@ -492,6 +495,21 @@ function StudioCommercialStrip({
             isCopied={isCopied}
             onShare={onShare}
           />
+
+          {onOpenCaseDetail && (
+            <button
+              type="button"
+              data-testid={`open-case-detail-${reel.id}`}
+              onClick={() => {
+                clearPendingTimer();
+                onOpenCaseDetail(reel.id);
+              }}
+              className="min-h-[44px] px-4 py-2.5 rounded-full inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold bg-white/10 hover:bg-white/20 text-white border border-white/18 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <span>Разбор</span>
+              <ArrowUpRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -521,6 +539,7 @@ interface BrandCaseCardProps {
   onStartPreview?: (item: BrandCasePoster) => void;
   onStopPreview?: (caseId: CaseId) => void;
   onShare: (item: BrandCasePoster) => void;
+  onOpenCaseDetail?: (caseId: CaseId) => void;
 }
 
 function BrandCaseCard({
@@ -537,6 +556,7 @@ function BrandCaseCard({
   onStartPreview,
   onStopPreview,
   onShare,
+  onOpenCaseDetail,
 }: BrandCaseCardProps) {
   const cardRef = useRef<HTMLElement | null>(null);
   const isFlagshipWide = index === 0;
@@ -650,6 +670,21 @@ function BrandCaseCard({
                 </button>
 
                 <ShareCaseButton item={item} isCopied={isCopied} onShare={onShare} />
+
+                {onOpenCaseDetail && (
+                  <button
+                    type="button"
+                    data-testid={`open-case-detail-${item.id}`}
+                    onClick={() => {
+                      clearPendingTimer();
+                      onOpenCaseDetail(item.id);
+                    }}
+                    className="min-h-[44px] px-4 py-2.5 rounded-full inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold bg-white/10 hover:bg-white/20 text-white border border-white/18 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    <span>Сценарий</span>
+                    <ArrowUpRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  </button>
+                )}
               </div>
 
               {isThisFullPlaying && (
@@ -797,6 +832,21 @@ function BrandCaseCard({
               </button>
 
               <ShareCaseButton item={item} isCopied={isCopied} onShare={onShare} />
+
+              {onOpenCaseDetail && (
+                <button
+                  type="button"
+                  data-testid={`open-case-detail-${item.id}`}
+                  onClick={() => {
+                    clearPendingTimer();
+                    onOpenCaseDetail(item.id);
+                  }}
+                  className="min-h-[44px] px-4 py-2.5 rounded-full inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold bg-black/45 hover:bg-black/65 text-white border border-white/20 backdrop-blur-md transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  <span>Сценарий</span>
+                  <ArrowUpRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                </button>
+              )}
             </div>
 
             {isThisFullPlaying && (
@@ -826,6 +876,7 @@ export function CasesGallery({
   onToggleCase,
   onStartPreview,
   onStopPreview,
+  onOpenCaseDetail,
 }: CasesGalleryProps) {
   const { decision } = useLayaDecision();
   const { snapshot } = useStudioCms();
@@ -877,9 +928,11 @@ export function CasesGallery({
 
   const handleShareCase = async (item: BrandCasePoster) => {
     if (typeof window === 'undefined') return;
-    const shareUrl = buildCaseShareUrl(window.location.href, item.id);
+    const shareUrl = window.location.origin
+      ? `${window.location.origin}/cases/${encodeURIComponent(item.id)}`
+      : buildCaseShareUrl(window.location.href, item.id);
     const sharePayload = {
-      title: `${item.client} — AudioWorks`,
+      title: `${item.client} — FMWorks`,
       text: `${item.headline} (${item.tag})`,
       url: shareUrl,
     };
@@ -960,6 +1013,7 @@ export function CasesGallery({
             onStartPreview={onStartPreview}
             onStopPreview={onStopPreview}
             onShare={handleShareCase}
+            onOpenCaseDetail={onOpenCaseDetail}
           />
         )}
 
@@ -986,6 +1040,7 @@ export function CasesGallery({
               onStartPreview={onStartPreview}
               onStopPreview={onStopPreview}
               onShare={handleShareCase}
+              onOpenCaseDetail={onOpenCaseDetail}
             />
           ))}
         </div>

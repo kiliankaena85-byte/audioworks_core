@@ -23,6 +23,13 @@ export interface LayaVisitorState {
   simulationTraceId?: string;
 }
 
+export type LayaMediaNicheHint =
+  | 'real_estate'
+  | 'b2b_finance'
+  | 'fmcg_retail'
+  | 'medicine'
+  | 'auto_services';
+
 /**
  * Типизированный контракт решения Laya AI (System 1 Decision Engine).
  */
@@ -31,6 +38,10 @@ export interface LayaDecision {
   choice: LayaPersona;
   /** Предварительная гипотеза до проверки порога уверенности */
   rawChoice: LayaPersona;
+  /** Целевая ниша для автоматической предсборки эфирной сетки в MediaGridPlanner */
+  mediaNiche?: LayaMediaNicheHint;
+  /** Отображаемая метка активного сигнала (например 'medicine' для нишевых кампаний) */
+  profileBadgeLabel?: string;
   /** Оценка горячести намерения 1..5 */
   intentScore: 1 | 2 | 3 | 4 | 5;
   /** Рекомендуемый ценовой формат (15k / 25k / 35k) */

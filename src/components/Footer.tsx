@@ -1,9 +1,14 @@
 import { Check, Copy } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { MouseEvent as ReactMouseEvent, useEffect, useState } from 'react';
 import { BrandDomainVariant } from '../data/brandKitData';
+import {
+  buildPlatformPath,
+  MAIN_PLATFORM_NAV_ITEMS,
+  PlatformRoute,
+} from '../data/platformRouter';
 import { BrandLogo } from './BrandLogo';
 
-const STUDIO_EMAIL = 'hello@audioworks.ru';
+const STUDIO_EMAIL = 'hello@fmworks.ru';
 
 function readStudioTimeHHMM(): string {
   const now = new Date();
@@ -33,12 +38,28 @@ interface FooterProps {
   brandVariant?: BrandDomainVariant;
   onOpenBrandKit?: () => void;
   onOpenAdmin?: () => void;
+  onNavigate?: (route: PlatformRoute) => void;
 }
 
+const FOOTER_INDUSTRY_LINKS: readonly { label: string; route: PlatformRoute }[] = [
+  { label: 'ЖК и девелопмент', route: { kind: 'industry-detail', industrySlug: 'real-estate' } },
+  { label: 'Медицина и клиники', route: { kind: 'industry-detail', industrySlug: 'medicine' } },
+  { label: 'Ритейл и FMCG', route: { kind: 'industry-detail', industrySlug: 'retail-fmcg' } },
+  { label: 'B2B и финансы', route: { kind: 'industry-detail', industrySlug: 'b2b-finance' } },
+] as const;
+
+const FOOTER_STATION_LINKS: readonly { label: string; route: PlatformRoute }[] = [
+  { label: 'Business FM', route: { kind: 'station-detail', stationSlug: 'business-fm' } },
+  { label: 'Радио Monte Carlo', route: { kind: 'station-detail', stationSlug: 'monte-carlo' } },
+  { label: 'Авторадио', route: { kind: 'station-detail', stationSlug: 'avtoradio' } },
+  { label: 'Европа Плюс', route: { kind: 'station-detail', stationSlug: 'europa-plus' } },
+] as const;
+
 export function Footer({
-  brandVariant = 'audioworks_reg',
+  brandVariant = 'fmworks_reg',
   onOpenBrandKit,
   onOpenAdmin,
+  onNavigate,
 }: FooterProps = {}) {
   const [studioTime, setStudioTime] = useState<string>(() => readStudioTimeHHMM());
   const [isEmailCopied, setIsEmailCopied] = useState<boolean>(false);
@@ -71,13 +92,19 @@ export function Footer({
     }
   };
 
+  const handleRouteClick = (e: ReactMouseEvent<HTMLAnchorElement>, route: PlatformRoute) => {
+    if (!onNavigate) return;
+    e.preventDefault();
+    onNavigate(route);
+  };
+
   return (
     <footer
       id="contacts"
       className="scroll-mt-20 pt-16 pb-24 sm:py-20 lg:py-28 border-t border-[#111111]/10 dark:border-[#F4F3EF]/10"
     >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 space-y-10 sm:space-y-12 lg:space-y-16">
-        {/* Единый студийный блок без гео-рамок */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 space-y-12 sm:space-y-14 lg:space-y-16">
+        {/* Верхний блок контакта продюсеров */}
         <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-8 sm:gap-10">
           <div className="space-y-4 sm:space-y-5 max-w-xl">
             <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs sm:text-sm font-medium text-[#111111]/65 dark:text-[#F4F3EF]/65 tabular-nums">
@@ -96,11 +123,10 @@ export function Footer({
             </div>
 
             <p className="text-2xl sm:text-3xl font-bold tracking-tight leading-snug text-[#111111] dark:text-[#F4F3EF] editorial-balance">
-              Аудиопродакшн полного цикла для амбициозных брендов.
+              Аудиопродакшн полного цикла и прямая бронь эфира для амбициозных брендов.
             </p>
           </div>
 
-          {/* Копируемый в 1 клик email hello@audioworks.ru (без горизонтального скролла на узких телефонах) */}
           <div className="flex flex-col items-start lg:items-end gap-2">
             <p className="text-xs font-medium text-[#111111]/55 dark:text-[#F4F3EF]/55">
               Прямая почта продюсеров · скопировать в 1 клик
@@ -136,7 +162,100 @@ export function Footer({
           </div>
         </div>
 
-        {/* Нижняя строка копирайта с векторным логотипом студии */}
+        {/* Многостраничная карта разделов платформы */}
+        <nav
+          aria-label="Карта разделов платформы FMWorks"
+          className="pt-10 border-t border-[#111111]/10 dark:border-[#F4F3EF]/10 grid grid-cols-1 sm:grid-cols-3 gap-8 lg:gap-12 text-sm"
+        >
+          <div className="space-y-3">
+            <p className="text-xs font-semibold text-[#111111]/50 dark:text-[#F4F3EF]/50">
+              Разделы платформы
+            </p>
+            <ul className="space-y-2">
+              {MAIN_PLATFORM_NAV_ITEMS.map((item) => {
+                const route: PlatformRoute =
+                  item.key === 'home'
+                    ? { kind: 'home' }
+                    : item.key === 'hot-air'
+                      ? { kind: 'hot-air' }
+                      : item.key === 'cases'
+                        ? { kind: 'cases' }
+                        : item.key === 'pricing'
+                          ? { kind: 'pricing' }
+                          : { kind: 'approach' };
+                return (
+                  <li key={item.key}>
+                    <a
+                      href={item.href}
+                      onClick={(e) => handleRouteClick(e, route)}
+                      className="inline-flex py-0.5 text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors"
+                    >
+                      {item.label}
+                    </a>
+                  </li>
+                );
+              })}
+              <li>
+                <a
+                  href="/order"
+                  onClick={(e) => handleRouteClick(e, { kind: 'order' })}
+                  className="inline-flex py-0.5 font-semibold text-[#FF4820] hover:underline"
+                >
+                  Оформление брони и заказа →
+                </a>
+              </li>
+            </ul>
+          </div>
+
+          <div className="space-y-3">
+            <p className="text-xs font-semibold text-[#111111]/50 dark:text-[#F4F3EF]/50">
+              Отраслевые решения
+            </p>
+            <ul className="space-y-2">
+              {FOOTER_INDUSTRY_LINKS.map((entry) => (
+                <li key={entry.label}>
+                  <a
+                    href={buildPlatformPath(entry.route)}
+                    onClick={(e) => handleRouteClick(e, entry.route)}
+                    className="inline-flex py-0.5 text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors"
+                  >
+                    {entry.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="space-y-3">
+            <p className="text-xs font-semibold text-[#111111]/50 dark:text-[#F4F3EF]/50">
+              Карточки радиостанций
+            </p>
+            <ul className="space-y-2">
+              {FOOTER_STATION_LINKS.map((entry) => (
+                <li key={entry.label}>
+                  <a
+                    href={buildPlatformPath(entry.route)}
+                    onClick={(e) => handleRouteClick(e, entry.route)}
+                    className="inline-flex py-0.5 text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors"
+                  >
+                    {entry.label}
+                  </a>
+                </li>
+              ))}
+              <li>
+                <a
+                  href="/hot-air"
+                  onClick={(e) => handleRouteClick(e, { kind: 'hot-air' })}
+                  className="inline-flex py-0.5 text-[#111111]/58 dark:text-[#F4F3EF]/58 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors"
+                >
+                  Все 12 радиостанций и слоты →
+                </a>
+              </li>
+            </ul>
+          </div>
+        </nav>
+
+        {/* Нижняя строка копирайта */}
         <div className="pt-8 border-t border-[#111111]/10 dark:border-[#F4F3EF]/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-sm text-[#111111]/62 dark:text-[#F4F3EF]/62">
           <div className="flex flex-wrap items-center gap-3">
             <BrandLogo
@@ -144,11 +263,22 @@ export function Footer({
               size="sm"
               onOpenBrandKit={onOpenBrandKit}
             />
-            <span aria-hidden="true" className="opacity-35">
-              —
-            </span>
             <span className="font-medium text-[#111111]/78 dark:text-[#F4F3EF]/78">
-              Аудиореклама, которая работает
+              FMWorks® — Аудиореклама, которая работает •{' '}
+              <a
+                href="/"
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (onNavigate) {
+                    onNavigate({ kind: 'home' });
+                  } else {
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }
+                }}
+                className="hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors"
+              >
+                fmworks.ru
+              </a>
             </span>
           </div>
 
@@ -172,7 +302,7 @@ export function Footer({
               href={`mailto:${STUDIO_EMAIL}`}
               className="min-h-[44px] inline-flex items-center hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors whitespace-nowrap"
             >
-              audioworks.ru
+              {STUDIO_EMAIL}
             </a>
           </div>
         </div>

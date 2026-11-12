@@ -27,7 +27,7 @@ export const HERO_CINEMA_SCENES: HeroCinemaScene[] = [
     tabLabel: '01 Студия ON AIR',
     imageUrl:
       'https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?auto=format&fit=crop&w=1800&q=85',
-    imageAlt: 'Тёплый контровой свет звуковой студии AudioWorks и студийного микрофона',
+    imageAlt: 'Тёплый контровой свет звуковой студии FMWorks и студийного микрофона',
     caption: 'Сильная реклама не кричит в ухо — она включает кино в голове',
     subcaption: 'Режиссёрская запись редких актёров дубляжа и выверенная драматургия паузы',
     showOnAirBadge: true,
@@ -96,7 +96,7 @@ export const HERO_KOTO_FRAMES: KotoShowreelFrame[] = [
     subtitle: 'Тёплая акустика, живая подача без рекламного крика',
     imageUrl:
       'https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?auto=format&fit=crop&w=2000&q=85',
-    imageAlt: 'Тёплая атмосфера звуковой студии AudioWorks в контровом свете',
+    imageAlt: 'Тёплая атмосфера звуковой студии FMWorks в контровом свете',
     exposureClass: 'brightness-[1.24] contrast-[1.06] saturate-[1.12]',
   },
   {
@@ -218,11 +218,11 @@ export const HERO_LENS_FRAMES: LensShowreelFrame[] = [
     id: 'studio',
     indexLabel: '03',
     shortLabel: 'Студия',
-    kicker: '03 · Студия AudioWorks',
+    kicker: '03 · Студия FMWorks',
     title: 'Режиссура каждой секунды',
     imageUrl:
       'https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?auto=format&fit=crop&w=2000&q=85',
-    imageAlt: 'Звуковая студия AudioWorks в тёплом контровом свете — кадр «Студия AudioWorks»',
+    imageAlt: 'Звуковая студия FMWorks в тёплом контровом свете — кадр «Студия FMWorks»',
     fallbackGradient: 'bg-gradient-to-br from-[#2B1812] via-[#1B1210] to-[#0E0D10]',
     exposureClass: 'brightness-[1.22] contrast-[1.06] saturate-[1.12]',
   },
@@ -297,7 +297,7 @@ export const ZERNO_DUEL_DATA: {
   },
   audioworksSpot: {
     id: 'audioworks_craft',
-    badge: 'Исполнение AudioWorks',
+    badge: '15 секунд в FMWorks: Выстрел в память',
     title: 'Одна точная сцена и одно действие голосом',
     durationSec: 15,
     durationLabel: '0:15',
@@ -443,7 +443,7 @@ export const AUDIOWORKS_REEL_CHAPTERS: CommercialChapter[] = [
     startSec: 56.5,
     endSec: 80.0,
     mode: 'focus',
-    eyebrow: 'Финал · Почерк AudioWorks',
+    eyebrow: 'Финал · Почерк FMWorks',
     words: [
       'Пока',
       'обычные',

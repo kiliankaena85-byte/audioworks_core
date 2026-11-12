@@ -10,6 +10,12 @@ import {
 export interface StudioCmsContextValue extends StudioCmsState {
   login: (password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   logout: () => Promise<void>;
+  updateLocalSnapshot: (
+    updater:
+      | StudioCmsSnapshot
+      | ((prev: StudioCmsSnapshot) => StudioCmsSnapshot)
+  ) => StudioCmsSnapshot;
+  discardLocalChanges: () => void;
   saveSnapshot: (
     candidate: StudioCmsSnapshot
   ) => Promise<
@@ -21,10 +27,14 @@ export interface StudioCmsContextValue extends StudioCmsState {
   >;
   uploadAudioFile: (
     file: File
-  ) => Promise<{ ok: true; result: UploadedAudioResult } | { ok: false; error: string }>;
+  ) => Promise<
+    { ok: true; result: UploadedAudioResult } | { ok: false; error: string }
+  >;
   uploadImageFile: (
     file: File
-  ) => Promise<{ ok: true; result: UploadedImageResult } | { ok: false; error: string }>;
+  ) => Promise<
+    { ok: true; result: UploadedImageResult } | { ok: false; error: string }
+  >;
   refreshContent: () => Promise<void>;
 }
 
@@ -43,6 +53,8 @@ export function StudioCmsProvider({ children }: { children: ReactNode }) {
     ...cmsState,
     login: (password) => studioCmsStore.login(password),
     logout: () => studioCmsStore.logout(),
+    updateLocalSnapshot: (updater) => studioCmsStore.updateLocalSnapshot(updater),
+    discardLocalChanges: () => studioCmsStore.discardLocalChanges(),
     saveSnapshot: (candidate) => studioCmsStore.saveSnapshot(candidate),
     resetToDefaults: () => studioCmsStore.resetToDefaults(),
     uploadAudioFile: (file) => studioCmsStore.uploadAudioFile(file),

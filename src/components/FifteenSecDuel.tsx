@@ -339,7 +339,10 @@ export function FifteenSecDuel() {
                   : 'text-[#FF4820] font-semibold'
               }
             >
-              {spec.badge || (isRadio ? 'Обычный ролик «под радио»' : 'Наш пример · AudioWorks')}
+              {spec.badge ||
+                (isRadio
+                  ? 'Обычный ролик «под радио»'
+                  : '15 секунд в FMWorks: Выстрел в память')}
             </span>
             <span
               className={

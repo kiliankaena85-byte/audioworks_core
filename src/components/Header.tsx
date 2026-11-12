@@ -22,7 +22,7 @@ export function Header({
             href="#top"
             className="text-xl font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF] whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#FF4820]"
           >
-            Audioworks<sup className="text-xs font-semibold ml-0.5 opacity-75">®</sup>
+            FMWorks<sup className="text-xs font-semibold ml-0.5 opacity-75">®</sup>
           </a>
 
           <span

@@ -4,8 +4,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import express, { Request, Response, NextFunction } from 'express';
-import type { StudioCmsSnapshot } from './src/data/studioCmsTypes';
+import express from 'express';
+import type { Request, Response, NextFunction } from 'express';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
+import type { StudioCmsSnapshot } from './src/data/studioCmsTypes.ts';
+import {
+  computeLeadPayloadFingerprint,
+  evaluateLeadSubmissionSecurity,
+  inspectBriefForSpamSignals,
+  RateLimiter,
+  resolveLeadFormRateScope,
+  SECURITY_DEFENSE_LAYERS,
+  verifyLeadChallengePow,
+} from './src/security/leadShield.ts';
 
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
@@ -19,6 +30,7 @@ const DIST_CMS_MEDIA_DIR = path.join(__dirname, 'dist', 'assets', 'cms');
 const CMS_DATA_DIR = path.join(__dirname, '.data');
 const CMS_SNAPSHOT_FILE = path.join(CMS_DATA_DIR, 'studio-cms.json');
 const CMS_BACKUP_FILE = path.join(CMS_DATA_DIR, 'studio-cms.last-reset.bak.json');
+const SECURITY_LEADS_FILE = path.join(CMS_DATA_DIR, 'studio-security-leads.json');
 
 const MAIN_PROMO_FILENAME = 'Audioworks_75c6023f.wav';
 const CANONICAL_RADIO_FILE = 'zerno_radio_15.wav';
@@ -259,8 +271,12 @@ async function resolveDuelTracksOnDisk(): Promise<{
   audioworks: ResolvedTrackInfo;
   isReadyOnServer: boolean;
 }> {
-  fs.mkdirSync(PUBLIC_AUDIO_DIR, { recursive: true });
-  const entries = fs.readdirSync(PUBLIC_AUDIO_DIR);
+  try {
+    fs.mkdirSync(PUBLIC_AUDIO_DIR, { recursive: true });
+  } catch {
+    // Ignore read-only fs in restricted containers
+  }
+  const entries = fs.existsSync(PUBLIC_AUDIO_DIR) ? fs.readdirSync(PUBLIC_AUDIO_DIR) : [];
 
   let radioFile: string | null = entries.includes(CANONICAL_RADIO_FILE)
     ? CANONICAL_RADIO_FILE
@@ -318,10 +334,267 @@ async function resolveDuelTracksOnDisk(): Promise<{
   };
 }
 
+interface StoredVerifiedLeadRecord {
+  id: string;
+  orderNumber: string;
+  createdAt: string;
+  checkoutMode: 'air_plus_production' | 'production_only';
+  formatLabel: string;
+  totalBudgetRub: number | null;
+  contact: string;
+  companyOrInn: string;
+  innVerified: boolean;
+  channel: string;
+  briefExcerpt: string;
+  hasVoiceRecording: boolean;
+  hasAttachedFile: boolean;
+}
+
+interface StoredQuarantinedBotRecord {
+  id: string;
+  createdAt: string;
+  ipHash: string;
+  riskScore: number;
+  reasons: string[];
+  maskedContact: string;
+  briefPreview: string;
+}
+
+interface PersistedSecurityStore {
+  verifiedCount: number;
+  quarantinedCount: number;
+  rateLimitedCount: number;
+  authBruteForceBlocks: number;
+  aiQuotaShieldBlocks: number;
+  verifiedLeads: StoredVerifiedLeadRecord[];
+  quarantinedLeads: StoredQuarantinedBotRecord[];
+}
+
+let cachedSecurityStore: PersistedSecurityStore | null = null;
+const consumedChallengeNonces = new Map<string, number>();
+const recentLeadFingerprints = new Map<string, number>();
+
+function createEmptySecurityStore(): PersistedSecurityStore {
+  return {
+    verifiedCount: 0,
+    quarantinedCount: 0,
+    rateLimitedCount: 0,
+    authBruteForceBlocks: 0,
+    aiQuotaShieldBlocks: 0,
+    verifiedLeads: [],
+    quarantinedLeads: [],
+  };
+}
+
+function readSecurityStore(): PersistedSecurityStore {
+  if (cachedSecurityStore) return cachedSecurityStore;
+  try {
+    if (!fs.existsSync(SECURITY_LEADS_FILE)) {
+      cachedSecurityStore = createEmptySecurityStore();
+      return cachedSecurityStore;
+    }
+    const raw = JSON.parse(
+      fs.readFileSync(SECURITY_LEADS_FILE, 'utf8')
+    ) as Partial<PersistedSecurityStore>;
+    cachedSecurityStore = {
+      verifiedCount: typeof raw.verifiedCount === 'number' ? raw.verifiedCount : 0,
+      quarantinedCount: typeof raw.quarantinedCount === 'number' ? raw.quarantinedCount : 0,
+      rateLimitedCount: typeof raw.rateLimitedCount === 'number' ? raw.rateLimitedCount : 0,
+      authBruteForceBlocks:
+        typeof raw.authBruteForceBlocks === 'number' ? raw.authBruteForceBlocks : 0,
+      aiQuotaShieldBlocks:
+        typeof raw.aiQuotaShieldBlocks === 'number' ? raw.aiQuotaShieldBlocks : 0,
+      verifiedLeads: Array.isArray(raw.verifiedLeads) ? raw.verifiedLeads : [],
+      quarantinedLeads: Array.isArray(raw.quarantinedLeads) ? raw.quarantinedLeads : [],
+    };
+    return cachedSecurityStore;
+  } catch {
+    cachedSecurityStore = createEmptySecurityStore();
+    return cachedSecurityStore;
+  }
+}
+
+function writeSecurityStore(store: PersistedSecurityStore): void {
+  cachedSecurityStore = store;
+  try {
+    fs.mkdirSync(CMS_DATA_DIR, { recursive: true });
+    const tmp = path.join(
+      CMS_DATA_DIR,
+      `.security.${Date.now()}.${Math.random().toString(36).slice(2, 7)}.tmp`
+    );
+    fs.writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf8');
+    fs.renameSync(tmp, SECURITY_LEADS_FILE);
+  } catch {
+    // В контейнере только для чтения сохраняем состояние в оперативной памяти процесса
+  }
+}
+
+function resolveClientIp(req: Request): string {
+  const xff = req.headers['x-forwarded-for'];
+  if (typeof xff === 'string' && xff.trim()) {
+    return xff.split(',')[0].trim();
+  }
+  return req.socket.remoteAddress || '127.0.0.1';
+}
+
+function hashIpForAudit(ip: string): string {
+  return crypto
+    .createHmac('sha256', getSessionSecret())
+    .update(ip)
+    .digest('hex')
+    .slice(0, 10);
+}
+
+function createSlidingWindowRateLimiter(
+  maxHits: number,
+  windowMs: number,
+  minIntervalMs = 0
+) {
+  const limiter = new RateLimiter({
+    maxAttempts: maxHits,
+    windowMs,
+    minIntervalMs,
+    storage: null,
+  });
+  return {
+    check(key: string) {
+      return limiter.check(key);
+    },
+    consume(key: string) {
+      return limiter.consume(key);
+    },
+    resetKey(key: string): void {
+      limiter.reset(key);
+    },
+  };
+}
+
+const loginFailureLimiter = createSlidingWindowRateLimiter(8, 15 * 60 * 1000, 0);
+const orderSubmitLimiter = createSlidingWindowRateLimiter(5, 10 * 60 * 1000, 1000);
+const orderValidationBurstLimiter = createSlidingWindowRateLimiter(15, 5 * 60 * 1000, 0);
+const aiRecommendLimiter = createSlidingWindowRateLimiter(15, 5 * 60 * 1000, 0);
+const duelUploadLimiter = createSlidingWindowRateLimiter(12, 10 * 60 * 1000, 0);
+
+const LEAD_CHALLENGE_TTL_MS = 2 * 60 * 60 * 1000;
+const LEAD_POW_DIFFICULTY = 3;
+
+function issueLeadChallenge() {
+  const issuedAt = Date.now();
+  const expiresAt = issuedAt + LEAD_CHALLENGE_TTL_MS;
+  const nonce = crypto.randomBytes(12).toString('hex');
+  const salt = `fmw-${nonce.slice(0, 12)}-${issuedAt.toString(36)}`;
+  const payload = Buffer.from(
+    JSON.stringify({
+      nonce,
+      salt,
+      difficulty: LEAD_POW_DIFFICULTY,
+      iat: issuedAt,
+      exp: expiresAt,
+    }),
+    'utf8'
+  ).toString('base64url');
+  const sig = crypto
+    .createHmac('sha256', getSessionSecret())
+    .update(payload)
+    .digest('base64url');
+  return {
+    challengeToken: `${payload}.${sig}`,
+    salt,
+    difficulty: LEAD_POW_DIFFICULTY,
+    issuedAt,
+    expiresAt,
+  };
+}
+
+function verifyLeadChallengeToken(rawToken: string): {
+  valid: boolean;
+  nonce: string;
+  salt: string;
+  difficulty: number;
+  alreadyUsed: boolean;
+} {
+  if (!rawToken || typeof rawToken !== 'string') {
+    return { valid: false, nonce: '', salt: '', difficulty: LEAD_POW_DIFFICULTY, alreadyUsed: false };
+  }
+  const parts = rawToken.trim().split('.');
+  if (parts.length !== 2) {
+    return { valid: false, nonce: '', salt: '', difficulty: LEAD_POW_DIFFICULTY, alreadyUsed: false };
+  }
+  const [payload, sig] = parts;
+  if (!payload || !sig) {
+    return { valid: false, nonce: '', salt: '', difficulty: LEAD_POW_DIFFICULTY, alreadyUsed: false };
+  }
+  const expectedSig = crypto
+    .createHmac('sha256', getSessionSecret())
+    .update(payload)
+    .digest('base64url');
+  if (!safeCompareStrings(sig, expectedSig)) {
+    return { valid: false, nonce: '', salt: '', difficulty: LEAD_POW_DIFFICULTY, alreadyUsed: false };
+  }
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
+      nonce?: string;
+      salt?: string;
+      difficulty?: number;
+      exp?: number;
+    };
+    if (
+      !parsed.nonce ||
+      !parsed.salt ||
+      typeof parsed.exp !== 'number' ||
+      parsed.exp < Date.now()
+    ) {
+      return { valid: false, nonce: '', salt: '', difficulty: LEAD_POW_DIFFICULTY, alreadyUsed: false };
+    }
+    const now = Date.now();
+    for (const [k, expTs] of consumedChallengeNonces.entries()) {
+      if (expTs < now) consumedChallengeNonces.delete(k);
+    }
+    const alreadyUsed = consumedChallengeNonces.has(parsed.nonce);
+    return {
+      valid: true,
+      nonce: parsed.nonce,
+      salt: parsed.salt,
+      difficulty: typeof parsed.difficulty === 'number' ? parsed.difficulty : LEAD_POW_DIFFICULTY,
+      alreadyUsed,
+    };
+  } catch {
+    return { valid: false, nonce: '', salt: '', difficulty: LEAD_POW_DIFFICULTY, alreadyUsed: false };
+  }
+}
+
+function hasValidAudioMagicBytes(buf: Buffer): boolean {
+  if (buf.length < 16) return false;
+  const head4 = buf.subarray(0, 4).toString('latin1');
+  if (head4 === 'RIFF' || head4 === 'OggS' || head4 === 'fLaC') return true;
+  if (buf.subarray(0, 3).toString('latin1') === 'ID3') return true;
+  if (buf.subarray(4, 8).toString('latin1') === 'ftyp') return true;
+  // MPEG ADTS sync word
+  if (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) return true;
+  return false;
+}
+
 async function startServer() {
   const app = express();
+  app.disable('x-powered-by');
 
-  fs.mkdirSync(PUBLIC_CMS_MEDIA_DIR, { recursive: true });
+  // Безопасные HTTP-заголовки (совместимые с превью в iframe и записью голосового ТЗ)
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+    res.setHeader(
+      'Permissions-Policy',
+      'camera=(), geolocation=(), payment=(), usb=(), microphone=(self)'
+    );
+    next();
+  });
+
+  try {
+    fs.mkdirSync(PUBLIC_CMS_MEDIA_DIR, { recursive: true });
+  } catch {
+    // Ignore read-only fs in restricted containers
+  }
   app.use(
     '/assets/cms',
     express.static(PUBLIC_CMS_MEDIA_DIR, {
@@ -342,6 +615,7 @@ async function startServer() {
   });
 
   app.post('/api/cms/auth/login', express.json({ limit: '64kb' }), (req, res) => {
+    const clientIp = resolveClientIp(req);
     const rawPassword =
       req.body && typeof req.body.password === 'string'
         ? req.body.password.trim()
@@ -352,11 +626,24 @@ async function startServer() {
       return;
     }
 
+    const rateCheck = loginFailureLimiter.consume(clientIp);
+    if (!rateCheck.allowed) {
+      const store = readSecurityStore();
+      store.authBruteForceBlocks += 1;
+      writeSecurityStore(store);
+      res.setHeader('Retry-After', String(rateCheck.retryAfterSec));
+      res.status(429).json({
+        error: `Слишком много попыток входа. Повторите через ${rateCheck.retryAfterSec} сек.`,
+      });
+      return;
+    }
+
     if (!safeCompareStrings(rawPassword, getStudioAdminPassword())) {
       res.status(401).json({ error: 'Неверный пароль студии. Проверьте раскладку и попробуйте снова.' });
       return;
     }
 
+    loginFailureLimiter.resetKey(clientIp);
     const session = issueAdminToken();
     res.json({
       ok: true,
@@ -587,6 +874,508 @@ async function startServer() {
   );
 
   // =========================================================================
+  // Anti-Spam, Anti-Bot & Paid-Traffic Lead Shield Gateway
+  // =========================================================================
+
+  app.get('/api/security/challenge', (_req, res) => {
+    const challenge = issueLeadChallenge();
+    res.json({
+      ok: true,
+      ...challenge,
+    });
+  });
+
+  app.post('/api/orders/submit', express.json({ limit: '64kb' }), (req, res) => {
+    const clientIp = resolveClientIp(req);
+    const body = (req.body ?? {}) as {
+      source?: 'order_page' | 'standalone_hold_modal' | 'quick_order_drawer';
+      checkoutMode?: 'air_plus_production' | 'production_only';
+      orderNumberCandidate?: string;
+      formatLabel?: string;
+      totalBudgetRub?: number;
+      contactLine?: string;
+      companyLine?: string;
+      briefText?: string;
+      hasVoiceRecording?: boolean;
+      hasAttachedFile?: boolean;
+      isReturningFastTrack?: boolean;
+      requireBriefOrVoice?: boolean;
+      websiteTrap?: string;
+      dwellMs?: number;
+      pointerMoves?: number;
+      keystrokes?: number;
+      focusEvents?: number;
+      challengeToken?: string;
+      powSolution?: string;
+    };
+
+    const checkoutMode =
+      body.checkoutMode === 'air_plus_production'
+        ? 'air_plus_production'
+        : 'production_only';
+    const formScope = resolveLeadFormRateScope(checkoutMode);
+    const scopedRateKey = `${clientIp}:${formScope}`;
+
+    const preRateCheck = orderSubmitLimiter.check(scopedRateKey);
+    res.setHeader('X-RateLimit-Limit', String(preRateCheck.maxAttempts));
+    res.setHeader('X-RateLimit-Remaining', String(preRateCheck.remainingAttempts));
+
+    if (!preRateCheck.allowed) {
+      const store = readSecurityStore();
+      store.rateLimitedCount += 1;
+      writeSecurityStore(store);
+      res.setHeader('Retry-After', String(preRateCheck.retryAfterSec));
+      res.status(429).json({
+        ok: false,
+        verdict: 'rate_limited',
+        retryAfterSec: preRateCheck.retryAfterSec,
+        rateLimit: {
+          remainingAttempts: 0,
+          maxAttempts: preRateCheck.maxAttempts,
+          retryAfterSec: preRateCheck.retryAfterSec,
+        },
+        error:
+          preRateCheck.message ??
+          `Превышен лимит отправок с одного адреса. Подождите ${preRateCheck.retryAfterSec} сек. или напишите напрямую на hello@fmworks.ru.`,
+        nextChallenge: issueLeadChallenge(),
+      });
+      return;
+    }
+
+    const contactLine = typeof body.contactLine === 'string' ? body.contactLine : '';
+    const companyLine = typeof body.companyLine === 'string' ? body.companyLine : '';
+    const briefText = typeof body.briefText === 'string' ? body.briefText : '';
+    const websiteTrap = typeof body.websiteTrap === 'string' ? body.websiteTrap : '';
+    const orderNumber =
+      typeof body.orderNumberCandidate === 'string' &&
+      /^FM-[A-Z0-9-]{2,18}$/.test(body.orderNumberCandidate)
+        ? body.orderNumberCandidate
+        : `FM-${2400 + (Date.now() % 700)}`;
+
+    const tokenState = verifyLeadChallengeToken(
+      typeof body.challengeToken === 'string' ? body.challengeToken : ''
+    );
+    const powValid =
+      tokenState.valid &&
+      verifyLeadChallengePow(
+        tokenState.salt,
+        typeof body.powSolution === 'string' ? body.powSolution : '',
+        tokenState.difficulty
+      );
+
+    const now = Date.now();
+    for (const [fpKey, expTs] of recentLeadFingerprints.entries()) {
+      if (expTs < now) recentLeadFingerprints.delete(fpKey);
+    }
+    const fingerprint = computeLeadPayloadFingerprint(contactLine, companyLine, briefText);
+    const isDuplicateRecentPayload = recentLeadFingerprints.has(fingerprint);
+
+    const evaluation = evaluateLeadSubmissionSecurity({
+      contactLine,
+      companyLine,
+      briefText,
+      hasVoiceRecording: Boolean(body.hasVoiceRecording),
+      hasAttachedFile: Boolean(body.hasAttachedFile),
+      isReturningFastTrack: Boolean(body.isReturningFastTrack),
+      requireBriefOrVoice: Boolean(body.requireBriefOrVoice),
+      websiteTrap,
+      dwellMs: typeof body.dwellMs === 'number' ? body.dwellMs : 0,
+      pointerMoves: typeof body.pointerMoves === 'number' ? body.pointerMoves : 0,
+      keystrokes: typeof body.keystrokes === 'number' ? body.keystrokes : 0,
+      focusEvents: typeof body.focusEvents === 'number' ? body.focusEvents : 0,
+      challengeValid: tokenState.valid,
+      nonceAlreadyUsed: tokenState.alreadyUsed,
+      powValid,
+      isDuplicateRecentPayload,
+    });
+
+    if (evaluation.verdict === 'validation_error') {
+      const valBurst = orderValidationBurstLimiter.consume(clientIp);
+      if (!valBurst.allowed) {
+        const store = readSecurityStore();
+        store.rateLimitedCount += 1;
+        writeSecurityStore(store);
+        res.setHeader('Retry-After', String(valBurst.retryAfterSec));
+        res.status(429).json({
+          ok: false,
+          verdict: 'rate_limited',
+          retryAfterSec: valBurst.retryAfterSec,
+          error: valBurst.message,
+          nextChallenge: issueLeadChallenge(),
+        });
+        return;
+      }
+
+      res.status(400).json({
+        ok: false,
+        verdict: 'validation_error',
+        conversionAllowed: false,
+        contactError: evaluation.contactError,
+        companyError: evaluation.companyError,
+        taskError: evaluation.taskError,
+        rateLimit: {
+          remainingAttempts: preRateCheck.remainingAttempts,
+          maxAttempts: preRateCheck.maxAttempts,
+          retryAfterSec: 0,
+        },
+        nextChallenge: issueLeadChallenge(),
+      });
+      return;
+    }
+
+    const rate = orderSubmitLimiter.consume(scopedRateKey);
+    res.setHeader('X-RateLimit-Remaining', String(rate.remainingAttempts));
+    if (!rate.allowed) {
+      const store = readSecurityStore();
+      store.rateLimitedCount += 1;
+      writeSecurityStore(store);
+      res.setHeader('Retry-After', String(rate.retryAfterSec));
+      res.status(429).json({
+        ok: false,
+        verdict: 'rate_limited',
+        retryAfterSec: rate.retryAfterSec,
+        rateLimit: {
+          remainingAttempts: 0,
+          maxAttempts: rate.maxAttempts,
+          retryAfterSec: rate.retryAfterSec,
+        },
+        error:
+          rate.message ??
+          `Превышен лимит отправок с одного адреса. Подождите ${rate.retryAfterSec} сек.`,
+        nextChallenge: issueLeadChallenge(),
+      });
+      return;
+    }
+
+    if (tokenState.valid && tokenState.nonce) {
+      consumedChallengeNonces.set(tokenState.nonce, now + LEAD_CHALLENGE_TTL_MS);
+    }
+
+    const store = readSecurityStore();
+
+    if (evaluation.verdict === 'quarantined_bot') {
+      store.quarantinedCount += 1;
+      const maskedContact = evaluation.normalizedContact
+        ? `${evaluation.normalizedContact.slice(0, 14)}${evaluation.normalizedContact.length > 14 ? '…' : ''}`
+        : 'пусто';
+      store.quarantinedLeads = [
+        {
+          id: `q-${now}-${crypto.randomBytes(3).toString('hex')}`,
+          createdAt: new Date(now).toISOString(),
+          ipHash: hashIpForAudit(clientIp),
+          riskScore: evaluation.riskScore,
+          reasons: evaluation.reasons,
+          maskedContact,
+          briefPreview: evaluation.sanitizedBrief.slice(0, 80),
+        },
+        ...store.quarantinedLeads,
+      ].slice(0, 120);
+      writeSecurityStore(store);
+
+      // Теневой карантин: бот не получает подсказок для обхода, но конверсия для рекламных пикселей закрыта
+      res.json({
+        ok: true,
+        verdict: 'quarantined_bot',
+        orderNumber,
+        conversionAllowed: false,
+        verifiedConversionSeal: null,
+        innVerified: false,
+        rateLimit: {
+          remainingAttempts: rate.remainingAttempts,
+          maxAttempts: rate.maxAttempts,
+          retryAfterSec: 0,
+        },
+        nextChallenge: issueLeadChallenge(),
+      });
+      return;
+    }
+
+    // Верифицированная заявка реального клиента
+    recentLeadFingerprints.set(fingerprint, now + 10 * 60 * 1000);
+    store.verifiedCount += 1;
+    const newVerifiedRecord: StoredVerifiedLeadRecord = {
+      id: `lead-${now}-${crypto.randomBytes(3).toString('hex')}`,
+      orderNumber,
+      createdAt: new Date(now).toISOString(),
+      checkoutMode,
+      formatLabel:
+        typeof body.formatLabel === 'string'
+          ? body.formatLabel.slice(0, 120)
+          : 'Студийный заказ',
+      totalBudgetRub:
+        typeof body.totalBudgetRub === 'number' && Number.isFinite(body.totalBudgetRub)
+          ? Math.round(body.totalBudgetRub)
+          : null,
+      contact: evaluation.normalizedContact,
+      companyOrInn: evaluation.normalizedCompany,
+      innVerified: evaluation.innVerified,
+      channel: evaluation.detectedChannel ?? 'phone',
+      briefExcerpt: evaluation.sanitizedBrief.slice(0, 220),
+      hasVoiceRecording: Boolean(body.hasVoiceRecording),
+      hasAttachedFile: Boolean(body.hasAttachedFile),
+    };
+    store.verifiedLeads = [newVerifiedRecord, ...store.verifiedLeads].slice(0, 150);
+    writeSecurityStore(store);
+
+    const verifiedConversionSeal = crypto
+      .createHmac('sha256', getSessionSecret())
+      .update(`verified:${orderNumber}:${now}`)
+      .digest('hex')
+      .slice(0, 24);
+
+    res.json({
+      ok: true,
+      verdict: 'verified_human',
+      orderNumber,
+      conversionAllowed: true,
+      verifiedConversionSeal,
+      innVerified: evaluation.innVerified,
+      detectedChannel: evaluation.detectedChannel,
+      rateLimit: {
+        remainingAttempts: rate.remainingAttempts,
+        maxAttempts: rate.maxAttempts,
+        retryAfterSec: 0,
+      },
+      nextChallenge: issueLeadChallenge(),
+    });
+  });
+
+  app.get('/api/cms/security/overview', requireStudioAuth, (_req, res) => {
+    const store = readSecurityStore();
+    res.json({
+      ok: true,
+      layers: SECURITY_DEFENSE_LAYERS,
+      stats: {
+        verifiedCount: store.verifiedCount,
+        quarantinedCount: store.quarantinedCount,
+        rateLimitedCount: store.rateLimitedCount,
+        authBruteForceBlocks: store.authBruteForceBlocks,
+        aiQuotaShieldBlocks: store.aiQuotaShieldBlocks,
+      },
+      verifiedLeads: store.verifiedLeads.slice(0, 40),
+      quarantinedLeads: store.quarantinedLeads.slice(0, 40),
+    });
+  });
+
+  app.post('/api/cms/security/clear-quarantine', requireStudioAuth, (_req, res) => {
+    const store = readSecurityStore();
+    store.quarantinedLeads = [];
+    writeSecurityStore(store);
+    res.json({
+      ok: true,
+      quarantinedLeads: [],
+    });
+  });
+
+  // =========================================================================
+  // AI Media Planner Semantic Matcher (Server-Side Gemini 3.8 Flash)
+  // =========================================================================
+
+  app.post(
+    '/api/media-planner/recommend',
+    express.json({ limit: '64kb' }),
+    async (req, res) => {
+      const clientIp = resolveClientIp(req);
+      const aiRate = aiRecommendLimiter.consume(clientIp);
+      if (!aiRate.allowed) {
+        const store = readSecurityStore();
+        store.aiQuotaShieldBlocks += 1;
+        writeSecurityStore(store);
+        res.json({
+          ok: true,
+          usedGeminiModel: false,
+          hint: null,
+        });
+        return;
+      }
+
+      const apiKey = process.env.GEMINI_API_KEY?.trim();
+      if (!apiKey) {
+        res.json({
+          ok: true,
+          usedGeminiModel: false,
+          hint: null,
+        });
+        return;
+      }
+
+      const body = (req.body ?? {}) as {
+        niche?: string;
+        segment?: string;
+        ageCore?: string;
+        listeningContext?: string;
+        productNote?: string;
+        budgetRub?: number;
+        spotSeconds?: number;
+      };
+
+      const rawProductNote =
+        typeof body.productNote === 'string' ? body.productNote.trim().slice(0, 280) : '';
+      const noteInspection = inspectBriefForSpamSignals(rawProductNote);
+      if (noteInspection.isBotSpam) {
+        const store = readSecurityStore();
+        store.aiQuotaShieldBlocks += 1;
+        writeSecurityStore(store);
+        res.json({
+          ok: true,
+          usedGeminiModel: false,
+          hint: null,
+        });
+        return;
+      }
+      const productNote = noteInspection.sanitizedBrief;
+      const niche = typeof body.niche === 'string' ? body.niche.slice(0, 40) : 'real_estate';
+      const segment = typeof body.segment === 'string' ? body.segment.slice(0, 40) : 'b2c_premium';
+      const ageCore = typeof body.ageCore === 'string' ? body.ageCore.slice(0, 24) : '30_45';
+      const listeningContext =
+        typeof body.listeningContext === 'string'
+          ? body.listeningContext.slice(0, 40)
+          : 'commute_rush';
+      const budgetRub = typeof body.budgetRub === 'number' ? body.budgetRub : 180_000;
+      const spotSeconds = typeof body.spotSeconds === 'number' ? body.spotSeconds : 15;
+
+      try {
+        const ai = new GoogleGenAI({
+          apiKey,
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            },
+          },
+        });
+
+        const promptText = [
+          'Проанализируй рекламную задачу клиента для радиоразмещения FMWorks и верни приоритеты выбора станций и тайм-слотов.',
+          `Отраслевая ниша: ${niche}`,
+          `Сегмент ЦА: ${segment}, возраст: ${ageCore}, контекст прослушивания: ${listeningContext}`,
+          `Бюджет клиента: ${Math.round(budgetRub)} ₽, хронометраж ролика: ${Math.round(spotSeconds)} сек`,
+          `Описание продукта / акции клиента: ${productNote || 'Не указано дополнительно'}`,
+          'Доступные идентификаторы радиостанций: bfm (Business FM), montecarlo (Радио Monte Carlo), avtoradio (Авторадио), europaplus (Европа Плюс), comedy (Comedy Radio), kommersant (Коммерсантъ FM), dorozhnoe (Дорожное Радио), retrofm (Ретро FM), silverrain (Серебряный Дождь), jazz (Радио JAZZ).',
+          'Доступные коды тайм-слотов: morning_prime (утренний прайм), daytime_block (дневной блок), evening_drive (вечерний драйв), weekend_air (выходные Сб-Вс), traffic_weather (спонсорство погоды и трафика).',
+          'Не упоминай конкретные названия городов в ответах.',
+        ].join('\n');
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: promptText,
+          config: {
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+            systemInstruction:
+              'Ты главный медиабайер радиоагентства FMWorks. Подбирай самые целевые радиостанции и конкретные временные окна под продукт и портрет ЦА без воды, не упоминая географические города и жаргон звукозаписи. Пиши лаконично по-русски.',
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                preferredDayparts: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: '1-2 самых подходящих кода тайм-слотов из списка.',
+                },
+                avoidedDayparts: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: 'Коды тайм-слотов, которые хуже подходят задаче (или пустой массив).',
+                },
+                boostedStationIds: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: 'До 3 наиболее релевантных stationId под продукт и ЦА.',
+                },
+                stationReasons: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      stationId: { type: Type.STRING },
+                      reason: {
+                        type: Type.STRING,
+                        description: 'Короткая причина релевантности (до 9 слов).',
+                      },
+                    },
+                    required: ['stationId', 'reason'],
+                  },
+                },
+              },
+              required: [
+                'preferredDayparts',
+                'avoidedDayparts',
+                'boostedStationIds',
+                'stationReasons',
+              ],
+            },
+          },
+        });
+
+        const rawJson = (response.text ?? '{}').trim();
+        const parsed = JSON.parse(rawJson) as {
+          preferredDayparts?: string[];
+          avoidedDayparts?: string[];
+          boostedStationIds?: string[];
+          stationReasons?: { stationId: string; reason: string }[];
+        };
+
+        const validDayparts = new Set([
+          'morning_prime',
+          'daytime_block',
+          'evening_drive',
+          'weekend_air',
+          'traffic_weather',
+        ]);
+        const validStations = new Set([
+          'bfm',
+          'montecarlo',
+          'avtoradio',
+          'europaplus',
+          'comedy',
+          'kommersant',
+          'dorozhnoe',
+          'retrofm',
+          'silverrain',
+          'jazz',
+        ]);
+
+        const slotReasonsByStationId: Record<string, string> = {};
+        for (const item of parsed.stationReasons ?? []) {
+          if (
+            item &&
+            typeof item.stationId === 'string' &&
+            validStations.has(item.stationId) &&
+            typeof item.reason === 'string' &&
+            scanEditorialWarnings(item.reason).length === 0
+          ) {
+            slotReasonsByStationId[item.stationId] = item.reason.trim().slice(0, 95);
+          }
+        }
+
+        res.json({
+          ok: true,
+          usedGeminiModel: true,
+          hint: {
+            preferredDayparts: (parsed.preferredDayparts ?? []).filter((d) =>
+              validDayparts.has(d)
+            ),
+            avoidedDayparts: (parsed.avoidedDayparts ?? []).filter((d) =>
+              validDayparts.has(d)
+            ),
+            boostedStationIds: (parsed.boostedStationIds ?? []).filter((s) =>
+              validStations.has(s)
+            ),
+            slotReasonsByStationId,
+            usedGeminiModel: true,
+          },
+        });
+      } catch {
+        // При недоступности внешнего ключа или лимите квоты плавно переключаемся на локальную матрицу ЦА
+        res.json({
+          ok: true,
+          usedGeminiModel: false,
+          hint: null,
+        });
+      }
+    }
+  );
+
+  // =========================================================================
   // Existing 15-Second Duel Direct Audio Endpoints (preserved)
   // =========================================================================
 
@@ -605,6 +1394,13 @@ async function startServer() {
     '/api/duel-tracks/:kind',
     express.raw({ type: () => true, limit: '80mb' }),
     async (req, res) => {
+      const uploadRate = duelUploadLimiter.consume(resolveClientIp(req));
+      if (!uploadRate.allowed) {
+        res.setHeader('Retry-After', String(uploadRate.retryAfterSec));
+        res.status(429).json({ error: 'Слишком частая загрузка аудиофайлов. Подождите минуту.' });
+        return;
+      }
+
       const kind = req.params.kind;
       if (kind !== 'radio' && kind !== 'audioworks') {
         res.status(400).json({ error: 'Invalid track kind' });
@@ -612,7 +1408,11 @@ async function startServer() {
       }
 
       const bodyBuffer = req.body as Buffer;
-      if (!Buffer.isBuffer(bodyBuffer) || bodyBuffer.length < 128) {
+      if (
+        !Buffer.isBuffer(bodyBuffer) ||
+        bodyBuffer.length < 128 ||
+        !hasValidAudioMagicBytes(bodyBuffer)
+      ) {
         res.status(400).json({ error: 'Empty or invalid audio payload' });
         return;
       }
@@ -673,7 +1473,9 @@ async function startServer() {
     }
   );
 
-  const isProd = process.env.NODE_ENV === 'production';
+  const isProd =
+    process.env.NODE_ENV === 'production' ||
+    process.env.npm_lifecycle_event === 'start';
 
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
@@ -691,7 +1493,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`AudioWorks server listening on http://0.0.0.0:${PORT}`);
+    console.log(`FMWorks server listening on http://0.0.0.0:${PORT}`);
   });
 }
 

@@ -75,8 +75,8 @@ export function SelectedWorksSection({
               onClick={() => onToggleCase(FLAGSHIP_STUDIO_REEL)}
               aria-label={
                 isReelPlaying
-                  ? 'Остановить промо-ролик Audioworks'
-                  : 'Слушать промо-ролик Audioworks целиком (1:19)'
+                  ? 'Остановить промо-ролик FMWorks'
+                  : 'Слушать промо-ролик FMWorks целиком (1:19)'
               }
               className={`inline-flex items-center gap-3.5 pr-6 pl-2 py-2 rounded-full text-sm font-semibold transition-all cursor-pointer whitespace-nowrap ${
                 isReelPlaying

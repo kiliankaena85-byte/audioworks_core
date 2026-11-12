@@ -1,4 +1,4 @@
-export type BrandDomainVariant = 'audioworks_reg' | 'audioworks_pro' | 'airworks_reg';
+export type BrandDomainVariant = 'fmworks_reg' | 'fmworks_ru' | 'fmworks_pro';
 
 export type BrandColorTheme = 'dark' | 'light';
 
@@ -11,22 +11,22 @@ export interface BrandDomainOption {
 
 export const BRAND_DOMAIN_OPTIONS: readonly BrandDomainOption[] = [
   {
-    id: 'audioworks_reg',
-    label: 'AudioWorks®',
+    id: 'fmworks_reg',
+    label: 'FMWorks®',
     description: 'Основной студийный знак с охраняемым символом ®',
-    fileSlug: 'audioworks',
+    fileSlug: 'fmworks',
   },
   {
-    id: 'audioworks_pro',
-    label: 'AudioWorks.pro',
-    description: 'Доменная версия для визиток, КП и презентаций',
-    fileSlug: 'audioworks-pro',
+    id: 'fmworks_ru',
+    label: 'FMWorks.ru',
+    description: 'Официальная доменная версия fmworks.ru для сайта и КП',
+    fileSlug: 'fmworks-ru',
   },
   {
-    id: 'airworks_reg',
-    label: 'AirWorks®',
-    description: 'Короткая эфирная версия знака AirWorks®',
-    fileSlug: 'airworks',
+    id: 'fmworks_pro',
+    label: 'FMWorks.pro',
+    description: 'Версия для презентаций, шоурилов и договоров',
+    fileSlug: 'fmworks-pro',
   },
 ] as const;
 
@@ -35,82 +35,14 @@ export interface BrandWordmarkGeometry {
   accessibleLabel: string;
   viewBoxWidth: number;
   viewBoxHeight: number;
-  prefixText: string;
-  prefixEndX: number;
-  iStemX: number;
-  postIText: string;
-  postIX: number;
-  waveStartX: number;
-  waveWidth: number;
-  orksStartX: number;
+  textStartX: number;
+  baselineY: number;
+  fontSize: number;
+  letterSpacing: number;
+  fmPrefix: string;
+  worksBody: string;
   suffixText: string;
   suffixKind: 'registered' | 'domain';
-}
-
-/**
- * Точная векторная геометрия логотипа для всех 3 доменных версий:
- * - Префикс перед `i` выровнен по правому краю (`text-anchor="end"`), исключая наезд на штрих `i`
- * - Точка над `i` — чистый геометрический кружок `#FF4820` (символ студийной лампы ON AIR)
- * - Центральная `W` в `Works` — кастомная гладкая осциллограмма (кубические кривые Безье)
- * - Хвост `orks` с `®` или `.pro` привязан сразу после волны `W`
- */
-export function getBrandWordmarkGeometry(
-  variant: BrandDomainVariant = 'audioworks_reg'
-): BrandWordmarkGeometry {
-  if (variant === 'airworks_reg') {
-    return {
-      variant,
-      accessibleLabel: 'AirWorks®',
-      viewBoxWidth: 212,
-      viewBoxHeight: 48,
-      prefixText: 'A',
-      prefixEndX: 73.2,
-      iStemX: 75.8,
-      postIText: 'r',
-      postIX: 81.8,
-      waveStartX: 96.4,
-      waveWidth: 34.8,
-      orksStartX: 133.8,
-      suffixText: '®',
-      suffixKind: 'registered',
-    };
-  }
-
-  if (variant === 'audioworks_pro') {
-    return {
-      variant,
-      accessibleLabel: 'AudioWorks.pro',
-      viewBoxWidth: 286,
-      viewBoxHeight: 48,
-      prefixText: 'Aud',
-      prefixEndX: 104.5,
-      iStemX: 107.6,
-      postIText: 'o',
-      postIX: 113.5,
-      waveStartX: 135.2,
-      waveWidth: 34.8,
-      orksStartX: 172.6,
-      suffixText: '.pro',
-      suffixKind: 'domain',
-    };
-  }
-
-  return {
-    variant: 'audioworks_reg',
-    accessibleLabel: 'AudioWorks®',
-    viewBoxWidth: 248,
-    viewBoxHeight: 48,
-    prefixText: 'Aud',
-    prefixEndX: 104.5,
-    iStemX: 107.6,
-    postIText: 'o',
-    postIX: 113.5,
-    waveStartX: 135.2,
-    waveWidth: 34.8,
-    orksStartX: 172.6,
-    suffixText: '®',
-    suffixKind: 'registered',
-  };
 }
 
 function round2(value: number): number {
@@ -118,70 +50,94 @@ function round2(value: number): number {
 }
 
 /**
- * Генерирует 3 асимметричные упругие акустические линии внутри скруглённого квадрата `#FF4820`,
- * образующие стилизованную букву `W` с нарастающей динамикой справа.
+ * Геометрия логотипа `FMWorks®` / `FMWorks.ru` / `FMWorks.pro`:
+ * - Слева: фирменная иконка 48×48 (`rx="13"`, `#FF4820`) с белой звуковой волной `W` (осциллограммой)
+ * - Справа: монолитная типографическая часть `FMWorks` (`font-bold tracking-[-0.04em]`)
  */
-export function computeMonogramPaths(
-  hoverEnergy = 0,
-  phaseRad = 0
-): [string, string, string] {
-  const energy = Math.max(0, Math.min(1, hoverEnergy));
-  const leftLift = round2(Math.sin(phaseRad) * 1.4 * energy);
-  const centerLift = round2(Math.sin(phaseRad * 1.35 + 1.1) * 2.1 * energy);
-  const rightLift = round2(Math.cos(phaseRad * 1.15 + 0.4) * 1.8 * energy);
+export function getBrandWordmarkGeometry(
+  variant: BrandDomainVariant = 'fmworks_reg'
+): BrandWordmarkGeometry {
+  if (variant === 'fmworks_ru') {
+    return {
+      variant: 'fmworks_ru',
+      accessibleLabel: 'FMWorks.ru',
+      viewBoxWidth: 232,
+      viewBoxHeight: 48,
+      textStartX: 60,
+      baselineY: 34,
+      fontSize: 28,
+      letterSpacing: -1.12,
+      fmPrefix: 'FM',
+      worksBody: 'Works',
+      suffixText: '.ru',
+      suffixKind: 'domain',
+    };
+  }
 
-  const line1 = `M 9.6 ${round2(16.6 + leftLift)} C 10.9 22.6, 12.3 28.2, 14.1 ${round2(
-    33.2 - leftLift * 0.45
-  )}`;
+  if (variant === 'fmworks_pro') {
+    return {
+      variant: 'fmworks_pro',
+      accessibleLabel: 'FMWorks.pro',
+      viewBoxWidth: 248,
+      viewBoxHeight: 48,
+      textStartX: 60,
+      baselineY: 34,
+      fontSize: 28,
+      letterSpacing: -1.12,
+      fmPrefix: 'FM',
+      worksBody: 'Works',
+      suffixText: '.pro',
+      suffixKind: 'domain',
+    };
+  }
 
-  const centerPeakY = round2(19.0 - 2.2 * energy + centerLift);
-  const centerValleyY = round2(31.8 + 0.9 * energy - centerLift * 0.35);
-  const line2 = `M 18.3 ${centerValleyY} C 19.7 25.0, 20.8 ${centerPeakY}, 22.2 ${centerPeakY} C 23.6 ${centerPeakY}, 24.7 25.0, 26.1 ${centerValleyY}`;
-
-  const line3 = `M 30.3 ${round2(33.2 + rightLift * 0.35)} C 31.8 26.5, 33.2 19.5, 34.9 ${round2(
-    13.2 - 1.1 * energy - rightLift * 0.7
-  )}`;
-
-  return [line1, line2, line3];
+  return {
+    variant: 'fmworks_reg',
+    accessibleLabel: 'FMWorks®',
+    viewBoxWidth: 204,
+    viewBoxHeight: 48,
+    textStartX: 60,
+    baselineY: 34,
+    fontSize: 28,
+    letterSpacing: -1.12,
+    fmPrefix: 'FM',
+    worksBody: 'Works',
+    suffixText: '®',
+    suffixKind: 'registered',
+  };
 }
 
 /**
- * Генерирует кастомный векторный росчерк центральной буквы `W` в слове `Works`
- * в виде гладкой звуковой волны (осциллограммы), которая при наведении мыши
- * плавно оживает и меняет амплитуду.
+ * Строит непрерывную 6-сегментную кубическую кривую Безье в виде плавной звуковой волны `W`
+ * (осциллограммы) внутри оранжевого квадрата 48×48 (`rx="13"`, `#FF4820`).
+ * При наведении курсора (`hoverEnergy > 0`) волна мягко оживает по амплитуде.
  */
-export function computeOscillogramWPath(
-  waveStartX: number,
+export function computeBadgeWaveWPath(
   hoverEnergy = 0,
-  phaseRad = 0,
-  waveWidth = 35.6
+  phaseRad = 0
 ): string {
   const energy = Math.max(0, Math.min(1, hoverEnergy));
-  const x0 = waveStartX;
-  const scaleX = waveWidth / 35.6;
-  const x = (offset: number) => round2(x0 + offset * scaleX);
 
-  // В покое — сбалансированная архитектурная волна `W`; при наведении — живая модуляция амплитуды
-  const crestPulse = Math.sin(phaseRad * 1.6) * 2.6 * energy;
-  const valleyAsymA = Math.cos(phaseRad * 1.35 + 0.5) * 1.8 * energy;
-  const valleyAsymB = Math.sin(phaseRad * 1.45 + 2.1) * 1.8 * energy;
+  const midY = 24.5;
+  const shoulderOffset =
+    energy > 0.001 ? Math.sin(phaseRad * 1.9) * 1.8 * energy : 0;
+  const valleyOffset =
+    energy > 0.001 ? Math.cos(phaseRad * 2.1 + 0.6) * 2.2 * energy : 0;
+  const centerPeakOffset =
+    energy > 0.001 ? Math.sin(phaseRad * 2.4 + 1.7) * 2.5 * energy : 0;
 
-  const yEntry = round2(18.2 - 0.8 * energy);
-  const yTopLeft = round2(15.4 - 0.9 * energy + crestPulse * 0.25);
-  const yValley1 = round2(33.3 + 2.1 * energy + valleyAsymA);
-  const yCenterPeak = round2(16.8 - 3.6 * energy + crestPulse);
-  const yValley2 = round2(33.3 + 2.1 * energy + valleyAsymB);
-  const yTopRight = round2(15.2 - 1.1 * energy - crestPulse * 0.25);
-  const yExit = round2(18.0 - 0.8 * energy);
+  const crestY = round2(15.2 - shoulderOffset);
+  const valleyY = round2(34.4 + valleyOffset);
+  const centerPeakY = round2(16.6 - centerPeakOffset);
 
   return [
-    `M ${x(0)} ${yEntry}`,
-    `C ${x(0.9)} ${yTopLeft}, ${x(1.9)} ${yTopLeft}, ${x(3.1)} ${yTopLeft}`,
-    `C ${x(6.2)} ${yTopLeft}, ${x(7.1)} ${yValley1}, ${x(10.3)} ${yValley1}`,
-    `C ${x(13.5)} ${yValley1}, ${x(14.6)} ${yCenterPeak}, ${x(17.8)} ${yCenterPeak}`,
-    `C ${x(21.0)} ${yCenterPeak}, ${x(22.1)} ${yValley2}, ${x(25.3)} ${yValley2}`,
-    `C ${x(28.5)} ${yValley2}, ${x(29.4)} ${yTopRight}, ${x(32.5)} ${yTopRight}`,
-    `C ${x(33.7)} ${yTopRight}, ${x(34.7)} ${yExit}, ${x(35.6)} ${yExit}`,
+    `M 7.2 ${midY}`,
+    `C 8.9 ${midY}, 9.5 ${crestY}, 11.0 ${crestY}`,
+    `C 13.0 ${crestY}, 15.0 ${valleyY}, 17.4 ${valleyY}`,
+    `C 19.8 ${valleyY}, 21.6 ${centerPeakY}, 24.0 ${centerPeakY}`,
+    `C 26.4 ${centerPeakY}, 28.2 ${valleyY}, 30.6 ${valleyY}`,
+    `C 33.0 ${valleyY}, 35.0 ${crestY}, 37.0 ${crestY}`,
+    `C 38.5 ${crestY}, 39.1 ${midY}, 40.8 ${midY}`,
   ].join(' ');
 }
 
@@ -193,11 +149,11 @@ export interface BuildBrandLogoSvgOptions {
 }
 
 /**
- * Генерирует чистый автономный векторный `<svg>` основного логотипа (`dark` или `light`)
+ * Генерирует чистый автономный векторный `<svg>` основного логотипа `FMWorks` (`dark` или `light`)
  * с прозрачным фоном без внешних CSS-зависимостей — готов для сохранения в `.svg` и рендера в `2400×800px` `.png`.
  */
 export function buildBrandLogoSvgMarkup({
-  variant = 'audioworks_reg',
+  variant = 'fmworks_reg',
   colorTheme,
   exportArtboard2400x800 = true,
 }: BuildBrandLogoSvgOptions): string {
@@ -207,25 +163,17 @@ export function buildBrandLogoSvgMarkup({
   const fontStack =
     "'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif";
 
-  const [m1, m2, m3] = computeMonogramPaths(0, 0);
-  const wPath = computeOscillogramWPath(geom.waveStartX, 0, 0, geom.waveWidth);
+  const wavePath = computeBadgeWaveWPath(0, 0);
 
   const suffixTspan =
     geom.suffixKind === 'domain'
-      ? `<tspan fill="${accentHex}" font-weight="600">${geom.suffixText}</tspan>`
-      : `<tspan dx="1.6" dy="-9.5" font-size="11.5" font-weight="600" fill="${inkHex}" fill-opacity="0.68">${geom.suffixText}</tspan>`;
+      ? `<tspan fill="${accentHex}" font-weight="700">${geom.suffixText}</tspan>`
+      : `<tspan dx="1.4" dy="-9.8" font-size="11.5" font-weight="700" fill="${inkHex}" fill-opacity="0.68">${geom.suffixText}</tspan>`;
 
   const innerLockup = [
-    `<rect x="2" y="4" width="40" height="40" rx="11.5" fill="${accentHex}" />`,
-    `<path d="${m1}" stroke="#FFFFFF" stroke-width="3.15" stroke-linecap="round" stroke-linejoin="round" fill="none" />`,
-    `<path d="${m2}" stroke="#FFFFFF" stroke-width="3.15" stroke-linecap="round" stroke-linejoin="round" fill="none" />`,
-    `<path d="${m3}" stroke="#FFFFFF" stroke-width="3.15" stroke-linecap="round" stroke-linejoin="round" fill="none" />`,
-    `<text x="${geom.prefixEndX}" y="33.5" text-anchor="end" font-family="${fontStack}" font-size="26" font-weight="500" letter-spacing="-0.4" fill="${inkHex}">${geom.prefixText}</text>`,
-    `<rect x="${geom.iStemX}" y="20.2" width="3.1" height="13.3" rx="1.1" fill="${inkHex}" />`,
-    `<circle cx="${round2(geom.iStemX + 1.55)}" cy="14.1" r="2.75" fill="${accentHex}" />`,
-    `<text x="${geom.postIX}" y="33.5" text-anchor="start" font-family="${fontStack}" font-size="26" font-weight="500" letter-spacing="-0.3" fill="${inkHex}">${geom.postIText}</text>`,
-    `<path d="${wPath}" stroke="${inkHex}" stroke-width="3.05" stroke-linecap="round" stroke-linejoin="round" fill="none" />`,
-    `<text x="${geom.orksStartX}" y="33.5" text-anchor="start" font-family="${fontStack}" font-size="26" font-weight="600" letter-spacing="-0.4" fill="${inkHex}">orks${suffixTspan}</text>`,
+    `<rect x="0" y="0" width="48" height="48" rx="13" fill="${accentHex}" />`,
+    `<path d="${wavePath}" stroke="#FFFFFF" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" fill="none" />`,
+    `<text x="${geom.textStartX}" y="${geom.baselineY}" text-anchor="start" font-family="${fontStack}" font-size="${geom.fontSize}" font-weight="700" letter-spacing="${geom.letterSpacing}" fill="${inkHex}"><tspan fill="${accentHex}" font-weight="800">${geom.fmPrefix}</tspan><tspan fill="${inkHex}" font-weight="700">${geom.worksBody}</tspan>${suffixTspan}</text>`,
   ].join('\n    ');
 
   if (!exportArtboard2400x800) {
@@ -238,13 +186,15 @@ export function buildBrandLogoSvgMarkup({
     ].join('\n');
   }
 
-  // Масштабируем пропорционально на прозрачный холст 2400×800px с благородными охранными полями
   const artW = 2400;
   const artH = 800;
-  const maxTargetWidth = 2040;
+  const maxTargetWidth = 2000;
   const maxTargetHeight = 420;
   const scale = round2(
-    Math.min(maxTargetWidth / geom.viewBoxWidth, maxTargetHeight / geom.viewBoxHeight)
+    Math.min(
+      maxTargetWidth / geom.viewBoxWidth,
+      maxTargetHeight / geom.viewBoxHeight
+    )
   );
   const offsetX = round2((artW - geom.viewBoxWidth * scale) / 2);
   const offsetY = round2((artH - geom.viewBoxHeight * scale) / 2);
@@ -260,29 +210,21 @@ export function buildBrandLogoSvgMarkup({
 }
 
 /**
- * Генерирует квадратную фирменную иконку-монограмму `AW / Волна` (1000×1000px)
- * специально для аватарок Telegram, WhatsApp и фавиконки сайта:
- * радиус `rx="220"` на 1000×1000 даёт прозрачные скруглённые углы для иконки сайта
- * и при этом на 100% заполняет круглый кроп мессенджеров (радиус 500px) без белых зазоров.
+ * Генерирует квадратную фирменную иконку `FMWorks` (1000×1000px)
+ * со звуковой волной `W` на фоне `#FF4820`
+ * для аватарок Telegram, WhatsApp и фавиконки сайта.
  */
 export function buildAvatarIconSvgMarkup(
-  variant: BrandDomainVariant = 'audioworks_reg'
+  variant: BrandDomainVariant = 'fmworks_reg'
 ): string {
   const geom = getBrandWordmarkGeometry(variant);
+  const wavePath = computeBadgeWaveWPath(0, 0);
+
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" width="1000" height="1000" fill="none">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="1000" height="1000" fill="none">`,
     `  <title>${geom.accessibleLabel} — Icon</title>`,
-    `  <defs>`,
-    `    <linearGradient id="aw-avatar-bg" x1="120" y1="80" x2="880" y2="940" gradientUnits="userSpaceOnUse">`,
-    `      <stop offset="0%" stop-color="#FF5932" />`,
-    `      <stop offset="55%" stop-color="#FF4820" />`,
-    `      <stop offset="100%" stop-color="#E53914" />`,
-    `    </linearGradient>`,
-    `  </defs>`,
-    `  <rect x="0" y="0" width="1000" height="1000" rx="220" fill="url(#aw-avatar-bg)" />`,
-    `  <path d="M 218 338 C 252 486, 286 620, 332 738" stroke="#FFFFFF" stroke-width="76" stroke-linecap="round" stroke-linejoin="round" fill="none" />`,
-    `  <path d="M 434 704 C 468 538, 494 398, 526 398 C 558 398, 584 538, 618 704" stroke="#FFFFFF" stroke-width="76" stroke-linecap="round" stroke-linejoin="round" fill="none" />`,
-    `  <path d="M 720 738 C 756 572, 790 400, 832 248" stroke="#FFFFFF" stroke-width="76" stroke-linecap="round" stroke-linejoin="round" fill="none" />`,
+    `  <rect x="0" y="0" width="48" height="48" rx="13" fill="#FF4820" />`,
+    `  <path d="${wavePath}" stroke="#FFFFFF" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" fill="none" />`,
     `</svg>`,
   ].join('\n');
 }
@@ -300,12 +242,12 @@ export interface BrandKitAssetSpec {
 }
 
 export function getBrandKitAssetSpecs(
-  variant: BrandDomainVariant = 'audioworks_reg'
+  variant: BrandDomainVariant = 'fmworks_reg'
 ): BrandKitAssetSpec[] {
   const opt =
-    BRAND_DOMAIN_OPTIONS.find((item) => item.id === variant) ?? BRAND_DOMAIN_OPTIONS[0];
+    BRAND_DOMAIN_OPTIONS.find((item) => item.id === variant) ??
+    BRAND_DOMAIN_OPTIONS[0];
   const slug = opt.fileSlug;
-  const avatarPrefix = variant === 'airworks_reg' ? 'airworks' : 'audioworks';
 
   return [
     {
@@ -332,10 +274,10 @@ export function getBrandKitAssetSpecs(
     },
     {
       id: 'avatar-icon',
-      title: 'Квадратная иконка-монограмма AW / Волна',
+      title: 'Квадратная иконка-монограмма (Волна W)',
       subtitle: 'Для аватарки Telegram, WhatsApp и фавиконки сайта',
-      svgFileName: `${avatarPrefix}-avatar-icon.svg`,
-      pngFileName: `${avatarPrefix}-avatar-icon.png`,
+      svgFileName: 'fmworks-avatar-icon.svg',
+      pngFileName: 'fmworks-avatar-icon.png',
       pngWidth: 1000,
       pngHeight: 1000,
       dimensionsLabel: '1000 × 1000 px · квадрат и круг мессенджеров',

@@ -1,6 +1,7 @@
 import {
   DeviceKind,
   LayaDecision,
+  LayaMediaNicheHint,
   LayaPersona,
   LayaPersonaSlot,
   LayaSimulationTrace,
@@ -84,6 +85,21 @@ export const LAYA_SIMULATION_TRACES: LayaSimulationTrace[] = [
     },
   },
   {
+    id: 'ad_medicine',
+    buttonLabel: 'Реклама: Медицина и клиники (Confidence 0.92)',
+    traceSummary: 'Кампания Медицина · клиники, диагностика и чекапы',
+    expectedConfidence: 0.92,
+    state: {
+      utmTerm: 'радиоролик клиника медицина чекап диагностика',
+      personaParam: 'medicine',
+      utmSource: 'yandex_med',
+      device: 'desktop',
+      visitCount: 1,
+      referrer: '',
+      simulationTraceId: 'ad_medicine',
+    },
+  },
+  {
     id: 'vip_mobile',
     buttonLabel: 'Постоянный клиент со смартфона (Confidence 0.98)',
     traceSummary: '5-й визит · мобильное устройство · знакомый клиент',
@@ -117,7 +133,7 @@ export const LAYA_CONTENT_DICTIONARY: Record<LayaPersona, LayaPersonaSlot> = {
       'успейте воспользоваться уникальным предложением...',
       'подробности уточняйте у менеджеров отдела продаж...',
     ],
-    focusEyebrow: 'Почерк AudioWorks · Кино в голове',
+    focusEyebrow: 'Почерк FMWorks · Кино в голове',
     focusWords: ['Тишина.', 'Вдох.', 'И', 'ваш', 'бренд', 'слышат', 'с', 'первой', 'секунды.'],
     focusSurfaceClass: 'bg-gradient-to-br from-[#1C1614] via-[#261915] to-[#121215]',
     focusChordPreset: 'editorial',
@@ -252,6 +268,21 @@ const FMCG_TERMS = [
 
 const VIP_TERMS = ['vip', 'повторн', 'снова', 'новый флайт', 'постоянн'];
 
+const MEDICINE_TERMS = [
+  'медицин',
+  'клиник',
+  'стомат',
+  'чекап',
+  'врач',
+  'диагност',
+  'медцентр',
+  'здоровь',
+];
+
+const B2B_TERMS = ['b2b', 'банк', 'финанс', 'лизинг', 'логист', 'корпоратив'];
+
+const AUTO_TERMS = ['автосалон', 'автодилер', 'трейд-ин', 'детейлинг', 'шиномонтаж'];
+
 function includesKeyword(source: string, keywords: string[]): boolean {
   return keywords.some((kw) => source.includes(kw));
 }
@@ -260,9 +291,17 @@ function isValidPersona(val: string): val is LayaPersona {
   return (VALID_PERSONAS as readonly string[]).includes(val);
 }
 
+function defaultNicheForPersona(persona: LayaPersona): LayaMediaNicheHint {
+  if (persona === 'real_estate') return 'real_estate';
+  if (persona === 'fmcg') return 'fmcg_retail';
+  if (persona === 'returning_vip') return 'b2b_finance';
+  if (persona === 'price_searcher') return 'fmcg_retail';
+  return 'real_estate';
+}
+
 /**
  * Чистая функция принятия решения Laya AI (System 1).
- * За ~28 мс вычисляет `choice`, `intentScore`, `recommendedTier` и `confidence`.
+ * За ~28 мс вычисляет `choice`, `mediaNiche`, `intentScore`, `recommendedTier` и `confidence`.
  * При `confidence < 0.75` строго возвращает эталонный профиль `default`.
  */
 export function evaluateLayaDecision(state: LayaVisitorState): LayaDecision {
@@ -271,6 +310,8 @@ export function evaluateLayaDecision(state: LayaVisitorState): LayaDecision {
     return {
       choice: 'default',
       rawChoice: 'default',
+      mediaNiche: 'real_estate',
+      profileBadgeLabel: 'default',
       intentScore: 2,
       recommendedTier: 'turnkey',
       confidence: 0.52,
@@ -282,6 +323,8 @@ export function evaluateLayaDecision(state: LayaVisitorState): LayaDecision {
     return {
       choice: 'price_searcher',
       rawChoice: 'price_searcher',
+      mediaNiche: 'fmcg_retail',
+      profileBadgeLabel: 'price_searcher',
       intentScore: 4,
       recommendedTier: 'voice_style',
       confidence: 0.91,
@@ -293,6 +336,8 @@ export function evaluateLayaDecision(state: LayaVisitorState): LayaDecision {
     return {
       choice: 'real_estate',
       rawChoice: 'real_estate',
+      mediaNiche: 'real_estate',
+      profileBadgeLabel: 'real_estate',
       intentScore: 5,
       recommendedTier: 'cinema',
       confidence: 0.94,
@@ -304,9 +349,24 @@ export function evaluateLayaDecision(state: LayaVisitorState): LayaDecision {
     return {
       choice: 'fmcg',
       rawChoice: 'fmcg',
+      mediaNiche: 'fmcg_retail',
+      profileBadgeLabel: 'fmcg',
       intentScore: 4,
       recommendedTier: 'turnkey',
       confidence: 0.89,
+      latencyMs: LAYA_SYSTEM1_LATENCY_MS,
+      isFallback: false,
+    };
+  }
+  if (state.simulationTraceId === 'ad_medicine') {
+    return {
+      choice: 'default',
+      rawChoice: 'default',
+      mediaNiche: 'medicine',
+      profileBadgeLabel: 'medicine',
+      intentScore: 5,
+      recommendedTier: 'turnkey',
+      confidence: 0.92,
       latencyMs: LAYA_SYSTEM1_LATENCY_MS,
       isFallback: false,
     };
@@ -315,6 +375,8 @@ export function evaluateLayaDecision(state: LayaVisitorState): LayaDecision {
     return {
       choice: 'returning_vip',
       rawChoice: 'returning_vip',
+      mediaNiche: 'b2b_finance',
+      profileBadgeLabel: 'returning_vip',
       intentScore: 5,
       recommendedTier: 'turnkey',
       confidence: 0.98,
@@ -328,6 +390,8 @@ export function evaluateLayaDecision(state: LayaVisitorState): LayaDecision {
   const utmSource = state.utmSource.trim().toLowerCase();
 
   let rawChoice: LayaPersona = 'default';
+  let explicitMediaNiche: LayaMediaNicheHint | undefined;
+  let explicitBadgeLabel: string | undefined;
   let recommendedTier: RecommendedTier = 'turnkey';
   let intentScore: 1 | 2 | 3 | 4 | 5 = 2;
   let confidence = 0.52; // Универсальный гость без сигналов < 0.75 -> Default
@@ -356,24 +420,81 @@ export function evaluateLayaDecision(state: LayaVisitorState): LayaDecision {
             ? 'cinema'
             : 'turnkey';
     }
+  } else if (
+    personaQuery === 'medicine' ||
+    personaQuery === 'med' ||
+    personaQuery === 'medical'
+  ) {
+    rawChoice = 'default';
+    explicitMediaNiche = 'medicine';
+    explicitBadgeLabel = 'medicine';
+    recommendedTier = 'turnkey';
+    intentScore = 5;
+    confidence = 0.92;
+  } else if (
+    personaQuery === 'b2b' ||
+    personaQuery === 'b2b_finance' ||
+    personaQuery === 'finance'
+  ) {
+    rawChoice = 'returning_vip';
+    explicitMediaNiche = 'b2b_finance';
+    explicitBadgeLabel = 'b2b_finance';
+    recommendedTier = 'turnkey';
+    intentScore = 4;
+    confidence = 0.9;
+  } else if (
+    personaQuery === 'auto' ||
+    personaQuery === 'auto_services'
+  ) {
+    rawChoice = 'default';
+    explicitMediaNiche = 'auto_services';
+    explicitBadgeLabel = 'auto_services';
+    recommendedTier = 'turnkey';
+    intentScore = 4;
+    confidence = 0.9;
   } else if (utmTerm) {
     if (includesKeyword(utmTerm, REAL_ESTATE_TERMS)) {
       rawChoice = 'real_estate';
+      explicitMediaNiche = 'real_estate';
       recommendedTier = 'cinema';
       intentScore = 5;
       confidence = 0.94;
     } else if (includesKeyword(utmTerm, FMCG_TERMS)) {
       rawChoice = 'fmcg';
+      explicitMediaNiche = 'fmcg_retail';
       recommendedTier = 'turnkey';
       intentScore = 4;
       confidence = 0.89;
+    } else if (includesKeyword(utmTerm, MEDICINE_TERMS)) {
+      rawChoice = 'default';
+      explicitMediaNiche = 'medicine';
+      explicitBadgeLabel = 'medicine';
+      recommendedTier = 'turnkey';
+      intentScore = 5;
+      confidence = 0.92;
+    } else if (includesKeyword(utmTerm, B2B_TERMS)) {
+      rawChoice = 'default';
+      explicitMediaNiche = 'b2b_finance';
+      explicitBadgeLabel = 'b2b_finance';
+      recommendedTier = 'turnkey';
+      intentScore = 4;
+      confidence = 0.9;
+    } else if (includesKeyword(utmTerm, AUTO_TERMS)) {
+      rawChoice = 'default';
+      explicitMediaNiche = 'auto_services';
+      explicitBadgeLabel = 'auto_services';
+      recommendedTier = 'turnkey';
+      intentScore = 4;
+      confidence = 0.9;
     } else if (includesKeyword(utmTerm, PRICE_TERMS)) {
       rawChoice = 'price_searcher';
+      explicitMediaNiche = 'fmcg_retail';
       recommendedTier = 'voice_style';
       intentScore = 4;
       confidence = 0.91;
     } else if (includesKeyword(utmTerm, VIP_TERMS)) {
       rawChoice = 'returning_vip';
+      explicitMediaNiche = 'b2b_finance';
       recommendedTier = 'turnkey';
       intentScore = 5;
       confidence = 0.98;
@@ -385,6 +506,7 @@ export function evaluateLayaDecision(state: LayaVisitorState): LayaDecision {
     }
   } else if (state.visitCount >= 4 || utmSource === 'crm_vip') {
     rawChoice = 'returning_vip';
+    explicitMediaNiche = 'b2b_finance';
     recommendedTier = 'turnkey';
     intentScore = 5;
     confidence = state.device === 'mobile' ? 0.98 : 0.88;
@@ -394,10 +516,16 @@ export function evaluateLayaDecision(state: LayaVisitorState): LayaDecision {
   const isFallback = normalizedConfidence < LAYA_CONFIDENCE_THRESHOLD;
   const choice: LayaPersona = isFallback ? 'default' : rawChoice;
   const effectiveTier: RecommendedTier = isFallback ? 'turnkey' : recommendedTier;
+  const mediaNiche: LayaMediaNicheHint = isFallback
+    ? 'real_estate'
+    : explicitMediaNiche ?? defaultNicheForPersona(choice);
+  const profileBadgeLabel = isFallback ? 'default' : explicitBadgeLabel ?? choice;
 
   return {
     choice,
     rawChoice,
+    mediaNiche,
+    profileBadgeLabel,
     intentScore,
     recommendedTier: effectiveTier,
     confidence: normalizedConfidence,
@@ -417,7 +545,7 @@ export function readVisitorStateFromLocation(
 
   return {
     utmTerm: params.get('utm_term') ?? '',
-    personaParam: params.get('persona') ?? '',
+    personaParam: params.get('persona') ?? params.get('niche') ?? '',
     utmSource: params.get('utm_source') ?? '',
     device,
     visitCount: Math.max(1, visitCount),

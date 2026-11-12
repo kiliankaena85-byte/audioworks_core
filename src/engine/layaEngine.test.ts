@@ -180,7 +180,7 @@ test('Wave 3 Editorial Pricing & Quick Order logic: tiers, VIP storage, and vali
     isReturningClientWithSavedProfile: true,
   });
   assert.equal(validVip.valid, true);
-  assert.match(generateOrderNumber(12345), /^AW-\d{4}$/);
+  assert.match(generateOrderNumber(12345), /^FM-\d{4}$/);
 });
 
 test('Editorial FAQ logic & content: 4 questions, smooth toggle state, and respectful tone', () => {
@@ -294,6 +294,10 @@ test('Waves 1-4 & HeroKoto Guardrails: verifies Koto 4-frame showreel, manifesto
     'audioworks'
   );
   assert.equal(ZERNO_DUEL_DATA.clientName, 'Кофейня «Зерно и Свет»');
+  assert.equal(
+    ZERNO_DUEL_DATA.audioworksSpot.badge,
+    '15 секунд в FMWorks: Выстрел в память'
+  );
   assert.equal(ZERNO_DUEL_DATA.radioSpot.durationSec, 14);
   assert.equal(ZERNO_DUEL_DATA.audioworksSpot.durationSec, 15);
   assert.equal(ZERNO_DUEL_DATA.radioSpot.phrases.length, 5);
@@ -324,8 +328,8 @@ test('Waves 1-4 & HeroKoto Guardrails: verifies Koto 4-frame showreel, manifesto
 
   // Verify Case share deep-link URL generation & parsing
   assert.equal(
-    buildCaseShareUrl('https://audioworks.ru/?persona=real_estate#top', 'business-estate'),
-    'https://audioworks.ru/?persona=real_estate&case=business-estate#case-business-estate'
+    buildCaseShareUrl('https://fmworks.ru/?persona=real_estate#top', 'business-estate'),
+    'https://fmworks.ru/?persona=real_estate&case=business-estate#case-business-estate'
   );
   assert.equal(readSharedCaseIdFromLocation('?case=dmitrogorsky', ''), 'dmitrogorsky');
   assert.equal(readSharedCaseIdFromLocation('', '#case-medical-clinics'), 'medical-clinics');
@@ -645,48 +649,50 @@ test('CasesGallery boutique sound wave visualizer: generates 32-band case-specif
   assert.equal(blended[4] > blended[28], true);
 });
 
-test('BrandLogo & Brand Kit AudioWorks: generates pure vector SVGs, dynamic oscillogram W wave, and 4-spec asset kit across 3 domain marks', async () => {
+test('BrandLogo & Brand Kit FMWorks: generates pure vector SVGs, sound-wave W inside orange frame, monolithic FMWorks® wordmark, and 4-spec asset kit', async () => {
   const {
     BRAND_DOMAIN_OPTIONS,
     buildAvatarIconSvgMarkup,
     buildBrandLogoSvgMarkup,
-    computeMonogramPaths,
-    computeOscillogramWPath,
+    computeBadgeWaveWPath,
     getBrandKitAssetSpecs,
     getBrandWordmarkGeometry,
   } = await import('../data/brandKitData');
 
   assert.deepEqual(
     BRAND_DOMAIN_OPTIONS.map((o) => o.label),
-    ['AudioWorks®', 'AudioWorks.pro', 'AirWorks®']
+    ['FMWorks®', 'FMWorks.ru', 'FMWorks.pro']
   );
 
-  // Oscillogram W smoothly changes amplitude on hover vs idle
-  const geomDefault = getBrandWordmarkGeometry('audioworks_reg');
-  const idleWave = computeOscillogramWPath(geomDefault.waveStartX, 0, 0);
-  const hoverWaveA = computeOscillogramWPath(geomDefault.waveStartX, 1, 0.7);
-  const hoverWaveB = computeOscillogramWPath(geomDefault.waveStartX, 1, 2.1);
+  // Verify 6-segment continuous cubic Bezier sound-wave W inside 48x48 rx=13 #FF4820 frame
+  const idleWave = computeBadgeWaveWPath(0, 0);
+  const hoverWaveA = computeBadgeWaveWPath(1, 0.8);
+  const hoverWaveB = computeBadgeWaveWPath(1, 2.1);
+  const countCubicSegments = (d: string) => (d.match(/\bC\b/g) || []).length;
+
+  assert.equal(countCubicSegments(idleWave), 6);
   assert.notEqual(idleWave, hoverWaveA);
   assert.notEqual(hoverWaveA, hoverWaveB);
 
-  // Monogram 3 asymmetric acoustic lines also respond to hover energy
-  const idleMono = computeMonogramPaths(0, 0);
-  const hoverMono = computeMonogramPaths(1, 0.9);
-  assert.equal(idleMono.length, 3);
-  assert.notDeepEqual(idleMono, hoverMono);
+  // Monolithic FMWorks® wordmark geometry without gaps or curves
+  const geomDefault = getBrandWordmarkGeometry('fmworks_reg');
+  assert.equal(geomDefault.fmPrefix, 'FM');
+  assert.equal(geomDefault.worksBody, 'Works');
+  assert.equal(geomDefault.suffixText, '®');
+  assert.equal(geomDefault.letterSpacing, -1.12);
 
-  // Canonical file names for default AudioWorks®
-  const defaultSpecs = getBrandKitAssetSpecs('audioworks_reg');
+  // Canonical file names for default FMWorks®
+  const defaultSpecs = getBrandKitAssetSpecs('fmworks_reg');
   assert.deepEqual(
     defaultSpecs.map((s) => [s.svgFileName, s.pngFileName, s.pngWidth, s.pngHeight]),
     [
-      ['audioworks-logo-dark.svg', 'audioworks-logo-dark.png', 2400, 800],
-      ['audioworks-logo-light.svg', 'audioworks-logo-light.png', 2400, 800],
-      ['audioworks-avatar-icon.svg', 'audioworks-avatar-icon.png', 1000, 1000],
+      ['fmworks-logo-dark.svg', 'fmworks-logo-dark.png', 2400, 800],
+      ['fmworks-logo-light.svg', 'fmworks-logo-light.png', 2400, 800],
+      ['fmworks-avatar-icon.svg', 'fmworks-avatar-icon.png', 1000, 1000],
     ]
   );
 
-  // Standalone exported SVGs contain explicit dimensions, #FF4820 accent, and no currentColor leaks
+  // Standalone exported SVGs contain explicit dimensions, #FF4820 48x48 rx="13" icon, wave W path, and zero currentColor leaks
   for (const option of BRAND_DOMAIN_OPTIONS) {
     const darkSvg = buildBrandLogoSvgMarkup({
       variant: option.id,
@@ -701,8 +707,9 @@ test('BrandLogo & Brand Kit AudioWorks: generates pure vector SVGs, dynamic osci
     const avatarSvg = buildAvatarIconSvgMarkup(option.id);
 
     assert.ok(darkSvg.includes('width="2400" height="800"'));
+    assert.ok(darkSvg.includes('width="48" height="48" rx="13" fill="#FF4820"'));
+    assert.ok(darkSvg.includes(`d="${idleWave}"`));
     assert.ok(darkSvg.includes('#111111'));
-    assert.ok(darkSvg.includes('#FF4820'));
     assert.equal(darkSvg.includes('currentColor'), false);
 
     assert.ok(lightSvg.includes('width="2400" height="800"'));
@@ -711,7 +718,8 @@ test('BrandLogo & Brand Kit AudioWorks: generates pure vector SVGs, dynamic osci
     assert.equal(lightSvg.includes('currentColor'), false);
 
     assert.ok(avatarSvg.includes('width="1000" height="1000"'));
-    assert.ok(avatarSvg.includes('#FF4820'));
+    assert.ok(avatarSvg.includes('width="48" height="48" rx="13" fill="#FF4820"'));
+    assert.ok(avatarSvg.includes(`d="${idleWave}"`));
     assert.equal(avatarSvg.includes('currentColor'), false);
   }
 });
@@ -853,7 +861,7 @@ test('AdminWorkspace Real-Time Site Text Blocks: provides static content array f
 
   // Real-time update in session memory across Hero, Approach, and Pricing
   siteTextBlocksStore.updateBlock('hero-manifesto', {
-    title: 'Студия AudioWorks.',
+    title: 'Студия FMWorks.',
     subtitle: 'Живой звук в памяти сессии.',
     description: 'Обновлённое описание первого экрана.',
   });
@@ -872,7 +880,7 @@ test('AdminWorkspace Real-Time Site Text Blocks: provides static content array f
   const editedHero = siteTextBlocksStore.getBlock('hero-manifesto');
   assert.equal(isSiteTextBlockModified(editedHero), true);
   assert.equal(isSiteTextBlockSubtitleModified(editedHero), true);
-  assert.equal(editedHero.title, 'Студия AudioWorks.');
+  assert.equal(editedHero.title, 'Студия FMWorks.');
   assert.equal(editedHero.subtitle, 'Живой звук в памяти сессии.');
 
   // Per-block reset restores only that block
@@ -888,6 +896,598 @@ test('AdminWorkspace Real-Time Site Text Blocks: provides static content array f
   assert.equal(siteTextBlocksStore.getState().modifiedCount, 0);
   assert.equal(
     siteTextBlocksStore.getBlock('hero-manifesto').title,
-    'Мы AudioWorks.'
+    'Мы FMWorks.'
   );
 });
+
+test('Wave 1 Portfolio CMS: validates WAV/MP3 uploads, parses RIFF WAV duration, computes 3s preview windows, and updates local CMS state', async () => {
+  const {
+    WAVE1_DEFAULT_PREVIEW_DURATION_SEC,
+    applyThreeSecondPreviewTiming,
+    computePreviewWindowTimeline,
+    parseWavDurationFromBuffer,
+    resolveAudioBadgeLabel,
+    validatePortfolioAudioFileMeta,
+  } = await import('../data/portfolioWave1Helpers');
+  const { studioCmsStore } = await import('../cms/studioCmsStore');
+
+  studioCmsStore.discardLocalChanges();
+
+  // 1. Strict WAV / MP3 validation
+  assert.deepEqual(
+    validatePortfolioAudioFileMeta({ name: 'spot-master.wav', type: 'audio/wav', size: 512_000 }),
+    { ok: true, format: 'WAV' }
+  );
+  assert.deepEqual(
+    validatePortfolioAudioFileMeta({ name: 'spot-air.mp3', type: 'audio/mpeg', size: 240_000 }),
+    { ok: true, format: 'MP3' }
+  );
+  assert.equal(
+    validatePortfolioAudioFileMeta({ name: 'notes.txt', type: 'text/plain', size: 1024 }).ok,
+    false
+  );
+  assert.equal(
+    validatePortfolioAudioFileMeta({ name: 'empty.wav', type: 'audio/wav', size: 0 }).ok,
+    false
+  );
+
+  // 2. Binary RIFF/WAVE header duration parser (8000 Hz mono 16-bit = 16,000 bytes/sec -> 6.0 sec = 96,000 bytes)
+  const sampleRate = 8000;
+  const bytesPerSample = 2;
+  const byteRate = sampleRate * bytesPerSample;
+  const pcmByteLength = byteRate * 6;
+  const wavBuffer = new ArrayBuffer(44 + pcmByteLength);
+  const view = new DataView(wavBuffer);
+  const writeAscii = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i += 1) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  };
+  writeAscii(0, 'RIFF');
+  view.setUint32(4, 36 + pcmByteLength, true);
+  writeAscii(8, 'WAVE');
+  writeAscii(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // Mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, 'data');
+  view.setUint32(40, pcmByteLength, true);
+
+  assert.equal(parseWavDurationFromBuffer(wavBuffer), 6);
+  assert.equal(parseWavDurationFromBuffer(new ArrayBuffer(12)), null);
+
+  // 3. 3-second preview timing window & timeline percentages
+  const initialCase = studioCmsStore.getState().snapshot.portfolioCases[0];
+  const timedCase = applyThreeSecondPreviewTiming(
+    {
+      ...initialCase,
+      durationSec: 15,
+      clipStartSec: 0,
+      clipEndSec: 15,
+      previewDurationSec: 4.5,
+    },
+    3
+  );
+  assert.equal(timedCase.previewDurationSec, WAVE1_DEFAULT_PREVIEW_DURATION_SEC);
+  assert.equal(timedCase.previewStartSec, 3);
+
+  const metrics = computePreviewWindowTimeline(timedCase);
+  assert.equal(metrics.previewStartSec, 3);
+  assert.equal(metrics.previewEndSec, 6);
+  assert.equal(metrics.previewDurationSec, 3);
+  assert.equal(metrics.offsetPercent, 20);
+  assert.equal(metrics.widthPercent, 20);
+
+  assert.equal(
+    resolveAudioBadgeLabel({ customAudioFileName: 'bakery-spot.mp3', audioUrl: 'blob:123' }),
+    'MP3'
+  );
+  assert.equal(
+    resolveAudioBadgeLabel({ customAudioFileName: 'bakery-master.wav', audioUrl: 'blob:123' }),
+    'WAV'
+  );
+
+  // 4. Live local CMS store state updates & discard
+  assert.equal(studioCmsStore.getState().hasLocalChanges, false);
+  assert.equal(studioCmsStore.getState().localPortfolioChangeCount, 0);
+
+  studioCmsStore.updateLocalSnapshot((prev) => ({
+    ...prev,
+    portfolioCases: prev.portfolioCases.map((item, idx) =>
+      idx === 0
+        ? {
+            ...item,
+            headline: 'Утренний эфир со вкусом свежего хлеба',
+            customAudioFileName: 'bakery-master.wav',
+            previewStartSec: 1.5,
+            previewDurationSec: 3,
+          }
+        : item
+    ),
+  }));
+
+  const updatedState = studioCmsStore.getState();
+  assert.equal(updatedState.hasLocalChanges, true);
+  assert.equal(updatedState.localPortfolioChangeCount, 1);
+  assert.equal(
+    updatedState.snapshot.portfolioCases[0].headline,
+    'Утренний эфир со вкусом свежего хлеба'
+  );
+  assert.equal(updatedState.snapshot.portfolioCases[0].previewDurationSec, 3);
+
+  studioCmsStore.discardLocalChanges();
+  assert.equal(studioCmsStore.getState().hasLocalChanges, false);
+  assert.equal(studioCmsStore.getState().localPortfolioChangeCount, 0);
+});
+
+test('Hot Air MediaGridPlanner Engine: 12 station quotas, Laya affinity sync, exact budget knapsack, and >=400k 0 RUB production bonus', async () => {
+  const {
+    AIR_BONUS_THRESHOLD_RUB,
+    DEFAULT_RADIO_INVENTORY_SLOTS,
+    PRODUCTION_MODERATION_GATE_HOURS,
+    READY_SPOT_INGEST_GATE_HOURS,
+    buildOptimalMediaGrid,
+    computeSlotAffinity,
+    computeSlotDiscountPercent,
+    expandSlotBroadcastGrid,
+    mapLayaPersonaToMediaNiche,
+    resolveActiveWeekdays,
+    resolveWeekdayNumbers,
+  } = await import('../data/radioInventory');
+
+  // 1. Verify 12 diverse starter quotas: 9 regular (>=24h, 28-42% off) + 3 ultra-urgent (6-23h, 44-48% extra flash discount)
+  assert.equal(DEFAULT_RADIO_INVENTORY_SLOTS.length, 12);
+  const regularQuotas = DEFAULT_RADIO_INVENTORY_SLOTS.filter(
+    (s) => s.deadlineHours >= PRODUCTION_MODERATION_GATE_HOURS
+  );
+  const urgentQuotas = DEFAULT_RADIO_INVENTORY_SLOTS.filter(
+    (s) =>
+      s.deadlineHours >= READY_SPOT_INGEST_GATE_HOURS &&
+      s.deadlineHours < PRODUCTION_MODERATION_GATE_HOURS
+  );
+  assert.equal(regularQuotas.length, 9);
+  assert.equal(urgentQuotas.length, 3);
+
+  for (const slot of regularQuotas) {
+    const disc = computeSlotDiscountPercent(slot);
+    assert.equal(
+      disc >= 28 && disc <= 42,
+      true,
+      `${slot.station} regular discount ${disc}% outside 28-42%`
+    );
+  }
+
+  for (const slot of urgentQuotas) {
+    const disc = computeSlotDiscountPercent(slot);
+    assert.equal(
+      disc >= 44 && disc <= 49,
+      true,
+      `${slot.station} urgent flash discount ${disc}% should carry extra discount`
+    );
+  }
+
+  // Verify exact broadcast time-slots, numeric weekdays, and chessboard cell sum
+  for (const slot of DEFAULT_RADIO_INVENTORY_SLOTS) {
+    assert.equal(slot.weekdays.length >= 2, true);
+    assert.equal(slot.sampleTimeSlots.length >= 3, true);
+    for (const ts of slot.sampleTimeSlots) {
+      assert.match(ts, /^([01]\d|2[0-3]):[0-5]\d$/);
+    }
+    const cells = expandSlotBroadcastGrid(slot);
+    const sumSpots = cells.reduce((acc, c) => acc + c.spotsCount, 0);
+    assert.equal(sumSpots, slot.spotsIncluded);
+  }
+
+  // 2. Weekday pattern & numeric resolvers
+  assert.deepEqual(resolveWeekdayNumbers('Пн–Пт'), [1, 2, 3, 4, 5]);
+  assert.deepEqual(resolveWeekdayNumbers('Ср–Вс'), [3, 4, 5, 6, 7]);
+  assert.deepEqual(resolveActiveWeekdays('Пн–Пт'), ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ']);
+  assert.deepEqual(resolveActiveWeekdays([3, 4, 5, 6, 7]), ['СР', 'ЧТ', 'ПТ', 'СБ', 'ВС']);
+
+  // 3. LayaDecisionEngine synchronization & niche affinity ordering
+  assert.equal(mapLayaPersonaToMediaNiche('real_estate'), 'real_estate');
+  assert.equal(mapLayaPersonaToMediaNiche('fmcg'), 'fmcg_retail');
+  assert.equal(mapLayaPersonaToMediaNiche('returning_vip'), 'b2b_finance');
+
+  const bfm = DEFAULT_RADIO_INVENTORY_SLOTS[0];
+  const dorozhnoe = DEFAULT_RADIO_INVENTORY_SLOTS[6];
+  assert.equal(
+    computeSlotAffinity(bfm, 'b2b_finance', 'returning_vip') >
+      computeSlotAffinity(dorozhnoe, 'b2b_finance', 'returning_vip'),
+    true
+  );
+  assert.equal(
+    computeSlotAffinity(dorozhnoe, 'medicine', 'default', 'сеть семейных клиник') >
+      computeSlotAffinity(bfm, 'medicine', 'default', 'сеть семейных клиник'),
+    true
+  );
+
+  // 4. Strict budget adherence across [100k .. 1.5M] for 15s, 30s, and ready_spot
+  for (const budget of [100_000, 180_000, 250_000, 300_000, 400_000, 550_000, 950_000, 1_500_000]) {
+    for (const dur of ['15', '30', 'ready_spot'] as const) {
+      const plan = buildOptimalMediaGrid('real_estate', budget, dur, {
+        layaPersona: 'real_estate',
+        slots: DEFAULT_RADIO_INVENTORY_SLOTS,
+      });
+      assert.equal(plan.selectedSlots.length >= 1, true, `Empty grid at ${budget} / ${dur}`);
+      assert.equal(
+        plan.totalClientCost <= budget,
+        true,
+        `Cost ${plan.totalClientCost} exceeded budget ${budget} (${dur})`
+      );
+      if (dur === '30') {
+        assert.equal(
+          plan.selectedSlots.every((item) => item.slot.maxDuration >= 30),
+          true
+        );
+      }
+    }
+  }
+
+  // 5. Commercial Bonus Rule: airSpend >= 400 000 RUB unlocks 0 RUB Turnkey production (+25 000 RUB extra savings)
+  const belowThresholdPlan = buildOptimalMediaGrid('b2b_finance', 300_000, '30', {
+    slots: DEFAULT_RADIO_INVENTORY_SLOTS,
+  });
+  assert.equal(belowThresholdPlan.hotAirTotal < AIR_BONUS_THRESHOLD_RUB, true);
+  assert.equal(belowThresholdPlan.isBonusProductionUnlocked, false);
+  assert.equal(belowThresholdPlan.effectiveProductionPrice, 25_000);
+
+  const bonusPlanAt400k = buildOptimalMediaGrid('real_estate', 400_000, '30', {
+    layaPersona: 'real_estate',
+    slots: DEFAULT_RADIO_INVENTORY_SLOTS,
+  });
+  assert.equal(bonusPlanAt400k.hotAirTotal >= AIR_BONUS_THRESHOLD_RUB, true);
+  assert.equal(bonusPlanAt400k.isBonusProductionUnlocked, true);
+  assert.equal(bonusPlanAt400k.effectiveProductionPrice, 0);
+  assert.equal(bonusPlanAt400k.totalClientCost <= 400_000, true);
+  assert.equal(
+    bonusPlanAt400k.totalSavingsRub,
+    bonusPlanAt400k.officialAirTotal - bonusPlanAt400k.hotAirTotal + 25_000
+  );
+});
+
+test('Wave 1 Media-Buyer Rules: Effective Frequency concentration (100-250k), Moderation Time-Gate (>=24h vs >=6h), and AI Rationale', async () => {
+  const {
+    DEFAULT_RADIO_INVENTORY_SLOTS,
+    buildOptimalMediaGrid,
+    formatRubCompact,
+  } = await import('../data/radioInventory');
+  const { BANNED_EDITORIAL_TERMS } = await import('../data/studioCmsTypes');
+
+  const allNiches = [
+    'real_estate',
+    'b2b_finance',
+    'fmcg_retail',
+    'medicine',
+    'auto_services',
+  ] as const;
+
+  // 1. Effective Frequency Rule: 100k - 250k NEVER smears across 3-5 stations; concentrates on 1-2 stations with >= 12 spots each
+  for (const niche of allNiches) {
+    for (const smallBudget of [100_000, 150_000, 200_000, 250_000]) {
+      const plan = buildOptimalMediaGrid(niche, smallBudget, '15', {
+        slots: DEFAULT_RADIO_INVENTORY_SLOTS,
+      });
+      assert.equal(
+        plan.selectedSlots.length >= 1 && plan.selectedSlots.length <= 2,
+        true,
+        `Budget ${smallBudget} in ${niche} picked ${plan.selectedSlots.length} stations instead of 1-2`
+      );
+      assert.equal(
+        plan.selectedSlots.every((s) => s.slot.spotsIncluded >= 12),
+        true,
+        `Selected slot below effective frequency threshold`
+      );
+      assert.equal(plan.totalSpots >= 14, true);
+    }
+  }
+
+  // Inject synthetic 3-spot budget-wasters and 5 cheap 40k stations: 220k budget STILL caps at <= 2 dense Tier-1 stations
+  const adversarialSlots = [
+    ...DEFAULT_RADIO_INVENTORY_SLOTS,
+    ...[1, 2, 3, 4, 5].map((n) => ({
+      id: `thin-cheap-${n}`,
+      station: `Дешёвая Волна ${n}`,
+      frequencyFm: `10${n}.1 FM`,
+      formatDesc: 'Размытый пакет по 3 выхода',
+      audienceTags: ['mass'] as ('mass')[],
+      daypart: 'Дневной блок 12:00–16:00' as const,
+      daysPattern: 'Пн–Пт',
+      weekdays: [1, 2, 3, 4, 5] as (1 | 2 | 3 | 4 | 5)[],
+      sampleTimeSlots: ['13:10', '14:10', '15:10'],
+      spotsIncluded: 3,
+      maxDuration: 15 as const,
+      officialPrice: 65_000,
+      hotPrice: 38_000,
+      reachOTS: 190_000,
+      deadlineHours: 30,
+      isHidden: false,
+    })),
+  ];
+
+  const antiSmearPlan = buildOptimalMediaGrid('b2b_finance', 220_000, '15', {
+    slots: adversarialSlots,
+  });
+  assert.equal(antiSmearPlan.selectedSlots.length <= 2, true);
+  assert.equal(
+    antiSmearPlan.selectedSlots.some((s) => s.slot.spotsIncluded < 10),
+    false,
+    'Optimizer must reject 3-spot budget-waster packages'
+  );
+
+  // Higher budget (900k RUB) scales up by connecting Tier-2 reach stations (3+ stations)
+  const scaledFlightPlan = buildOptimalMediaGrid('real_estate', 900_000, '15', {
+    slots: DEFAULT_RADIO_INVENTORY_SLOTS,
+  });
+  assert.equal(scaledFlightPlan.selectedSlots.length >= 4, true);
+  assert.equal(scaledFlightPlan.selectedSlots.some((s) => s.tier === 1), true);
+  assert.equal(scaledFlightPlan.selectedSlots.some((s) => s.tier === 2), true);
+
+  // 2. Moderation Time-Gate: '15'/'30' (need_production_24h) strictly requires deadlineHours >= 24;
+  //    'ready_spot' (ready_with_passport) unlocks ultra-urgent tomorrow-morning slots (deadlineHours >= 6) while blocking < 6h
+  const slotsWithSub6h = [
+    ...DEFAULT_RADIO_INVENTORY_SLOTS,
+    {
+      ...DEFAULT_RADIO_INVENTORY_SLOTS[9],
+      id: 'too-late-4h',
+      station: 'Закрытый Эфир',
+      deadlineHours: 4,
+    },
+  ];
+
+  const prod24hPlan = buildOptimalMediaGrid('real_estate', 350_000, '30', {
+    slots: slotsWithSub6h,
+  });
+  assert.equal(prod24hPlan.spotReadinessMode, 'need_production_24h');
+  assert.equal(prod24hPlan.minRequiredDeadlineHours, 24);
+  assert.equal(prod24hPlan.lockedUrgentSlots.length, 3);
+  assert.equal(
+    prod24hPlan.scoredSlots.every((s) => s.slot.deadlineHours >= 24),
+    true,
+    '24h production mode must filter out all slots with deadlineHours < 24'
+  );
+
+  const readySpotPlan = buildOptimalMediaGrid('real_estate', 350_000, 'ready_spot', {
+    slots: slotsWithSub6h,
+  });
+  assert.equal(readySpotPlan.spotReadinessMode, 'ready_with_passport');
+  assert.equal(readySpotPlan.minRequiredDeadlineHours, 6);
+  assert.equal(readySpotPlan.scoredSlots.length, 12);
+  assert.equal(
+    readySpotPlan.scoredSlots.some((s) => s.slot.deadlineHours < 24 && s.slot.deadlineHours >= 6),
+    true,
+    'Ready spot mode must unlock ultra-urgent tomorrow-morning quotas (6-23h)'
+  );
+  assert.equal(
+    readySpotPlan.scoredSlots.some((s) => s.slot.id === 'too-late-4h'),
+    false,
+    'Slots with deadlineHours < 6 must remain blocked'
+  );
+
+  // 3. AI Media-Buyer Rationale (`aiRationale`): 2-3 expert sentences mentioning station, audience %, and exact savings
+  for (const plan of [prod24hPlan, readySpotPlan, scaledFlightPlan]) {
+    assert.equal(plan.aiRationale.length > 90, true);
+    const sentences = plan.aiRationale
+      .split(/(?<=[.!?])\s+/)
+      .filter((part) => part.trim().length > 0);
+    assert.equal(
+      sentences.length >= 2 && sentences.length <= 3,
+      true,
+      `Expected 2-3 sentences in aiRationale, got ${sentences.length}: ${plan.aiRationale}`
+    );
+    assert.equal(
+      plan.aiRationale.includes(`${plan.targetAudienceSharePct}%`),
+      true,
+      'aiRationale must state target audience capture percentage'
+    );
+    assert.equal(
+      plan.aiRationale.includes(formatRubCompact(plan.totalSavingsRub)),
+      true,
+      'aiRationale must state exact ruble savings'
+    );
+    assert.equal(
+      plan.selectedSlots.some((s) => plan.aiRationale.includes(s.slot.station)),
+      true,
+      'aiRationale must name the chosen station(s)'
+    );
+
+    const lowerRationale = plan.aiRationale.toLowerCase();
+    for (const term of BANNED_EDITORIAL_TERMS) {
+      assert.equal(
+        lowerRationale.includes(term),
+        false,
+        `Banned term "${term}" found in aiRationale`
+      );
+    }
+  }
+});
+
+test('RadioInventoryAdmin Smart Parser & Store: parses raw Telegram dump and CSV with 15-25% margin and updates live inventory', async () => {
+  const {
+    SAMPLE_RADIO_SALES_DUMP,
+    parseRawRadioSalesDump,
+    radioInventoryStore,
+    validateMediaHoldReservation,
+  } = await import('../data/radioInventory');
+
+  radioInventoryStore.resetToDefaults();
+  assert.equal(radioInventoryStore.getAllSlots().length, 12);
+
+  // 1. Parse sample raw Telegram sales dump with 15% vs 25% margin
+  const parsed15 = parseRawRadioSalesDump(SAMPLE_RADIO_SALES_DUMP, 15);
+  const parsed25 = parseRawRadioSalesDump(SAMPLE_RADIO_SALES_DUMP, 25);
+
+  assert.equal(parsed15.slots.length, 3);
+  assert.equal(parsed25.slots.length, 3);
+  assert.equal(parsed15.slots[0].station, 'Серебряный Дождь');
+  assert.equal(parsed15.slots[0].frequencyFm, '100.1 FM');
+  assert.equal(parsed15.slots[0].spotsIncluded, 14);
+  assert.equal(parsed15.slots[0].maxDuration, 30);
+  assert.deepEqual(parsed15.slots[0].weekdays, [1, 2, 3, 4, 5]);
+  assert.deepEqual(parsed15.slots[1].weekdays, [3, 4, 5, 6, 7]);
+  assert.equal(parsed25.slots[0].hotPrice > parsed15.slots[0].hotPrice, true);
+
+  // 2. Parse semicolon CSV line
+  const csvParsed = parseRawRadioSalesDump(
+    'Новое Радио 98.4 FM;Дневной блок 12:00–16:00;Пн–Пт;18;15;190000;85000;410000;12',
+    20
+  );
+  assert.equal(csvParsed.slots.length, 1);
+  assert.equal(csvParsed.slots[0].station, 'Новое Радио');
+  assert.equal(csvParsed.slots[0].hotPrice, 102_000);
+  assert.equal(csvParsed.slots[0].maxDuration, 15);
+  assert.deepEqual(csvParsed.slots[0].weekdays, [1, 2, 3, 4, 5]);
+
+  // 3. Commit imported slots, hide sold slot, update price, and reset
+  radioInventoryStore.prependImportedSlots(parsed15.slots);
+  assert.equal(radioInventoryStore.getAllSlots().length, 15);
+
+  const firstId = radioInventoryStore.getAllSlots()[0].id;
+  radioInventoryStore.updateSlot(firstId, { hotPrice: 99_000, isHidden: true });
+  assert.equal(radioInventoryStore.getActiveSlots().length, 14);
+
+  // 4. Hold validation
+  assert.equal(
+    validateMediaHoldReservation({ contactLine: '', companyName: 'ЖК Свет', selectedCount: 2 })
+      .valid,
+    false
+  );
+  assert.equal(
+    validateMediaHoldReservation({
+      contactLine: '@ivan_marketing',
+      companyName: 'ЖК Свет',
+      selectedCount: 2,
+    }).valid,
+    true
+  );
+
+  radioInventoryStore.resetToDefaults();
+  assert.equal(radioInventoryStore.getAllSlots().length, 12);
+});
+
+test('Wave 4 End-to-End Integration: Laya AI niche sync (Real Estate, FMCG, Medicine) & QuickOrderDrawer 4-hour reservation handoff', async () => {
+  const {
+    DEFAULT_RADIO_INVENTORY_SLOTS,
+    buildOptimalMediaGrid,
+    buildMediaReservationPayload,
+    computeReservationTotalsForSelection,
+    formatBookingSpecificationText,
+    formatHoldCountdown,
+    resolveMediaNicheFromLaya,
+  } = await import('../data/radioInventory');
+
+  // 1. Laya AI simulation traces & URL signals map cleanly to MediaGridPlanner niches (incl. Medicine!)
+  const realEstateTrace = LAYA_SIMULATION_TRACES.find((t) => t.id === 'ad_real_estate');
+  const fmcgTrace = LAYA_SIMULATION_TRACES.find((t) => t.id === 'abm_fmcg');
+  const medicineTrace = LAYA_SIMULATION_TRACES.find((t) => t.id === 'ad_medicine');
+  assert.ok(realEstateTrace);
+  assert.ok(fmcgTrace);
+  assert.ok(medicineTrace);
+
+  const realEstateDecision = evaluateLayaDecision(realEstateTrace.state);
+  const fmcgDecision = evaluateLayaDecision(fmcgTrace.state);
+  const medicineDecision = evaluateLayaDecision(medicineTrace.state);
+
+  assert.equal(resolveMediaNicheFromLaya(realEstateDecision), 'real_estate');
+  assert.equal(resolveMediaNicheFromLaya(fmcgDecision), 'fmcg_retail');
+  assert.equal(resolveMediaNicheFromLaya(medicineDecision), 'medicine');
+  assert.equal(medicineDecision.isFallback, false);
+  assert.equal(medicineDecision.confidence >= 0.75, true);
+
+  // URL ?persona=medicine and ?utm_term="клиника чекап" also trigger Medicine media grid
+  const medUrlDecision = evaluateLayaDecision(
+    readVisitorStateFromLocation('?persona=medicine', 1440, '', 1)
+  );
+  assert.equal(resolveMediaNicheFromLaya(medUrlDecision), 'medicine');
+
+  const medUtmDecision = evaluateLayaDecision(
+    readVisitorStateFromLocation(
+      '?utm_term=%D0%BA%D0%BB%D0%B8%D0%BD%D0%B8%D0%BA%D0%B0+%D1%87%D0%B5%D0%BA%D0%B0%D0%BF',
+      1440,
+      '',
+      1
+    )
+  );
+  assert.equal(resolveMediaNicheFromLaya(medUtmDecision), 'medicine');
+
+  // Pre-built grids for Real Estate, FMCG, and Medicine differ and prioritize profile-specific stations
+  const medPlan = buildOptimalMediaGrid('medicine', 300_000, '15', {
+    layaPersona: medicineDecision.choice,
+    slots: DEFAULT_RADIO_INVENTORY_SLOTS,
+  });
+  assert.equal(
+    medPlan.selectedSlots.some((s) => s.slot.audienceTags.includes('medicine')),
+    true
+  );
+
+  // 2. 4-hour priority hold countdown formatter
+  assert.equal(formatHoldCountdown(4 * 3600 - 1), '03:59:59');
+  assert.equal(formatHoldCountdown(3661), '01:01:01');
+  assert.equal(formatHoldCountdown(0), '00:00:00');
+
+  // 3. Reservation payload & tariff recalculations (0 RUB Bonus vs 15k / 25k / 35k RUB)
+  const bonusGridPlan = buildOptimalMediaGrid('real_estate', 450_000, '15', {
+    layaPersona: 'real_estate',
+    slots: DEFAULT_RADIO_INVENTORY_SLOTS,
+  });
+  const bonusPayload = buildMediaReservationPayload({
+    plan: bonusGridPlan,
+    nicheLabel: 'Недвижимость и ЖК',
+    productNote: 'Старт продаж 2 очереди',
+  });
+  assert.equal(bonusPayload.initialCountdownSeconds, 14399);
+  assert.equal(bonusPayload.isBonusProductionUnlocked, true);
+  assert.equal(bonusPayload.initialProductionSelection, 'bonus_express_24h');
+
+  const bonusTotals = computeReservationTotalsForSelection(bonusPayload, 'bonus_express_24h');
+  assert.equal(bonusTotals.spotStatusLabel, 'Экспресс-продакшн за 24ч — 0 ₽ Бонус');
+  assert.equal(bonusTotals.productionPriceRub, 0);
+  assert.equal(bonusTotals.unifiedTotalRub, bonusPayload.hotAirTotal);
+
+  const sub400kPlan = buildOptimalMediaGrid('fmcg_retail', 250_000, '15', {
+    layaPersona: 'fmcg',
+    slots: DEFAULT_RADIO_INVENTORY_SLOTS,
+  });
+  const sub400kPayload = buildMediaReservationPayload({
+    plan: sub400kPlan,
+    nicheLabel: 'Продукты и Ритейл',
+    productNote: '',
+  });
+  assert.equal(sub400kPayload.isBonusProductionUnlocked, false);
+  assert.equal(
+    computeReservationTotalsForSelection(sub400kPayload, 'voice_style').unifiedTotalRub,
+    sub400kPayload.hotAirTotal + 15_000
+  );
+  assert.equal(
+    computeReservationTotalsForSelection(sub400kPayload, 'turnkey').unifiedTotalRub,
+    sub400kPayload.hotAirTotal + 25_000
+  );
+  assert.equal(
+    computeReservationTotalsForSelection(sub400kPayload, 'cinema').unifiedTotalRub,
+    sub400kPayload.hotAirTotal + 35_000
+  );
+
+  // 4. Structured hold specification text for copy & download
+  const specText = formatBookingSpecificationText({
+    orderNumber: 'FM-HOLD-2850',
+    payload: bonusPayload,
+    totals: bonusTotals,
+    contact: 'Алексей +7 999 123-45-67',
+    companyRequisites: 'ИНН 7701234567 · ООО Свет Девелопмент',
+    briefText: 'Старт продаж видовых квартир',
+    hasVoice: true,
+    voiceSec: 18,
+    requisitesFileName: 'requisites_svet.pdf',
+  });
+  assert.equal(specText.includes('#FM-HOLD-2850'), true);
+  assert.equal(specText.includes('4-часовой холд'), true);
+  assert.equal(specText.includes('20 минут'), true);
+  assert.equal(specText.includes('Экспресс-продакшн за 24ч — 0 ₽ Бонус'), true);
+  assert.equal(specText.includes('ИНН 7701234567'), true);
+  assert.equal(specText.includes('requisites_svet.pdf'), true);
+});
+

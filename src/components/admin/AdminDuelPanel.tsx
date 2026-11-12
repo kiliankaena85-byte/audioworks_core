@@ -211,7 +211,7 @@ export function AdminDuelPanel({
             Общий бриф и заголовок секции «Дуэль 15 секунд»
           </h2>
           <p className="text-xs text-[#111111]/60 dark:text-[#F4F3EF]/60">
-            Настройте вводную задачу клиента, на которой посетитель сравнивает типовой ролик и режиссуру AudioWorks.
+            Настройте вводную задачу клиента, на которой посетитель сравнивает типовой ролик и режиссуру FMWorks.
           </p>
         </div>
 
@@ -341,7 +341,7 @@ export function AdminDuelPanel({
                   : 'text-[#111111]/60 dark:text-[#F4F3EF]/60 hover:text-[#111111] dark:hover:text-white'
               }`}
             >
-              Сторона Б · Режиссура AudioWorks
+              Сторона Б · 15 секунд в FMWorks
             </button>
           </div>
 

@@ -3,84 +3,66 @@ import { AnimatePresence, motion } from 'motion/react';
 import { MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from 'react';
 import { BrandDomainVariant } from '../data/brandKitData';
 import {
-  COMPACT_NAV_ITEMS,
-  computeSmoothScrollTargetY,
-  NavSectionId,
-  resolveActiveSectionId,
-  SectionViewportBounds,
-} from '../data/navigationData';
+  MAIN_PLATFORM_NAV_ITEMS,
+  PlatformRoute,
+  resolveActiveTopNavSection,
+  TopNavSectionKey,
+} from '../data/platformRouter';
 import { BrandLogo } from './BrandLogo';
 
 interface CompactHeaderNavProps {
   isDark: boolean;
   onToggleTheme: () => void;
-  isQuickOrderOpen: boolean;
-  onOpenQuickOrder: () => void;
+  activeRoute: PlatformRoute;
+  hasActiveHold: boolean;
+  holdStationsCount: number;
+  onNavigate: (route: PlatformRoute) => void;
+  onOpenOrder: () => void;
   brandVariant?: BrandDomainVariant;
   onOpenBrandKit?: () => void;
+}
+
+function navKeyToRoute(key: TopNavSectionKey): PlatformRoute {
+  switch (key) {
+    case 'home':
+      return { kind: 'home' };
+    case 'hot-air':
+      return { kind: 'hot-air' };
+    case 'cases':
+      return { kind: 'cases' };
+    case 'pricing':
+      return { kind: 'pricing' };
+    case 'approach':
+      return { kind: 'approach' };
+  }
 }
 
 export function CompactHeaderNav({
   isDark,
   onToggleTheme,
-  isQuickOrderOpen,
-  onOpenQuickOrder,
-  brandVariant = 'audioworks_reg',
+  activeRoute,
+  hasActiveHold,
+  holdStationsCount,
+  onNavigate,
+  onOpenOrder,
+  brandVariant = 'fmworks_reg',
   onOpenBrandKit,
 }: CompactHeaderNavProps) {
   const [isScrolled, setIsScrolled] = useState<boolean>(false);
-  const [activeSectionId, setActiveSectionId] = useState<NavSectionId | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
 
   const headerRef = useRef<HTMLElement | null>(null);
-  const manualLockUntilRef = useRef<number>(0);
+  const activeTopSection = resolveActiveTopNavSection(activeRoute);
+  const isOrderActive = activeRoute.kind === 'order';
 
   useEffect(() => {
-    let rafId = 0;
-
-    const syncScrollState = () => {
-      rafId = 0;
-      const scrollY = window.scrollY;
-      const nextScrolled = scrollY > 16;
-      setIsScrolled((prev) => (prev === nextScrolled ? prev : nextScrolled));
-
-      if (performance.now() < manualLockUntilRef.current) {
-        return;
-      }
-
-      const bounds: SectionViewportBounds[] = [];
-      for (const item of COMPACT_NAV_ITEMS) {
-        const el = document.getElementById(item.id);
-        if (!el) continue;
-        const rect = el.getBoundingClientRect();
-        bounds.push({ id: item.id, top: rect.top, bottom: rect.bottom });
-      }
-
-      const docEl = document.documentElement;
-      const isAtBottom =
-        scrollY > 80 &&
-        window.innerHeight + scrollY >= docEl.scrollHeight - 36;
-
-      const resolved = resolveActiveSectionId(bounds, 148, isAtBottom);
-      setActiveSectionId((prev) => (prev === resolved ? prev : resolved));
+    const syncScroll = () => {
+      const next = window.scrollY > 12;
+      setIsScrolled((prev) => (prev === next ? prev : next));
     };
-
-    const onScrollOrResize = () => {
-      if (rafId !== 0) return;
-      rafId = window.requestAnimationFrame(syncScrollState);
-    };
-
-    syncScrollState();
-    window.addEventListener('scroll', onScrollOrResize, { passive: true });
-    window.addEventListener('resize', onScrollOrResize);
-
-    return () => {
-      if (rafId !== 0) {
-        window.cancelAnimationFrame(rafId);
-      }
-      window.removeEventListener('scroll', onScrollOrResize);
-      window.removeEventListener('resize', onScrollOrResize);
-    };
+    syncScroll();
+    window.addEventListener('scroll', syncScroll, { passive: true });
+    return () => window.removeEventListener('scroll', syncScroll);
   }, []);
 
   useEffect(() => {
@@ -107,73 +89,51 @@ export function CompactHeaderNav({
     };
   }, [isMobileMenuOpen]);
 
-  const prefersReducedMotion = () =>
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
   const handleBrandClick = (e: ReactMouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
     setIsMobileMenuOpen(false);
-    setActiveSectionId(null);
-    manualLockUntilRef.current = performance.now() + 550;
-    window.scrollTo({
-      top: 0,
-      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
-    });
-    if (window.location.hash) {
-      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    if (activeRoute.kind === 'home') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
     }
+    onNavigate({ kind: 'home' });
   };
 
-  const handleSectionNavigate = (
+  const handleNavClick = (
     e: ReactMouseEvent<HTMLAnchorElement>,
-    sectionId: NavSectionId,
-    href: string
+    key: TopNavSectionKey
   ) => {
     e.preventDefault();
     setIsMobileMenuOpen(false);
-
-    const targetEl = document.getElementById(sectionId);
-    if (!targetEl) return;
-
-    setActiveSectionId(sectionId);
-    manualLockUntilRef.current = performance.now() + 650;
-
-    const targetY = computeSmoothScrollTargetY(
-      targetEl.getBoundingClientRect().top,
-      window.scrollY
-    );
-
-    window.scrollTo({
-      top: targetY,
-      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
-    });
-
-    window.history.replaceState(null, '', href);
+    const targetRoute = navKeyToRoute(key);
+    if (activeRoute.kind === targetRoute.kind) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    onNavigate(targetRoute);
   };
 
   return (
     <header
       ref={headerRef}
-      aria-label="Закреплённая навигация AudioWorks"
+      aria-label="Главная навигация платформы FMWorks"
       className={`sticky top-0 z-50 w-full h-14 bg-[#F7F6F2]/92 dark:bg-[#0D0D0F]/92 backdrop-blur-xl transition-colors duration-200 border-b ${
-        isScrolled
+        isScrolled || activeRoute.kind !== 'home'
           ? 'border-[#111111]/8 dark:border-white/10'
           : 'border-transparent'
       }`}
     >
-      <div className="max-w-7xl mx-auto h-full px-4 sm:px-6 lg:px-12 flex items-center justify-between gap-6 lg:gap-8 relative">
-        {/* Зона 1: Дизайнерский векторный логотип с плавным возвратом к началу и Brand Kit по правому клику */}
+      <div className="max-w-7xl mx-auto h-full px-4 sm:px-6 lg:px-12 flex items-center justify-between gap-8 relative">
+        {/* Зона 1: Логотип бренда */}
         <a
-          href="#top"
+          href="/"
           onClick={handleBrandClick}
           onContextMenu={(e) => {
             if (!onOpenBrandKit) return;
             e.preventDefault();
             onOpenBrandKit();
           }}
-          title="Нажмите для возврата наверх · Правый клик открывает Brand Kit (SVG / PNG)"
+          title="Главная страница FMWorks · Правый клик открывает Brand Kit"
           className="inline-flex items-center whitespace-nowrap shrink-0 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#FF4820]"
         >
           <BrandLogo
@@ -183,19 +143,20 @@ export function CompactHeaderNav({
           />
         </a>
 
-        {/* Зона 2: Компактная навигация к ключевым секциям (Галерея, Стоимость, FAQ и др.) */}
+        {/* Зона 2: Чистая однострочная текстовая навигация (5 разделов) */}
         <nav
-          aria-label="Навигация по секциям страницы"
+          aria-label="Основные разделы сайта"
           className="hidden md:flex items-center gap-6 lg:gap-8 h-full"
         >
-          {COMPACT_NAV_ITEMS.map((item) => {
-            const isActive = activeSectionId === item.id;
+          {MAIN_PLATFORM_NAV_ITEMS.map((item) => {
+            const isActive = activeTopSection === item.key;
             return (
               <a
-                key={item.id}
+                key={item.key}
                 href={item.href}
-                aria-current={isActive ? 'location' : undefined}
-                onClick={(e) => handleSectionNavigate(e, item.id, item.href)}
+                data-testid={`header-nav-${item.key}`}
+                aria-current={isActive ? 'page' : undefined}
+                onClick={(e) => handleNavClick(e, item.key)}
                 className={`relative h-full inline-flex items-center text-sm font-medium transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
                   isActive
                     ? 'text-[#111111] dark:text-[#F4F3EF] font-semibold'
@@ -205,7 +166,7 @@ export function CompactHeaderNav({
                 <span>{item.label}</span>
                 {isActive && (
                   <motion.span
-                    layoutId="compact-nav-indicator"
+                    layoutId="platform-nav-indicator"
                     transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
                     aria-hidden="true"
                     className="absolute inset-x-0 bottom-0 h-0.5 bg-[#FF4820]"
@@ -216,7 +177,7 @@ export function CompactHeaderNav({
           })}
         </nav>
 
-        {/* Зона 3: Переключатель темы, компактное мобильное меню и главное действие */}
+        {/* Зона 3: Тема, мобильное меню и единственное главное действие */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           <button
             type="button"
@@ -248,15 +209,27 @@ export function CompactHeaderNav({
 
           <button
             type="button"
-            onClick={onOpenQuickOrder}
-            aria-expanded={isQuickOrderOpen}
-            className="h-9 sm:h-10 px-4 sm:px-5 rounded-full bg-[#FF4820] hover:bg-[#E63D18] active:scale-[0.99] text-white text-xs sm:text-[13px] font-semibold tracking-tight inline-flex items-center justify-center transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+            data-testid="header-order-cta"
+            onClick={() => {
+              setIsMobileMenuOpen(false);
+              onOpenOrder();
+            }}
+            aria-current={isOrderActive ? 'page' : undefined}
+            className={`h-9 sm:h-10 px-4 sm:px-5 rounded-full text-xs sm:text-[13px] font-semibold tracking-tight inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
+              isOrderActive
+                ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                : 'bg-[#FF4820] hover:bg-[#E63D18] text-white'
+            }`}
           >
-            Быстрый заказ
+            <span>
+              {hasActiveHold
+                ? `Бронь эфира · ${holdStationsCount}`
+                : 'Оформить заказ'}
+            </span>
           </button>
         </div>
 
-        {/* Компактное выпадающее меню для мобильных экранов */}
+        {/* Выпадающее мобильное меню разделов */}
         <AnimatePresence>
           {isMobileMenuOpen && (
             <motion.nav
@@ -266,16 +239,16 @@ export function CompactHeaderNav({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-              className="md:hidden absolute right-4 top-15 w-56 rounded-2xl bg-[#F7F6F2] dark:bg-[#15151A] border border-[#111111]/10 dark:border-white/12 shadow-xl p-1.5"
+              className="md:hidden absolute right-4 top-15 w-60 rounded-2xl bg-[#F7F6F2] dark:bg-[#15151A] border border-[#111111]/10 dark:border-white/12 shadow-xl p-1.5"
             >
-              {COMPACT_NAV_ITEMS.map((item) => {
-                const isActive = activeSectionId === item.id;
+              {MAIN_PLATFORM_NAV_ITEMS.map((item) => {
+                const isActive = activeTopSection === item.key;
                 return (
                   <a
-                    key={item.id}
+                    key={item.key}
                     href={item.href}
-                    aria-current={isActive ? 'location' : undefined}
-                    onClick={(e) => handleSectionNavigate(e, item.id, item.href)}
+                    aria-current={isActive ? 'page' : undefined}
+                    onClick={(e) => handleNavClick(e, item.key)}
                     className={`min-h-[44px] flex items-center justify-between px-3.5 rounded-xl text-sm transition-colors ${
                       isActive
                         ? 'font-semibold text-[#FF4820] bg-[#111111]/4 dark:bg-white/6'

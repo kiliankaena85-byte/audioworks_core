@@ -365,15 +365,15 @@ export function HeroKoto({
       {/* 1. ПАРЯЩИЕ КАПСУЛЫ В СТИЛЕ KOTO.COM (Floating Pills Bar — без полоски border-b) */}
       <div
         role="banner"
-        aria-label="Верхняя панель AudioWorks"
+        aria-label="Верхняя панель FMWorks"
         className="fixed top-4 md:top-5 inset-x-4 md:inset-x-6 z-50 pointer-events-none flex items-start justify-between gap-3"
       >
-        {/* Слева: плотная капсула с логотипом AudioWorks® */}
+        {/* Слева: плотная капсула с логотипом FMWorks® */}
         <a
           href="#top"
           className="pointer-events-auto h-10 px-4.5 rounded-full bg-[#F7F6F2]/90 dark:bg-[#141418]/90 backdrop-blur-md border border-[#111111]/10 dark:border-white/14 text-[#111111] dark:text-[#F4F3EF] inline-flex items-center text-[15px] font-bold tracking-tight shadow-sm hover:scale-[1.01] transition-transform whitespace-nowrap shrink-0"
         >
-          AudioWorks<sup className="text-[10px] font-semibold ml-0.5 opacity-75">®</sup>
+          FMWorks<sup className="text-[10px] font-semibold ml-0.5 opacity-75">®</sup>
         </a>
 
         {/* Справа: группа тактильных кнопок-таблеток высотой 40px */}
@@ -511,7 +511,7 @@ export function HeroKoto({
       </div>
 
       {/* 2. ГЛАВНОЕ ПОЛОТНО ВО ВЕСЬ ЭКРАН (Full-Bleed Showreel Canvas — p-3 md:p-4, min-h-[84vh], rounded-[28px]) */}
-      <section id="top" aria-label="Главный шоурил AudioWorks" className="p-3 md:p-4">
+      <section id="top" aria-label="Главный шоурил FMWorks" className="p-3 md:p-4">
         <div
           ref={canvasStageRef}
           data-testid="koto-hero-canvas"
@@ -672,7 +672,7 @@ export function HeroKoto({
                     : 'text-white/78 hover:text-white'
                 }`}
               >
-                AudioWorks
+                FMWorks
               </button>
             </div>
           </div>
@@ -804,7 +804,7 @@ export function HeroKoto({
                           : 'text-white/70 hover:text-white'
                       }`}
                     >
-                      AudioWorks
+                      FMWorks
                     </button>
                   </div>
                 </motion.div>
@@ -852,7 +852,7 @@ export function HeroKoto({
                 >
                   <img
                     src={KOTO_MIC_WIDGET_IMAGE}
-                    alt="Студийный микрофон AudioWorks"
+                    alt="Студийный микрофон FMWorks"
                     referrerPolicy="no-referrer"
                     decoding="async"
                     draggable={false}
@@ -937,7 +937,7 @@ export function HeroKoto({
                     ? `Пауза шоурила (${formatAudioTime(snap.filmElapsedSec)} / ${formatAudioTime(
                         snap.filmDurationSec
                       )})`
-                    : `Слушать шоурил AudioWorks (${showreelBadgeDuration})`}
+                    : `Слушать шоурил FMWorks (${showreelBadgeDuration})`}
                 </span>
               </button>
             </div>
@@ -965,7 +965,7 @@ export function HeroKoto({
             <span className="text-sm font-semibold tabular-nums">
               {isPlayingAny
                 ? `Пауза шоурила (${formatAudioTime(snap.filmElapsedSec)})`
-                : `Слушать шоурил AudioWorks (${showreelBadgeDuration})`}
+                : `Слушать шоурил FMWorks (${showreelBadgeDuration})`}
             </span>
           </motion.div>
         </div>
@@ -981,7 +981,7 @@ export function HeroKoto({
             id="koto-manifesto-heading"
             className="text-4xl sm:text-5xl md:text-6xl lg:text-[4.25rem] font-bold tracking-tight leading-[1.04] text-[#111111] dark:text-[#F4F3EF] max-w-5xl"
           >
-            <span className="block">Мы AudioWorks.</span>
+            <span className="block">Мы FMWorks.</span>
             <motion.span
               key={slot.kotoManifestoTagline}
               initial={{ opacity: 0, y: 6 }}

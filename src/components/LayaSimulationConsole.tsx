@@ -3,6 +3,7 @@ import {
   Check,
   Music,
   Palette,
+  Radio,
   RotateCcw,
   SlidersHorizontal,
   Upload,
@@ -20,12 +21,16 @@ import { useLayaDecision } from '../engine/LayaContext';
 
 interface LayaSimulationConsoleProps {
   isCasePlayerVisible?: boolean;
+  hasStickyBottomBar?: boolean;
   onOpenBrandKit?: () => void;
+  onOpenRadioAdmin?: () => void;
 }
 
 export function LayaSimulationConsole({
   isCasePlayerVisible = false,
+  hasStickyBottomBar = false,
   onOpenBrandKit,
+  onOpenRadioAdmin,
 }: LayaSimulationConsoleProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isScrolling, setIsScrolling] = useState(false);
@@ -92,9 +97,13 @@ export function LayaSimulationConsole({
     event.target.value = '';
   };
 
-  const bottomOffsetClass = isCasePlayerVisible
-    ? 'bottom-22 xl:bottom-5'
-    : 'bottom-3.5 sm:bottom-5';
+  const bottomOffsetClass = hasStickyBottomBar
+    ? isCasePlayerVisible
+      ? 'bottom-38 xl:bottom-22'
+      : 'bottom-[70px] sm:bottom-[82px]'
+    : isCasePlayerVisible
+      ? 'bottom-22 xl:bottom-5'
+      : 'bottom-3.5 sm:bottom-5';
 
   return (
     <div
@@ -139,8 +148,11 @@ export function LayaSimulationConsole({
                   Laya AI · Пульт владельца
                 </p>
                 <p className="text-xs text-white/60 tabular-nums">
-                  Профиль: <span className="text-white/90">{decision.choice}</span> ·{' '}
-                  {Math.round(decision.confidence * 100)}% · {decision.latencyMs} мс
+                  Профиль:{' '}
+                  <span className="text-white/90">
+                    {decision.profileBadgeLabel ?? decision.choice}
+                  </span>{' '}
+                  · {Math.round(decision.confidence * 100)}% · {decision.latencyMs} мс
                 </p>
               </div>
 
@@ -210,7 +222,7 @@ export function LayaSimulationConsole({
                 </span>
               </button>
 
-              {/* Brand Kit AudioWorks: скачивание векторного логотипа SVG и прозрачного PNG */}
+              {/* Brand Kit FMWorks: скачивание векторного логотипа SVG и прозрачного PNG */}
               {onOpenBrandKit && (
                 <button
                   type="button"
@@ -223,6 +235,22 @@ export function LayaSimulationConsole({
                 >
                   <Palette className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
                   <span>Скачать логотип (SVG / PNG)</span>
+                </button>
+              )}
+
+              {/* Админ-панель загрузки эфирных сеток радиостанций */}
+              {onOpenRadioAdmin && (
+                <button
+                  type="button"
+                  data-testid="laya-open-radio-admin-btn"
+                  onClick={() => {
+                    setIsOpen(false);
+                    onOpenRadioAdmin();
+                  }}
+                  className="w-full inline-flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-[#FF4820]/18 hover:bg-[#FF4820]/28 border border-[#FF4820]/40 text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <Radio className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
+                  <span>📻 База эфира (Админ)</span>
                 </button>
               )}
             </div>

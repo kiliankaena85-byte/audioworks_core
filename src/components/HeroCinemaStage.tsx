@@ -431,7 +431,7 @@ export function HeroCinemaStage({ slot }: HeroCinemaStageProps) {
                   : 'text-white/75 hover:text-white'
               }`}
             >
-              Почерк AudioWorks
+              Почерк FMWorks
             </button>
           </div>
 
@@ -509,7 +509,7 @@ export function HeroCinemaStage({ slot }: HeroCinemaStageProps) {
                     <span className="w-11 h-11 rounded-full bg-white text-[#111111] flex items-center justify-center shrink-0 transition-transform duration-200 group-hover:scale-105">
                       <Play className="w-4 h-4 fill-current ml-0.5" aria-hidden="true" />
                     </span>
-                    <span>Включить шоурил AudioWorks</span>
+                    <span>Включить шоурил FMWorks</span>
                   </button>
 
                   <p className="text-xs sm:text-sm text-white/65">
@@ -518,7 +518,7 @@ export function HeroCinemaStage({ slot }: HeroCinemaStageProps) {
                 </div>
               </motion.div>
             ) : (
-              /* MODE 2: ПОЧЕРК AUDIOWORKS (Кино в голове — 3 атмосферные широкоформатные сцены) */
+              /* MODE 2: ПОЧЕРК FMWORKS (Кино в голове — 3 атмосферные широкоформатные сцены) */
               <motion.div
                 key={`mode-cinema-${currentScene.id}`}
                 initial={{ opacity: 0, y: 12 }}
@@ -528,7 +528,7 @@ export function HeroCinemaStage({ slot }: HeroCinemaStageProps) {
                 className="max-w-3xl space-y-3"
               >
                 <p className="text-xs sm:text-sm font-semibold text-[#FFB36B] tracking-wide">
-                  Почерк AudioWorks · Кино в голове
+                  Почерк FMWorks · Кино в голове
                 </p>
 
                 <h2 className="text-2xl sm:text-4xl lg:text-[2.85rem] font-bold tracking-tight leading-[1.08] text-white editorial-balance drop-shadow-xs">
@@ -549,7 +549,7 @@ export function HeroCinemaStage({ slot }: HeroCinemaStageProps) {
             {/* 3 Scene Dot-Tabs right on the card */}
             <div
               role="tablist"
-              aria-label="Сцены шоурила AudioWorks"
+              aria-label="Сцены шоурила FMWorks"
               className="flex flex-wrap items-center gap-1.5 sm:gap-2"
             >
               {HERO_CINEMA_SCENES.map((scene) => {
@@ -611,7 +611,7 @@ export function HeroCinemaStage({ slot }: HeroCinemaStageProps) {
           {/* Interactive Scrubber Hairline */}
           <button
             type="button"
-            aria-label="Перемотать шоурил AudioWorks"
+            aria-label="Перемотать шоурил FMWorks"
             onClick={handleTimelineScrub}
             className="block w-full py-1 cursor-pointer"
           >

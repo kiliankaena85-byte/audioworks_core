@@ -1,6 +1,8 @@
 import {
   ArrowDown,
   ArrowUp,
+  ArrowUpRight,
+  FileAudio,
   ImagePlus,
   Pause,
   Play,
@@ -8,13 +10,19 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
-import { ChangeEvent, useEffect, useRef, useState } from 'react';
+import { ChangeEvent, DragEvent, useEffect, useRef, useState } from 'react';
 import {
   UploadedAudioResult,
   UploadedImageResult,
 } from '../../cms/studioCmsStore';
 import { formatAudioTime } from '../../data/audioworksCommercial';
 import { getCasePreviewWindow } from '../../data/casesData';
+import {
+  applyThreeSecondPreviewTiming,
+  computePreviewWindowTimeline,
+  resolveAudioBadgeLabel,
+  WAVE1_DEFAULT_PREVIEW_DURATION_SEC,
+} from '../../data/portfolioWave1Helpers';
 import {
   clampPreviewTiming,
   PortfolioCaseRecord,
@@ -24,7 +32,7 @@ import {
 interface AdminPortfolioPanelProps {
   flagshipReel: PortfolioCaseRecord;
   portfolioCases: PortfolioCaseRecord[];
-  onChangeFlagshipReel: (nextReel: PortfolioCaseRecord) => void;
+  onPatchCase: (caseId: string, patch: Partial<PortfolioCaseRecord>) => void;
   onChangePortfolioCases: (nextCases: PortfolioCaseRecord[]) => void;
   onUploadAudio: (
     file: File
@@ -32,6 +40,7 @@ interface AdminPortfolioPanelProps {
   onUploadImage: (
     file: File
   ) => Promise<{ ok: true; result: UploadedImageResult } | { ok: false; error: string }>;
+  onNavigateToGallery?: () => void;
 }
 
 const SURFACE_PRESETS = [
@@ -66,15 +75,17 @@ type AuditionMode = 'preview' | 'full' | null;
 export function AdminPortfolioPanel({
   flagshipReel,
   portfolioCases,
-  onChangeFlagshipReel,
+  onPatchCase,
   onChangePortfolioCases,
   onUploadAudio,
   onUploadImage,
+  onNavigateToGallery,
 }: AdminPortfolioPanelProps) {
   const [selectedId, setSelectedId] = useState<string>(
     portfolioCases[0]?.id ?? flagshipReel.id
   );
   const [isUploadingAudio, setIsUploadingAudio] = useState(false);
+  const [isDragOverAudio, setIsDragOverAudio] = useState(false);
   const [isUploadingCover, setIsUploadingCover] = useState(false);
   const [uploadNotice, setUploadNotice] = useState<{
     kind: 'ok' | 'error';
@@ -83,7 +94,7 @@ export function AdminPortfolioPanel({
 
   const [auditionMode, setAuditionMode] = useState<AuditionMode>(null);
   const [auditionElapsed, setAuditionElapsed] = useState(0);
-  const [auditionTotal, setAuditionTotal] = useState(4);
+  const [auditionTotal, setAuditionTotal] = useState(WAVE1_DEFAULT_PREVIEW_DURATION_SEC);
 
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const coverInputRef = useRef<HTMLInputElement | null>(null);
@@ -93,7 +104,9 @@ export function AdminPortfolioPanel({
   const isEditingFlagship = selectedId === flagshipReel.id;
   const activeCase: PortfolioCaseRecord = isEditingFlagship
     ? flagshipReel
-    : portfolioCases.find((c) => c.id === selectedId) ?? portfolioCases[0] ?? flagshipReel;
+    : portfolioCases.find((c) => c.id === selectedId) ??
+      portfolioCases[0] ??
+      flagshipReel;
 
   const stopAudition = () => {
     if (auditionTimerRef.current !== null) {
@@ -120,14 +133,7 @@ export function AdminPortfolioPanel({
   }, []);
 
   const updateActiveCase = (patch: Partial<PortfolioCaseRecord>) => {
-    const merged: PortfolioCaseRecord = { ...activeCase, ...patch };
-    if (isEditingFlagship) {
-      onChangeFlagshipReel(merged);
-    } else {
-      onChangePortfolioCases(
-        portfolioCases.map((c) => (c.id === activeCase.id ? merged : c))
-      );
-    }
+    onPatchCase(activeCase.id, patch);
   };
 
   const handleAddNewCase = () => {
@@ -135,7 +141,7 @@ export function AdminPortfolioPanel({
     const newId = `case-studio-${Date.now().toString(36).slice(-5)}`;
     const newCase: PortfolioCaseRecord = {
       id: newId,
-      client: `Новый клиент ${nextIdx}`,
+      client: `Новый бренд ${nextIdx}`,
       tag: 'Аудиопродакшн · Эфирный ролик',
       headline: 'Выразительный ролик, который считывается с первой секунды',
       summary:
@@ -146,10 +152,10 @@ export function AdminPortfolioPanel({
       clipStartSec: 0,
       clipEndSec: 15,
       previewStartSec: 0,
-      previewDurationSec: 4,
+      previewDurationSec: WAVE1_DEFAULT_PREVIEW_DURATION_SEC,
       coverImageUrl:
         '/src/assets/images/hero_studio_editorial_1794399404984.jpg',
-      coverImageAlt: 'Атмосферный кадр студийного кейса AudioWorks',
+      coverImageAlt: 'Атмосферный кадр студийного кейса FMWorks',
       editorialSurfaceBg: SURFACE_PRESETS[0].surface,
       posterGradientClass: SURFACE_PRESETS[0].gradient,
       posterGlowClass: SURFACE_PRESETS[0].glow,
@@ -186,11 +192,8 @@ export function AdminPortfolioPanel({
     );
   };
 
-  const handleAudioFilePicked = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-
+  const processSelectedAudioFile = async (file: File) => {
+    const targetCaseId = activeCase.id;
     stopAudition();
     setIsUploadingAudio(true);
     setUploadNotice(null);
@@ -209,10 +212,10 @@ export function AdminPortfolioPanel({
       clipStartSec: 0,
       clipEndSec: totalDur,
       previewStartSec: 0,
-      previewDurationSec: activeCase.previewDurationSec ?? 4,
+      previewDurationSec: WAVE1_DEFAULT_PREVIEW_DURATION_SEC,
     });
 
-    updateActiveCase({
+    onPatchCase(targetCaseId, {
       audioUrl: res.result.url,
       customAudioFileName: res.result.fileName,
       durationSec: timing.durationSec,
@@ -224,8 +227,23 @@ export function AdminPortfolioPanel({
 
     setUploadNotice({
       kind: 'ok',
-      text: `Аудио «${res.result.fileName}» загружено (${res.result.durationSec} сек). Нажмите «Сохранить и опубликовать», чтобы применить на сайте.`,
+      text: `${res.result.format} «${res.result.fileName}» (${res.result.durationSec} сек) подключён в локальное состояние CMS · превью установлено на ${timing.previewDurationSec.toFixed(1)} сек.`,
     });
+  };
+
+  const handleAudioFilePicked = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    await processSelectedAudioFile(file);
+  };
+
+  const handleAudioDrop = async (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOverAudio(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    await processSelectedAudioFile(file);
   };
 
   const handleCoverFilePicked = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -233,6 +251,7 @@ export function AdminPortfolioPanel({
     e.target.value = '';
     if (!file) return;
 
+    const targetCaseId = activeCase.id;
     setIsUploadingCover(true);
     setUploadNotice(null);
 
@@ -244,12 +263,35 @@ export function AdminPortfolioPanel({
       return;
     }
 
-    updateActiveCase({
+    onPatchCase(targetCaseId, {
       coverImageUrl: res.result.url,
     });
     setUploadNotice({
       kind: 'ok',
-      text: `Обложка «${res.result.fileName}» загружена.`,
+      text: `Обложка «${res.result.fileName}» обновлена в локальном состоянии CMS.`,
+    });
+  };
+
+  const timeline = computePreviewWindowTimeline(activeCase);
+  const previewWindow = getCasePreviewWindow(activeCase);
+  const publishedCount = portfolioCases.filter((c) => c.published !== false).length;
+
+  const handleNudgePreviewStart = (deltaSec: number) => {
+    const nextStart = Math.min(
+      timeline.maxPreviewStartSec,
+      Math.max(
+        timeline.trackStartSec,
+        Math.round((timeline.previewStartSec + deltaSec) * 10) / 10
+      )
+    );
+    updateActiveCase({ previewStartSec: nextStart });
+  };
+
+  const handleApply3SecPreset = () => {
+    const updated = applyThreeSecondPreviewTiming(activeCase);
+    updateActiveCase({
+      previewStartSec: updated.previewStartSec,
+      previewDurationSec: updated.previewDurationSec,
     });
   };
 
@@ -270,7 +312,9 @@ export function AdminPortfolioPanel({
 
     const win = getCasePreviewWindow(activeCase);
     const startSec =
-      mode === 'preview' ? win.startSec : Math.max(0, activeCase.clipStartSec ?? 0);
+      mode === 'preview'
+        ? win.startSec
+        : Math.max(0, activeCase.clipStartSec ?? 0);
     const endSec =
       mode === 'preview'
         ? win.endSec
@@ -323,8 +367,11 @@ export function AdminPortfolioPanel({
     }, 60);
   };
 
-  const previewWindow = getCasePreviewWindow(activeCase);
-  const publishedCount = portfolioCases.filter((c) => c.published !== false).length;
+  const activeAudioLabel =
+    activeCase.customAudioFileName ||
+    (activeCase.audioUrl
+      ? decodeURIComponent(activeCase.audioUrl.split('/').pop() || 'studio-master.wav')
+      : 'Синтез студийной атмосферы (без файла)');
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
@@ -336,7 +383,7 @@ export function AdminPortfolioPanel({
               Работы в портфолио
             </h2>
             <p className="text-xs text-[#111111]/55 dark:text-[#F4F3EF]/55 tabular-nums">
-              Опубликовано кейсов: {publishedCount} из {portfolioCases.length}
+              Опубликовано: {publishedCount} из {portfolioCases.length}
             </p>
           </div>
 
@@ -366,14 +413,21 @@ export function AdminPortfolioPanel({
               className="w-full text-left space-y-1 cursor-pointer"
             >
               <div className="flex items-center justify-between gap-2 text-xs text-[#111111]/56 dark:text-[#F4F3EF]/56 tabular-nums">
-                <span className="font-semibold text-[#FF4820]">Флагманский шоурил</span>
-                <span>{formatAudioTime(flagshipReel.durationSec)}</span>
+                <span className="font-semibold text-[#FF4820]">
+                  Флагманский шоурил
+                </span>
+                <span>
+                  {resolveAudioBadgeLabel(flagshipReel)} ·{' '}
+                  {formatAudioTime(flagshipReel.durationSec)}
+                </span>
               </div>
               <p className="text-sm font-bold text-[#111111] dark:text-[#F4F3EF] truncate">
-                {flagshipReel.client}
+                {flagshipReel.headline}
               </p>
-              <p className="text-xs text-[#111111]/55 dark:text-[#F4F3EF]/55">
-                {flagshipReel.published !== false ? 'Опубликован над сеткой' : 'Скрыт с витрины'} · превью {getCasePreviewWindow(flagshipReel).durationSec} сек
+              <p className="text-xs text-[#111111]/55 dark:text-[#F4F3EF]/55 truncate tabular-nums">
+                {flagshipReel.client} · превью{' '}
+                {getCasePreviewWindow(flagshipReel).durationSec.toFixed(1)} с (с{' '}
+                {getCasePreviewWindow(flagshipReel).startSec} с)
               </p>
             </button>
           </div>
@@ -403,17 +457,16 @@ export function AdminPortfolioPanel({
                       {String(idx + 1).padStart(2, '0')}
                     </span>
                     <span aria-hidden="true">·</span>
-                    <span>
-                      {item.published !== false ? 'Опубликован' : 'Черновик (скрыт)'}
-                    </span>
+                    <span>{resolveAudioBadgeLabel(item)}</span>
                     <span aria-hidden="true">·</span>
                     <span>{formatAudioTime(item.durationSec)}</span>
                   </div>
                   <p className="text-sm font-bold text-[#111111] dark:text-[#F4F3EF] truncate">
-                    {item.client}
+                    {item.headline}
                   </p>
                   <p className="text-xs text-[#111111]/55 dark:text-[#F4F3EF]/55 truncate tabular-nums">
-                    {item.tag} · превью с {win.startSec} с ({win.durationSec} с)
+                    {item.client} · превью {win.durationSec.toFixed(1)} с (с{' '}
+                    {win.startSec} с)
                   </p>
                 </button>
 
@@ -443,23 +496,23 @@ export function AdminPortfolioPanel({
         </div>
       </div>
 
-      {/* Right Column: Case Content, Cover & Audio Preview Timing Editor */}
+      {/* Right Column: Wave 1 Portfolio Editor (Headlines + WAV/MP3 + 3s Preview Timing) */}
       <div className="xl:col-span-8 rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-6 sm:p-8 space-y-8">
         {/* Header & Visibility Controls */}
         <div className="flex flex-wrap items-start justify-between gap-4 pb-6 border-b border-[#111111]/10 dark:border-white/10">
-          <div className="space-y-1">
+          <div className="space-y-1 min-w-0">
             <p className="text-xs font-medium text-[#111111]/55 dark:text-[#F4F3EF]/55">
               {isEditingFlagship
-                ? 'Редактирование флагманского промо-ролика студии'
-                : `Карточка портфолио · ID: ${activeCase.id}`}
+                ? 'Флагманский шоурил студии · синхронизация с локальным состоянием CMS'
+                : `Кейс портфолио (${activeCase.id}) · синхронизация с локальным состоянием CMS`}
             </p>
-            <h3 className="text-xl font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF]">
+            <h3 className="text-xl font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF] truncate">
               {activeCase.client}
             </h3>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-[#111111]/14 dark:border-white/14 inline-flex items-center gap-2 text-xs font-semibold cursor-pointer select-none">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <label className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-[#111111]/14 dark:border-white/14 inline-flex items-center gap-2 text-xs font-semibold cursor-pointer select-none whitespace-nowrap">
               <input
                 type="checkbox"
                 checked={activeCase.published !== false}
@@ -474,6 +527,18 @@ export function AdminPortfolioPanel({
               <span>Показывать на сайте</span>
             </label>
 
+            {onNavigateToGallery && (
+              <button
+                type="button"
+                onClick={onNavigateToGallery}
+                data-testid="admin-open-gallery-btn"
+                className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-[#F7F6F2] dark:bg-[#1E1E24] hover:bg-[#FF4820] hover:text-white text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <span>Проверить в галерее</span>
+                <ArrowUpRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+              </button>
+            )}
+
             {!isEditingFlagship && portfolioCases.length > 1 && (
               <button
                 type="button"
@@ -482,7 +547,7 @@ export function AdminPortfolioPanel({
                 className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-[#DC2626]/30 text-[#DC2626] dark:text-[#F87171] hover:bg-[#DC2626]/10 text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
               >
                 <Trash2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                <span>Удалить кейс</span>
+                <span>Удалить</span>
               </button>
             )}
           </div>
@@ -490,7 +555,12 @@ export function AdminPortfolioPanel({
 
         {uploadNotice && (
           <div
-            role="status"
+            role={uploadNotice.kind === 'error' ? 'alert' : 'status'}
+            data-testid={
+              uploadNotice.kind === 'error'
+                ? 'admin-audio-upload-error'
+                : 'admin-audio-upload-ok'
+            }
             className={`px-4 py-3 rounded-xl text-xs font-medium border ${
               uploadNotice.kind === 'ok'
                 ? 'bg-[#16A34A]/10 border-[#16A34A]/30 text-[#15803D] dark:text-[#4ADE80]'
@@ -501,252 +571,34 @@ export function AdminPortfolioPanel({
           </div>
         )}
 
-        {/* Section 1: Audio Master & Hover Preview Timing (3-5 sec) */}
+        {/* Block 1: Case Headlines & Editorial Identity */}
         <section className="space-y-5 pb-8 border-b border-[#111111]/10 dark:border-white/10">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h4 className="text-base font-bold text-[#111111] dark:text-[#F4F3EF]">
-                Звуковая дорожка (WAV / MP3) и тайминг превью
-              </h4>
-              <p className="text-xs text-[#111111]/60 dark:text-[#F4F3EF]/60">
-                Загрузите мастер-файл и задайте точное окно 3–5 секунд, которое звучит при наведении курсора на карточку.
-              </p>
-            </div>
-
-            <div>
-              <input
-                ref={audioInputRef}
-                type="file"
-                accept=".wav,.mp3,audio/wav,audio/mpeg,audio/*"
-                onChange={handleAudioFilePicked}
-                data-testid="admin-case-audio-input"
-                className="hidden"
-              />
-              <button
-                type="button"
-                disabled={isUploadingAudio}
-                onClick={() => audioInputRef.current?.click()}
-                data-testid="admin-upload-audio-btn"
-                className="min-h-[40px] px-4 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] disabled:opacity-60 text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-              >
-                <Upload className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                <span>
-                  {isUploadingAudio ? 'Загрузка аудио…' : 'Загрузить WAV / MP3'}
-                </span>
-              </button>
-            </div>
+          <div>
+            <h4 className="text-base font-bold text-[#111111] dark:text-[#F4F3EF]">
+              1. Заголовок кейса и подача бренда
+            </h4>
+            <p className="text-xs text-[#111111]/60 dark:text-[#F4F3EF]/60">
+              Все изменения заголовков и карточек мгновенно сохраняются в локальное состояние CMS и отображаются в галерее.
+            </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
-            <div className="sm:col-span-8 space-y-1.5">
-              <label
-                htmlFor="case-audio-url"
-                className="block text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75"
-              >
-                Путь к аудиофайлу (или оставьте пустым для синтеза атмосферы)
-              </label>
-              <input
-                id="case-audio-url"
-                type="text"
-                value={activeCase.audioUrl ?? ''}
-                onChange={(e) =>
-                  updateActiveCase({
-                    audioUrl: e.target.value.trim() || undefined,
-                  })
-                }
-                placeholder="/assets/cms/brand-spot.wav"
-                className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs font-mono text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
-              />
-            </div>
-
-            <div className="sm:col-span-4 space-y-1.5">
-              <label
-                htmlFor="case-duration-sec"
-                className="block text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75"
-              >
-                Хронометраж ролика (сек)
-              </label>
-              <input
-                id="case-duration-sec"
-                type="number"
-                min={1}
-                max={600}
-                step={1}
-                value={activeCase.durationSec}
-                onChange={(e) => {
-                  const val = Math.max(1, Number(e.target.value) || 15);
-                  updateActiveCase({ durationSec: Math.round(val) });
-                }}
-                className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm font-semibold tabular-nums text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
-              />
-            </div>
+          <div className="space-y-1.5">
+            <label
+              htmlFor="case-headline-input"
+              className="block text-xs font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78"
+            >
+              Главный заголовок кейса
+            </label>
+            <input
+              id="case-headline-input"
+              data-testid="case-headline-input"
+              type="text"
+              value={activeCase.headline}
+              onChange={(e) => updateActiveCase({ headline: e.target.value })}
+              placeholder="Например: Вкус, который слышно даже в утренней пробке"
+              className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm font-semibold text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
+            />
           </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
-            <div className="space-y-1.5">
-              <label
-                htmlFor="case-clip-start"
-                className="block text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75 whitespace-nowrap"
-              >
-                Старт ролика (сек)
-              </label>
-              <input
-                id="case-clip-start"
-                type="number"
-                min={0}
-                step={0.1}
-                value={activeCase.clipStartSec ?? 0}
-                onChange={(e) => {
-                  const nextStart = Math.max(0, Number(e.target.value) || 0);
-                  const nextEnd = activeCase.clipEndSec;
-                  updateActiveCase({
-                    clipStartSec: Math.round(nextStart * 10) / 10,
-                    durationSec:
-                      nextEnd && nextEnd > nextStart
-                        ? Math.max(1, Math.round(nextEnd - nextStart))
-                        : activeCase.durationSec,
-                  });
-                }}
-                className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm tabular-nums text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label
-                htmlFor="case-clip-end"
-                className="block text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75"
-              >
-                Финал ролика (сек)
-              </label>
-              <input
-                id="case-clip-end"
-                type="number"
-                min={0.5}
-                step={0.1}
-                value={
-                  activeCase.clipEndSec ??
-                  Math.round(((activeCase.clipStartSec ?? 0) + activeCase.durationSec) * 10) /
-                    10
-                }
-                onChange={(e) => {
-                  const start = activeCase.clipStartSec ?? 0;
-                  const nextEnd = Math.max(start + 1, Number(e.target.value) || start + 15);
-                  updateActiveCase({
-                    clipEndSec: Math.round(nextEnd * 10) / 10,
-                    durationSec: Math.max(1, Math.round(nextEnd - start)),
-                  });
-                }}
-                className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm tabular-nums text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label
-                htmlFor="case-preview-start"
-                className="block text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75 whitespace-nowrap"
-              >
-                Старт превью (сек)
-              </label>
-              <input
-                id="case-preview-start"
-                type="number"
-                min={0}
-                step={0.1}
-                value={activeCase.previewStartSec ?? activeCase.clipStartSec ?? 0}
-                onChange={(e) => {
-                  const val = Math.max(0, Number(e.target.value) || 0);
-                  updateActiveCase({
-                    previewStartSec: Math.round(val * 10) / 10,
-                  });
-                }}
-                className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm tabular-nums text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label
-                htmlFor="case-preview-duration"
-                className="block text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75 whitespace-nowrap"
-              >
-                Длина превью (3–5 сек)
-              </label>
-              <select
-                id="case-preview-duration"
-                value={String(activeCase.previewDurationSec ?? 4)}
-                onChange={(e) =>
-                  updateActiveCase({
-                    previewDurationSec: Number(e.target.value),
-                  })
-                }
-                className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm font-semibold tabular-nums text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
-              >
-                <option value="3">3.0 сек</option>
-                <option value="3.5">3.5 сек</option>
-                <option value="4">4.0 сек (эталон)</option>
-                <option value="4.5">4.5 сек</option>
-                <option value="5">5.0 сек</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Inline Studio Audition Bar */}
-          <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <button
-                type="button"
-                onClick={() => startAudition('preview')}
-                data-testid="admin-audition-preview-btn"
-                className={`min-h-[40px] px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                  auditionMode === 'preview'
-                    ? 'bg-[#FF4820] text-white'
-                    : 'bg-[#F7F6F2] dark:bg-[#1E1E24] text-[#111111] dark:text-[#F4F3EF] border border-[#111111]/12 dark:border-white/12 hover:border-[#FF4820]'
-                }`}
-              >
-                {auditionMode === 'preview' ? (
-                  <Pause className="w-3.5 h-3.5 fill-current shrink-0" aria-hidden="true" />
-                ) : (
-                  <Play className="w-3.5 h-3.5 fill-current shrink-0" aria-hidden="true" />
-                )}
-                <span className="tabular-nums">
-                  {auditionMode === 'preview'
-                    ? `Играет превью · ${auditionElapsed.toFixed(1)} / ${auditionTotal.toFixed(1)} с`
-                    : `Проверить превью (${previewWindow.startSec}–${previewWindow.endSec} с)`}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => startAudition('full')}
-                className={`min-h-[40px] px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                  auditionMode === 'full'
-                    ? 'bg-[#111111] text-white dark:bg-white dark:text-[#111111]'
-                    : 'bg-transparent text-[#111111]/78 dark:text-[#F4F3EF]/78 border border-[#111111]/12 dark:border-white/12 hover:text-[#111111] dark:hover:text-white'
-                }`}
-              >
-                {auditionMode === 'full' ? (
-                  <Pause className="w-3.5 h-3.5 fill-current shrink-0" aria-hidden="true" />
-                ) : (
-                  <Play className="w-3.5 h-3.5 fill-current shrink-0" aria-hidden="true" />
-                )}
-                <span className="tabular-nums">
-                  {auditionMode === 'full'
-                    ? `Пауза · ${formatAudioTime(auditionElapsed)} / ${formatAudioTime(auditionTotal)}`
-                    : `Слушать весь ролик (${formatAudioTime(activeCase.durationSec)})`}
-                </span>
-              </button>
-            </div>
-
-            <span className="text-xs text-[#111111]/52 dark:text-[#F4F3EF]/52 tabular-nums">
-              Окно наведения: {previewWindow.startSec} с → {previewWindow.endSec} с
-            </span>
-          </div>
-        </section>
-
-        {/* Section 2: Editorial Texts & Persona Targeting */}
-        <section className="space-y-5 pb-8 border-b border-[#111111]/10 dark:border-white/10">
-          <h4 className="text-base font-bold text-[#111111] dark:text-[#F4F3EF]">
-            Тексты карточки и отраслевой фокус
-          </h4>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="space-y-1.5">
@@ -758,6 +610,7 @@ export function AdminPortfolioPanel({
               </label>
               <input
                 id="case-client-input"
+                data-testid="case-client-input"
                 type="text"
                 value={activeCase.client}
                 onChange={(e) => updateActiveCase({ client: e.target.value })}
@@ -797,7 +650,7 @@ export function AdminPortfolioPanel({
                     personaFocus: e.target.value as PortfolioPersonaFocus,
                   })
                 }
-                className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm text-[#111111] dark:text-[#F4F3EF] disabled:opacity-50 focus:outline-none focus:border-[#FF4820]"
+                className="w-full min-h-[42px] pl-3.5 pr-9 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm text-[#111111] dark:text-[#F4F3EF] disabled:opacity-50 focus:outline-none focus:border-[#FF4820]"
               >
                 <option value="fmcg">FMCG и федеральный ритейл</option>
                 <option value="real_estate">Девелопмент и недвижимость</option>
@@ -806,74 +659,430 @@ export function AdminPortfolioPanel({
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <label
-              htmlFor="case-headline-input"
-              className="block text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75"
-            >
-              Главный заголовок кейса
-            </label>
-            <input
-              id="case-headline-input"
-              type="text"
-              value={activeCase.headline}
-              onChange={(e) => updateActiveCase({ headline: e.target.value })}
-              className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm font-semibold text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
-            />
-          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
+            <div className="sm:col-span-7 space-y-1.5">
+              <label
+                htmlFor="case-summary-textarea"
+                className="block text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75"
+              >
+                Описание задачи и решения
+              </label>
+              <textarea
+                id="case-summary-textarea"
+                rows={3}
+                value={activeCase.summary}
+                onChange={(e) => updateActiveCase({ summary: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm leading-relaxed text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
+              />
+            </div>
 
-          <div className="space-y-1.5">
-            <label
-              htmlFor="case-summary-textarea"
-              className="block text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75"
-            >
-              Описание задачи и решения
-            </label>
-            <textarea
-              id="case-summary-textarea"
-              rows={3}
-              value={activeCase.summary}
-              onChange={(e) => updateActiveCase({ summary: e.target.value })}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm leading-relaxed text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label
-              htmlFor="case-quote-input"
-              className="block text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75"
-            >
-              Ключевая фраза-образ из ролика (для плавающего плеера)
-            </label>
-            <input
-              id="case-quote-input"
-              type="text"
-              value={activeCase.quoteImage}
-              onChange={(e) => updateActiveCase({ quoteImage: e.target.value })}
-              className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
-            />
+            <div className="sm:col-span-5 space-y-1.5">
+              <label
+                htmlFor="case-quote-input"
+                className="block text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75"
+              >
+                Ключевая фраза-образ (для плеера)
+              </label>
+              <textarea
+                id="case-quote-input"
+                rows={3}
+                value={activeCase.quoteImage}
+                onChange={(e) =>
+                  updateActiveCase({ quoteImage: e.target.value })
+                }
+                className="w-full px-3.5 py-2.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm leading-relaxed text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
+              />
+            </div>
           </div>
         </section>
 
-        {/* Section 3: Cover Artwork & Editorial Surface Palette */}
+        {/* Block 2: WAV / MP3 Upload & 3-Second Preview Timing Studio */}
+        <section className="space-y-5 pb-8 border-b border-[#111111]/10 dark:border-white/10">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+            <div className="space-y-0.5">
+              <h4 className="text-base font-bold text-[#111111] dark:text-[#F4F3EF]">
+                2. Мастер-аудио (WAV / MP3) и тайминг 3-секундного превью
+              </h4>
+              <p className="text-xs text-[#111111]/60 dark:text-[#F4F3EF]/60">
+                Перетащите WAV или MP3 и выберите самый выразительный 3-секундный фрагмент для мгновенного превью по наведению.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleApply3SecPreset}
+              data-testid="preset-3sec-btn"
+              className={`min-h-[36px] px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 tabular-nums ${
+                Math.abs(timeline.previewDurationSec - 3) < 0.05
+                  ? 'bg-[#FF4820]/12 text-[#FF4820] border border-[#FF4820]/30'
+                  : 'border border-[#111111]/14 dark:border-white/14 text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:border-[#FF4820]'
+              }`}
+            >
+              Окно 3.0 сек
+            </button>
+          </div>
+
+          {/* Drag-and-Drop WAV/MP3 Uploader Surface */}
+          <div
+            data-testid="admin-audio-dropzone"
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragOverAudio(true);
+            }}
+            onDragLeave={() => setIsDragOverAudio(false)}
+            onDrop={(e) => void handleAudioDrop(e)}
+            className={`rounded-2xl p-4 sm:p-5 border border-dashed transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+              isDragOverAudio
+                ? 'border-[#FF4820] bg-[#FF4820]/8'
+                : 'border-[#111111]/18 dark:border-white/18 bg-[#F7F6F2]/75 dark:bg-[#0D0D0F]/75'
+            }`}
+          >
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-[#FF4820]/12 text-[#FF4820] flex items-center justify-center shrink-0">
+                <FileAudio className="w-5 h-5" aria-hidden="true" />
+              </div>
+              <div className="min-w-0 space-y-0.5">
+                <p
+                  data-testid="active-audio-filename"
+                  className="text-sm font-semibold text-[#111111] dark:text-[#F4F3EF] truncate"
+                >
+                  {activeAudioLabel}
+                </p>
+                <p className="text-xs text-[#111111]/56 dark:text-[#F4F3EF]/56 tabular-nums">
+                  Формат: {resolveAudioBadgeLabel(activeCase)} · хронометраж{' '}
+                  {formatAudioTime(activeCase.durationSec)} ({timeline.trackSpanSec} сек) · перетащите .wav или .mp3 сюда
+                </p>
+              </div>
+            </div>
+
+            <div className="shrink-0">
+              <input
+                ref={audioInputRef}
+                type="file"
+                accept=".wav,.mp3,audio/wav,audio/x-wav,audio/mpeg,audio/mp3"
+                onChange={handleAudioFilePicked}
+                aria-label="Загрузить аудиофайл кейса WAV или MP3"
+                data-testid="admin-case-audio-input"
+                className="sr-only"
+              />
+              <button
+                type="button"
+                disabled={isUploadingAudio}
+                onClick={() => audioInputRef.current?.click()}
+                data-testid="admin-upload-audio-btn"
+                className="min-h-[40px] px-4 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] disabled:opacity-60 text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <Upload className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>
+                  {isUploadingAudio ? 'Обработка файла…' : 'Загрузить WAV / MP3'}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* Interactive 3-Second Preview Timeline Bar & Scrubber */}
+          <div
+            data-testid="preview-timeline-visualizer"
+            className="rounded-2xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 p-4 sm:p-5 space-y-3.5"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs tabular-nums">
+              <span className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
+                Окно превью на дорожке: {timeline.previewStartSec.toFixed(1)} с —{' '}
+                {timeline.previewEndSec.toFixed(1)} с ({timeline.previewDurationSec.toFixed(1)} сек)
+              </span>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleNudgePreviewStart(-0.5)}
+                  aria-label="Сдвинуть старт превью на 0.5 секунды раньше"
+                  className="min-h-[30px] px-2.5 py-1 rounded-lg border border-[#111111]/14 dark:border-white/14 text-xs font-semibold hover:border-[#FF4820] transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  −0.5 с
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNudgePreviewStart(0.5)}
+                  aria-label="Сдвинуть старт превью на 0.5 секунды позже"
+                  className="min-h-[30px] px-2.5 py-1 rounded-lg border border-[#111111]/14 dark:border-white/14 text-xs font-semibold hover:border-[#FF4820] transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  +0.5 с
+                </button>
+              </div>
+            </div>
+
+            {/* Highlighted Preview Window Strip */}
+            <div className="relative h-8 rounded-xl bg-[#111111]/8 dark:bg-white/8 overflow-hidden flex items-center px-2">
+              <div
+                aria-hidden="true"
+                className="w-full flex items-center justify-between gap-1 opacity-30 pointer-events-none"
+              >
+                {Array.from({ length: 36 }).map((_, idx) => {
+                  const barHeight = 28 + Math.round(Math.abs(Math.sin(idx * 0.85)) * 56);
+                  return (
+                    <span
+                      key={idx}
+                      className="w-0.5 rounded-full bg-[#111111] dark:bg-white"
+                      style={{ height: `${Math.round((barHeight / 100) * 22)}px` }}
+                    />
+                  );
+                })}
+              </div>
+
+              <div
+                data-testid="preview-window-highlight"
+                className="absolute top-1 bottom-1 rounded-lg bg-[#FF4820]/28 border border-[#FF4820] pointer-events-none"
+                style={{
+                  left: `${timeline.offsetPercent}%`,
+                  width: `${timeline.widthPercent}%`,
+                }}
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label htmlFor="case-preview-slider" className="sr-only">
+                Позиция старта превью в секундах
+              </label>
+              <input
+                id="case-preview-slider"
+                data-testid="case-preview-slider"
+                type="range"
+                min={timeline.trackStartSec}
+                max={timeline.maxPreviewStartSec}
+                step={0.1}
+                value={timeline.previewStartSec}
+                disabled={timeline.maxPreviewStartSec <= timeline.trackStartSec}
+                onChange={(e) =>
+                  updateActiveCase({
+                    previewStartSec: Math.round(Number(e.target.value) * 10) / 10,
+                  })
+                }
+                className="w-full accent-[#FF4820] cursor-pointer disabled:opacity-40"
+              />
+              <div className="flex items-center justify-between text-[11px] text-[#111111]/50 dark:text-[#F4F3EF]/50 tabular-nums">
+                <span>Старт фрагмента: {timeline.trackStartSec.toFixed(1)} с</span>
+                <span>Финал фрагмента: {timeline.trackEndSec.toFixed(1)} с</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 4-Column Exact Numeric Timing Inputs */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
+            <div className="space-y-1.5">
+              <label
+                htmlFor="case-preview-start"
+                className="block text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75 whitespace-nowrap"
+              >
+                Старт превью (сек)
+              </label>
+              <input
+                id="case-preview-start"
+                data-testid="case-preview-start-input"
+                type="number"
+                min={0}
+                step={0.1}
+                value={timeline.previewStartSec}
+                onChange={(e) => {
+                  const val = Math.max(0, Number(e.target.value) || 0);
+                  updateActiveCase({
+                    previewStartSec: Math.round(val * 10) / 10,
+                  });
+                }}
+                className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm font-semibold tabular-nums text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label
+                htmlFor="case-preview-duration"
+                className="block text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75 whitespace-nowrap"
+              >
+                Длина превью (3–5 сек)
+              </label>
+              <select
+                id="case-preview-duration"
+                data-testid="case-preview-duration-select"
+                value={String(activeCase.previewDurationSec ?? WAVE1_DEFAULT_PREVIEW_DURATION_SEC)}
+                onChange={(e) => {
+                  const nextDur = Number(e.target.value);
+                  const clamped = computePreviewWindowTimeline({
+                    ...activeCase,
+                    previewDurationSec: nextDur,
+                  });
+                  updateActiveCase({
+                    previewDurationSec: clamped.previewDurationSec,
+                    previewStartSec: clamped.previewStartSec,
+                  });
+                }}
+                className="w-full min-h-[42px] pl-3.5 pr-9 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm font-semibold tabular-nums text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
+              >
+                <option value="3">3.0 сек</option>
+                <option value="3.5">3.5 сек</option>
+                <option value="4">4.0 сек</option>
+                <option value="4.5">4.5 сек</option>
+                <option value="5">5.0 сек</option>
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label
+                htmlFor="case-clip-start"
+                className="block text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75 whitespace-nowrap"
+              >
+                Старт ролика (сек)
+              </label>
+              <input
+                id="case-clip-start"
+                type="number"
+                min={0}
+                step={0.1}
+                value={activeCase.clipStartSec ?? 0}
+                onChange={(e) => {
+                  const nextStart = Math.max(0, Number(e.target.value) || 0);
+                  const nextEnd = activeCase.clipEndSec;
+                  updateActiveCase({
+                    clipStartSec: Math.round(nextStart * 10) / 10,
+                    durationSec:
+                      nextEnd && nextEnd > nextStart
+                        ? Math.max(1, Math.round(nextEnd - nextStart))
+                        : activeCase.durationSec,
+                  });
+                }}
+                className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm tabular-nums text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label
+                htmlFor="case-clip-end"
+                className="block text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75 whitespace-nowrap"
+              >
+                Финал ролика (сек)
+              </label>
+              <input
+                id="case-clip-end"
+                type="number"
+                min={0.5}
+                step={0.1}
+                value={
+                  activeCase.clipEndSec ??
+                  Math.round(
+                    ((activeCase.clipStartSec ?? 0) + activeCase.durationSec) * 10
+                  ) / 10
+                }
+                onChange={(e) => {
+                  const start = activeCase.clipStartSec ?? 0;
+                  const nextEnd = Math.max(
+                    start + 1,
+                    Number(e.target.value) || start + 15
+                  );
+                  updateActiveCase({
+                    clipEndSec: Math.round(nextEnd * 10) / 10,
+                    durationSec: Math.max(1, Math.round(nextEnd - start)),
+                  });
+                }}
+                className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm tabular-nums text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
+              />
+            </div>
+          </div>
+
+          {/* Inline Studio Audition Bar */}
+          <div className="pt-1 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => startAudition('preview')}
+                data-testid="admin-audition-preview-btn"
+                className={`min-h-[40px] px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  auditionMode === 'preview'
+                    ? 'bg-[#FF4820] text-white'
+                    : 'bg-[#F7F6F2] dark:bg-[#1E1E24] text-[#111111] dark:text-[#F4F3EF] border border-[#111111]/12 dark:border-white/12 hover:border-[#FF4820]'
+                }`}
+              >
+                {auditionMode === 'preview' ? (
+                  <Pause className="w-3.5 h-3.5 fill-current shrink-0" aria-hidden="true" />
+                ) : (
+                  <Play className="w-3.5 h-3.5 fill-current shrink-0" aria-hidden="true" />
+                )}
+                <span className="tabular-nums">
+                  {auditionMode === 'preview'
+                    ? `Играет превью · ${auditionElapsed.toFixed(1)} / ${auditionTotal.toFixed(1)} с`
+                    : `Слушать превью (${previewWindow.startSec}–${previewWindow.endSec} с)`}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => startAudition('full')}
+                className={`min-h-[40px] px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  auditionMode === 'full'
+                    ? 'bg-[#111111] text-white dark:bg-white dark:text-[#111111]'
+                    : 'bg-transparent text-[#111111]/78 dark:text-[#F4F3EF]/78 border border-[#111111]/12 dark:border-white/12 hover:text-[#111111] dark:hover:text-white'
+                }`}
+              >
+                {auditionMode === 'full' ? (
+                  <Pause className="w-3.5 h-3.5 fill-current shrink-0" aria-hidden="true" />
+                ) : (
+                  <Play className="w-3.5 h-3.5 fill-current shrink-0" aria-hidden="true" />
+                )}
+                <span className="tabular-nums">
+                  {auditionMode === 'full'
+                    ? `Пауза · ${formatAudioTime(auditionElapsed)} / ${formatAudioTime(auditionTotal)}`
+                    : `Слушать весь ролик (${formatAudioTime(activeCase.durationSec)})`}
+                </span>
+              </button>
+            </div>
+
+            <span className="text-xs text-[#111111]/52 dark:text-[#F4F3EF]/52 tabular-nums">
+              Превью при наведении: {previewWindow.durationSec.toFixed(1)} сек
+            </span>
+          </div>
+        </section>
+
+        {/* Block 3: Cover Artwork & Live Card Preview */}
         <section className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h4 className="text-base font-bold text-[#111111] dark:text-[#F4F3EF]">
-                Обложка и цветовая среда постера
+                3. Обложка и предпросмотр карточки портфолио
               </h4>
               <p className="text-xs text-[#111111]/60 dark:text-[#F4F3EF]/60">
-                Фотография карточки и оттенок студийного сплита при показе на первом широком месте.
+                Как карточка выглядит в секции «Наши работы» с обновлённым заголовком и таймингом превью.
               </p>
             </div>
 
-            <div>
+            <div className="flex items-center gap-2.5">
+              <select
+                id="case-surface-preset"
+                aria-label="Палитра фона постера"
+                value={activeCase.editorialSurfaceBg}
+                onChange={(e) => {
+                  const preset = SURFACE_PRESETS.find(
+                    (p) => p.surface === e.target.value
+                  );
+                  if (preset) {
+                    updateActiveCase({
+                      editorialSurfaceBg: preset.surface,
+                      posterGradientClass: preset.gradient,
+                      posterGlowClass: preset.glow,
+                    });
+                  }
+                }}
+                className="min-h-[38px] px-3 py-1.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs font-medium text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
+              >
+                {SURFACE_PRESETS.map((preset) => (
+                  <option key={preset.surface} value={preset.surface}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+
               <input
                 ref={coverInputRef}
                 type="file"
                 accept="image/jpeg,image/png,image/webp,image/avif"
                 onChange={handleCoverFilePicked}
-                className="hidden"
+                className="sr-only"
               />
               <button
                 type="button"
@@ -882,66 +1091,42 @@ export function AdminPortfolioPanel({
                 className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
               >
                 <ImagePlus className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                <span>{isUploadingCover ? 'Загрузка…' : 'Загрузить фото'}</span>
+                <span>{isUploadingCover ? 'Загрузка…' : 'Сменить фото'}</span>
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-start">
-            <div className="sm:col-span-8 space-y-3">
-              <div className="space-y-1.5">
-                <label
-                  htmlFor="case-cover-url"
-                  className="block text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75"
-                >
-                  URL обложки
-                </label>
-                <input
-                  id="case-cover-url"
-                  type="text"
-                  value={activeCase.coverImageUrl}
-                  onChange={(e) =>
-                    updateActiveCase({ coverImageUrl: e.target.value })
-                  }
-                  className="w-full min-h-[40px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs font-mono text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
-                />
+          <div
+            data-testid="admin-portfolio-live-card"
+            className={`rounded-2xl overflow-hidden border border-[#111111]/10 dark:border-white/10 grid grid-cols-1 sm:grid-cols-12 ${activeCase.editorialSurfaceBg} text-[#F4F3EF]`}
+          >
+            <div className="sm:col-span-8 p-5 sm:p-6 flex flex-col justify-between gap-4">
+              <div className="space-y-2">
+                <p className="text-xs text-white/62 tabular-nums">
+                  {activeCase.tag} · {activeCase.client} · превью{' '}
+                  {previewWindow.startSec}–{previewWindow.endSec} с
+                </p>
+                <h5 className="text-lg sm:text-xl font-bold tracking-tight leading-snug text-white">
+                  {activeCase.headline}
+                </h5>
+                <p className="text-xs leading-relaxed text-white/74 line-clamp-2">
+                  {activeCase.summary}
+                </p>
               </div>
 
-              <div className="space-y-1.5">
-                <label
-                  htmlFor="case-surface-preset"
-                  className="block text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75"
-                >
-                  Палитра фона постера
-                </label>
-                <select
-                  id="case-surface-preset"
-                  value={activeCase.editorialSurfaceBg}
-                  onChange={(e) => {
-                    const preset = SURFACE_PRESETS.find(
-                      (p) => p.surface === e.target.value
-                    );
-                    if (preset) {
-                      updateActiveCase({
-                        editorialSurfaceBg: preset.surface,
-                        posterGradientClass: preset.gradient,
-                        posterGlowClass: preset.glow,
-                      });
-                    }
-                  }}
-                  className="w-full min-h-[40px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
-                >
-                  {SURFACE_PRESETS.map((preset) => (
-                    <option key={preset.surface} value={preset.surface}>
-                      {preset.label}
-                    </option>
-                  ))}
-                </select>
+              <div className="flex items-center gap-3 text-xs text-white/65 tabular-nums">
+                <span className="font-semibold text-[#FF4820]">
+                  Слушать · {formatAudioTime(activeCase.durationSec)}
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  Наведение: {previewWindow.durationSec.toFixed(1)} сек
+                </span>
               </div>
             </div>
 
             <div
-              className={`sm:col-span-4 h-32 rounded-xl overflow-hidden relative border border-[#111111]/10 dark:border-white/10 ${activeCase.posterGradientClass}`}
+              className={`sm:col-span-4 min-h-[150px] relative overflow-hidden ${activeCase.posterGradientClass}`}
             >
               <img
                 src={activeCase.coverImageUrl}

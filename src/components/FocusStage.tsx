@@ -127,7 +127,7 @@ export function FocusStage({ slot }: FocusStageProps) {
                   : 'text-current opacity-75 hover:opacity-100'
               }`}
             >
-              Почерк Audioworks
+              Почерк FMWorks
             </button>
           </div>
 
@@ -291,13 +291,13 @@ export function FocusStage({ slot }: FocusStageProps) {
             </div>
 
             <span className="hidden md:inline">
-              {snap.roadNoiseEnabled ? 'Фон автомобиля включён' : 'Оригинальный ролик Audioworks'}
+              {snap.roadNoiseEnabled ? 'Фон автомобиля включён' : 'Оригинальный ролик FMWorks'}
             </span>
           </div>
 
           <button
             type="button"
-            aria-label="Перемотать демо-ролик Audioworks"
+            aria-label="Перемотать демо-ролик FMWorks"
             onClick={handleTimelineScrub}
             className="block w-full py-1 cursor-pointer group"
           >

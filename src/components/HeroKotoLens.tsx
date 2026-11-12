@@ -79,7 +79,7 @@ interface HeroKotoLensProps {
 }
 
 export function HeroKotoLens({
-  brandVariant = 'audioworks_reg',
+  brandVariant = 'fmworks_reg',
   onOpenBrandKit,
 }: HeroKotoLensProps = {}) {
   const { decision, slot, selectPersonaProfile } = useLayaDecision();
@@ -382,7 +382,7 @@ export function HeroKotoLens({
             </div>
           </div>
 
-          {/* Слой 2: Чистый полноцветный мир AudioWorks внутри круглой линзы */}
+          {/* Слой 2: Чистый полноцветный мир FMWorks внутри круглой линзы */}
           <motion.div
             data-testid="koto-attention-lens-layer"
             style={{ clipPath: clipPathMask }}
@@ -475,7 +475,7 @@ export function HeroKotoLens({
               ) : isExpanded ? (
                 <div
                   role="tablist"
-                  aria-label="Сцены AudioWorks"
+                  aria-label="Сцены FMWorks"
                   className="flex items-center gap-4 sm:gap-5 overflow-x-auto no-scrollbar"
                 >
                   {HERO_LENS_FRAMES.map((frame, idx) => {
@@ -532,7 +532,7 @@ export function HeroKotoLens({
                     : 'text-white/75 hover:text-white'
                 }`}
               >
-                AudioWorks
+                FMWorks
               </button>
             </div>
           </div>
@@ -640,7 +640,7 @@ export function HeroKotoLens({
 
       {/* МАНИФЕСТ СТУДИИ (чистая журнальная типографика и воздух) */}
       <section
-        aria-label="Манифест студии AudioWorks"
+        aria-label="Манифест студии FMWorks"
         className="py-18 sm:py-24 lg:py-28 px-4 sm:px-6 lg:px-12"
       >
         <div className="max-w-7xl mx-auto space-y-10">

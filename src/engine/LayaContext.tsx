@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useContext, useMemo, useState } from 'react';
+import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
 import {
   evaluateLayaDecision,
   LAYA_CONTENT_DICTIONARY,
@@ -58,6 +58,26 @@ export function LayaDecisionProvider({ children }: { children: ReactNode }) {
   const [visitorState, setVisitorState] = useState<LayaVisitorState>(() =>
     buildInitialVisitorState()
   );
+
+  useEffect(() => {
+    const syncFromUrl = () => {
+      setVisitorState((prev) => {
+        const parsed = readVisitorStateFromLocation(
+          window.location.search,
+          window.innerWidth,
+          document.referrer,
+          prev.visitCount
+        );
+        if (!parsed.utmTerm && !parsed.personaParam && !parsed.utmSource) {
+          return { ...LAYA_SIMULATION_TRACES[0].state, visitCount: prev.visitCount };
+        }
+        return parsed;
+      });
+    };
+
+    window.addEventListener('popstate', syncFromUrl);
+    return () => window.removeEventListener('popstate', syncFromUrl);
+  }, []);
 
   const decision = useMemo(() => evaluateLayaDecision(visitorState), [visitorState]);
   const slot = LAYA_CONTENT_DICTIONARY[decision.choice];

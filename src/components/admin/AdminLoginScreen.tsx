@@ -131,7 +131,7 @@ export function AdminLoginScreen({
       </main>
 
       <footer className="max-w-5xl w-full mx-auto text-center text-xs text-[#111111]/45 dark:text-[#F4F3EF]/45">
-        AudioWorks · Студийная система управления портфолио и эфирными материалами
+        FMWorks · Студийная система управления портфолио и эфирными материалами
       </footer>
     </div>
   );

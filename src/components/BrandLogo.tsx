@@ -1,8 +1,7 @@
 import { MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from 'react';
 import {
   BrandDomainVariant,
-  computeMonogramPaths,
-  computeOscillogramWPath,
+  computeBadgeWaveWPath,
   getBrandWordmarkGeometry,
 } from '../data/brandKitData';
 
@@ -25,7 +24,7 @@ const SIZE_HEIGHT_CLASS: Record<NonNullable<BrandLogoProps['size']>, string> = {
 };
 
 export function BrandLogo({
-  variant = 'audioworks_reg',
+  variant = 'fmworks_reg',
   size = 'md',
   colorMode = 'adaptive',
   className = '',
@@ -47,24 +46,25 @@ export function BrandLogo({
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     if (reducedMotion) {
-      energyRef.current = isHovered ? 0.65 : 0;
-      setAnimFrame({ energy: energyRef.current, phase: 0 });
+      energyRef.current = 0;
+      setAnimFrame({ energy: 0, phase: 0 });
       return;
     }
 
     let rafId = 0;
     const enterTime = performance.now();
     let lastTime = enterTime;
-    const HOVER_SWEEP_MS = 1100;
+    const HOVER_SWEEP_MS = 1000;
 
     const step = (now: number) => {
       const dt = Math.min(0.05, Math.max(0.001, (now - lastTime) / 1000));
       lastTime = now;
 
       const targetEnergy = isHovered ? 1 : 0;
-      const lerpRate = isHovered ? 10.5 : 9.0;
+      const lerpRate = isHovered ? 11.0 : 9.5;
       const nextEnergy =
-        energyRef.current + (targetEnergy - energyRef.current) * Math.min(1, dt * lerpRate);
+        energyRef.current +
+        (targetEnergy - energyRef.current) * Math.min(1, dt * lerpRate);
 
       const elapsedMs = now - enterTime;
       const isSweepingHover = isHovered && elapsedMs < HOVER_SWEEP_MS;
@@ -72,7 +72,7 @@ export function BrandLogo({
       if (isSweepingHover) {
         const sweepDamping = 1 - elapsedMs / HOVER_SWEEP_MS;
         energyRef.current = nextEnergy;
-        phaseRef.current += dt * (3.2 + 4.4 * sweepDamping);
+        phaseRef.current += dt * (3.4 + 4.2 * sweepDamping);
         setAnimFrame({ energy: nextEnergy, phase: phaseRef.current });
         rafId = window.requestAnimationFrame(step);
       } else if (!isHovered && nextEnergy > 0.008) {
@@ -80,8 +80,8 @@ export function BrandLogo({
         setAnimFrame({ energy: nextEnergy, phase: phaseRef.current });
         rafId = window.requestAnimationFrame(step);
       } else {
-        energyRef.current = targetEnergy;
-        setAnimFrame({ energy: targetEnergy, phase: phaseRef.current });
+        energyRef.current = 0;
+        setAnimFrame({ energy: 0, phase: phaseRef.current });
       }
     };
 
@@ -94,16 +94,7 @@ export function BrandLogo({
   }, [isHovered]);
 
   const geom = getBrandWordmarkGeometry(variant);
-  const [monoLine1, monoLine2, monoLine3] = computeMonogramPaths(
-    animFrame.energy,
-    animFrame.phase
-  );
-  const wOscillogramPath = computeOscillogramWPath(
-    geom.waveStartX,
-    animFrame.energy,
-    animFrame.phase,
-    geom.waveWidth
-  );
+  const badgeWavePath = computeBadgeWaveWPath(animFrame.energy, animFrame.phase);
 
   const colorToneClass =
     colorMode === 'dark'
@@ -119,9 +110,6 @@ export function BrandLogo({
     onOpenBrandKit();
   };
 
-  const dotCenterX = Math.round((geom.iStemX + 1.55) * 100) / 100;
-  const isWaveHighlighted = animFrame.energy > 0.18;
-
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -129,8 +117,8 @@ export function BrandLogo({
       role="img"
       aria-label={geom.accessibleLabel}
       data-testid="brand-logo-svg"
-      data-variant={variant}
-      data-wave-active={isHovered ? 'true' : 'false'}
+      data-variant={geom.variant}
+      data-fm-active={isHovered ? 'true' : 'false'}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onContextMenu={handleContextMenu}
@@ -138,117 +126,53 @@ export function BrandLogo({
     >
       <title>{geom.accessibleLabel}</title>
 
-      {/* 1. Фирменный знак-монограмма: скруглённый квадрат #FF4820 + 3 асимметричные акустические линии W */}
-      <rect x="2" y="4" width="40" height="40" rx="11.5" fill="#FF4820" />
-      <path
-        d={monoLine1}
-        stroke="#FFFFFF"
-        strokeWidth="3.15"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-      />
-      <path
-        d={monoLine2}
-        stroke="#FFFFFF"
-        strokeWidth="3.15"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-      />
-      <path
-        d={monoLine3}
-        stroke="#FFFFFF"
-        strokeWidth="3.15"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-      />
-
-      {/* 2. Слово Audio (font-medium) с кораллово-оранжевой лампой ON AIR над буквой i */}
-      <text
-        x={geom.prefixEndX}
-        y="33.5"
-        textAnchor="end"
-        fontSize="26"
-        fontWeight="500"
-        letterSpacing="-0.4"
-        fill="currentColor"
-      >
-        {geom.prefixText}
-      </text>
-
+      {/* СЛЕВА: фирменная иконка 48×48 (rx="13", #FF4820) с белой звуковой волной W */}
       <rect
-        x={geom.iStemX}
-        y="20.2"
-        width="3.1"
-        height="13.3"
-        rx="1.1"
-        fill="currentColor"
-      />
-
-      {isWaveHighlighted && (
-        <circle
-          cx={dotCenterX}
-          cy="14.1"
-          r="5.1"
-          fill="#FF4820"
-          fillOpacity={Math.round(animFrame.energy * 26) / 100}
-        />
-      )}
-      <circle
-        data-testid="brand-logo-onair-dot"
-        cx={dotCenterX}
-        cy="14.1"
-        r="2.75"
+        data-testid="brand-logo-badge-bg"
+        x="0"
+        y="0"
+        width="48"
+        height="48"
+        rx="13"
         fill="#FF4820"
       />
-
-      <text
-        x={geom.postIX}
-        y="33.5"
-        textAnchor="start"
-        fontSize="26"
-        fontWeight="500"
-        letterSpacing="-0.3"
-        fill="currentColor"
-      >
-        {geom.postIText}
-      </text>
-
-      {/* 3. Центральная буква W в слове Works — кастомная векторная осциллограмма */}
       <path
-        data-testid="brand-logo-wave-w"
-        d={wOscillogramPath}
-        stroke={isWaveHighlighted ? '#FF4820' : 'currentColor'}
-        strokeWidth="3.05"
+        data-testid="brand-logo-badge-wave"
+        d={badgeWavePath}
+        stroke="#FFFFFF"
+        strokeWidth="3.4"
         strokeLinecap="round"
         strokeLinejoin="round"
         fill="none"
-        className="transition-colors duration-150"
       />
 
-      {/* Хвост orks + знак ® или .pro */}
+      {/* СПРАВА: монолитная типографическая часть FMWorks® (font-bold tracking-[-0.04em], слитно без дыр) */}
       <text
-        x={geom.orksStartX}
-        y="33.5"
+        x={geom.textStartX}
+        y={geom.baselineY}
         textAnchor="start"
-        fontSize="26"
-        fontWeight="600"
-        letterSpacing="-0.4"
+        fontSize={geom.fontSize}
+        fontWeight="700"
+        letterSpacing={geom.letterSpacing}
         fill="currentColor"
+        className="font-bold"
       >
-        orks
+        <tspan data-testid="brand-logo-fm-prefix" fill="#FF4820" fontWeight="800">
+          {geom.fmPrefix}
+        </tspan>
+        <tspan fill="currentColor" fontWeight="700">
+          {geom.worksBody}
+        </tspan>
         {geom.suffixKind === 'domain' ? (
-          <tspan fill="#FF4820" fontWeight="600">
+          <tspan fill="#FF4820" fontWeight="700">
             {geom.suffixText}
           </tspan>
         ) : (
           <tspan
-            dx="1.6"
-            dy="-9.5"
+            dx="1.4"
+            dy="-9.8"
             fontSize="11.5"
-            fontWeight="600"
+            fontWeight="700"
             fill="currentColor"
             fillOpacity="0.68"
           >

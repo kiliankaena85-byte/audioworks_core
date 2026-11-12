@@ -77,7 +77,7 @@ export interface SavedVipProfile {
   company: string;
 }
 
-export const VIP_STORAGE_KEY = 'audioworks_vip_client_v1';
+export const VIP_STORAGE_KEY = 'fmworks_vip_client_v1';
 
 export function readSavedVipProfile(storage?: Pick<Storage, 'getItem'>): SavedVipProfile | null {
   const store = storage ?? (typeof window !== 'undefined' ? window.localStorage : undefined);
@@ -157,5 +157,5 @@ export function validateQuickOrder(input: QuickOrderValidationInput): {
 
 export function generateOrderNumber(seed = Date.now()): string {
   const num = 2400 + (seed % 700);
-  return `AW-${num}`;
+  return `FM-${num}`;
 }

@@ -60,7 +60,7 @@ export const STATIC_SITE_TEXT_BLOCKS: readonly SiteTextBlock[] = [
     section: 'hero',
     sectionLabel: 'Hero · Манифест студии',
     blockLabel: 'Главный заголовок H1 и манифест',
-    title: 'Мы AudioWorks.',
+    title: 'Мы FMWorks.',
     subtitle: 'Аудиореклама, которая работает.',
     description: KOTO_LENS_MANIFESTO_PARAGRAPH,
   },

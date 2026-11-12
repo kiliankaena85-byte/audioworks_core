@@ -45,11 +45,11 @@ export interface BrandCasePoster {
  */
 export const FLAGSHIP_STUDIO_REEL: BrandCasePoster = {
   id: 'audioworks-reel',
-  client: 'Промо-ролик Audioworks',
+  client: 'Промо-ролик FMWorks',
   tag: 'Оригинальная запись студии · Полная версия 1:19',
   headline: 'Сильная реклама не кричит в ухо — она включает кино в голове',
   summary:
-    'Послушайте наш собственный эфирный ролик целиком: резкая остановка рекламного шума, утренняя сцена вкуса, тишина приватного двора и фирменный почерк Audioworks.',
+    'Послушайте наш собственный эфирный ролик целиком: резкая остановка рекламного шума, утренняя сцена вкуса, тишина приватного двора и фирменный почерк FMWorks.',
   quoteImage:
     '«Стоп. Выдохните. Пока обычные объявления спорят, кто прокричит быстрее — ваша история уже внутри»',
   durationSec: Math.round(AUDIOWORKS_TOTAL_DURATION_SEC),
@@ -60,7 +60,7 @@ export const FLAGSHIP_STUDIO_REEL: BrandCasePoster = {
   previewDurationSec: 4,
   coverImageUrl:
     'https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?auto=format&fit=crop&w=1600&q=85',
-  coverImageAlt: 'Студийная консоль и микрофон продакшна Audioworks в мягком свете',
+  coverImageAlt: 'Студийная консоль и микрофон продакшна FMWorks в мягком свете',
   editorialSurfaceBg: 'bg-[#151417]',
   posterGradientClass: 'bg-gradient-to-br from-[#18181C] via-[#121216] to-[#0B0B0D]',
   posterGlowClass: 'bg-[#FF4820]/20',

@@ -1,5 +1,4 @@
 import {
-  AlertCircle,
   AlertTriangle,
   ArrowUpRight,
   AudioWaveform,
@@ -10,39 +9,38 @@ import {
   Moon,
   RotateCcw,
   Save,
+  ShieldCheck,
   Sun,
   Type,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useSiteTextBlocks } from '../../cms/SiteTextBlocksContext';
 import { useStudioCms } from '../../cms/StudioCmsContext';
 import { BrandDomainVariant } from '../../data/brandKitData';
 import {
   auditEditorialCopyGuardrails,
   BANNED_EDITORIAL_TERMS,
-  StudioCmsSnapshot,
 } from '../../data/studioCmsTypes';
 import { BrandLogo } from '../BrandLogo';
 import { AdminDuelPanel } from './AdminDuelPanel';
 import { AdminLoginScreen } from './AdminLoginScreen';
 import { AdminPortfolioPanel } from './AdminPortfolioPanel';
+import { AdminSecurityPanel } from './AdminSecurityPanel';
 import { AdminSiteCopyPanel } from './AdminSiteCopyPanel';
 import { AdminTextBlocksPanel } from './AdminTextBlocksPanel';
 
-export type AdminSectionTab = 'text_blocks' | 'portfolio' | 'duel' | 'copy';
+export type AdminSectionTab =
+  | 'portfolio'
+  | 'text_blocks'
+  | 'duel'
+  | 'copy'
+  | 'security';
 
 interface AdminWorkspaceProps {
   brandVariant: BrandDomainVariant;
   isDark: boolean;
   onToggleTheme: () => void;
   onNavigateHome: () => void;
-}
-
-function stripTimestamp(
-  snap: StudioCmsSnapshot
-): Omit<StudioCmsSnapshot, 'updatedAt'> {
-  const { updatedAt: _ignored, ...rest } = snap;
-  return rest;
 }
 
 function formatUpdatedTimestamp(iso: string): string {
@@ -66,12 +64,16 @@ export function AdminWorkspace({
 }: AdminWorkspaceProps) {
   const {
     snapshot,
+    hasLocalChanges,
+    localPortfolioChangeCount,
     isCustomizedOnServer,
     isAuthenticated,
     isAuthChecking,
     isSaving,
     login,
     logout,
+    updateLocalSnapshot,
+    discardLocalChanges,
     saveSnapshot,
     resetToDefaults,
     uploadAudioFile,
@@ -84,30 +86,14 @@ export function AdminWorkspace({
     resetAllBlocks: resetLiveTextBlocks,
   } = useSiteTextBlocks();
 
-  const [activeTab, setActiveTab] = useState<AdminSectionTab>('text_blocks');
-  const [draft, setDraft] = useState<StudioCmsSnapshot>(() => snapshot);
+  const [activeTab, setActiveTab] = useState<AdminSectionTab>('portfolio');
   const [saveBanner, setSaveBanner] = useState<{
     kind: 'ok' | 'error';
     text: string;
   } | null>(null);
 
-  const isDirty = useMemo(() => {
-    return (
-      JSON.stringify(stripTimestamp(draft)) !==
-      JSON.stringify(stripTimestamp(snapshot))
-    );
-  }, [draft, snapshot]);
-
-  // Синхронизируем черновик с серверным снимком при первичной загрузке (если редактор ещё не вносил правок)
-  useEffect(() => {
-    if (!isDirty) {
-      setDraft(snapshot);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot.updatedAt]);
-
   const guardrailWarnings = useMemo(() => {
-    const baseWarnings = auditEditorialCopyGuardrails(draft);
+    const baseWarnings = auditEditorialCopyGuardrails(snapshot);
     const liveSerialized = JSON.stringify(liveTextBlocks).toLowerCase();
     const combined = new Set<string>(baseWarnings);
     for (const term of BANNED_EDITORIAL_TERMS) {
@@ -116,7 +102,7 @@ export function AdminWorkspace({
       }
     }
     return Array.from(combined);
-  }, [draft, liveTextBlocks]);
+  }, [snapshot, liveTextBlocks]);
 
   if (isAuthChecking) {
     return (
@@ -142,24 +128,23 @@ export function AdminWorkspace({
 
   const handleSavePublish = async () => {
     setSaveBanner(null);
-    const res = await saveSnapshot(draft);
+    const res = await saveSnapshot(snapshot);
     if (!res.ok) {
       setSaveBanner({ kind: 'error', text: res.error });
       return;
     }
 
-    setDraft(res.snapshot);
     setSaveBanner({
       kind: 'ok',
       text:
         res.warnings.length > 0
-          ? `Изменения опубликованы на сайте (обратите внимание на редакционные рекомендации: ${res.warnings.join(', ')}).`
-          : 'Изменения сохранены и сразу опубликованы на витрине сайта.',
+          ? `Изменения записаны на сервер (обратите внимание на редакционные рекомендации: ${res.warnings.join(', ')}).`
+          : 'Изменения записаны на сервер и закреплены за витриной сайта.',
     });
   };
 
-  const handleDiscardChanges = () => {
-    setDraft(snapshot);
+  const handleDiscardLocal = () => {
+    discardLocalChanges();
     setSaveBanner(null);
   };
 
@@ -169,24 +154,34 @@ export function AdminWorkspace({
     const res = await resetToDefaults();
     if (!res.ok) {
       setSaveBanner({ kind: 'error', text: res.error });
-      return;
     }
-    setDraft(res.snapshot);
+  };
+
+  const handleNavigateToGallery = () => {
+    onNavigateHome();
+    if (typeof window !== 'undefined') {
+      window.setTimeout(() => {
+        const workEl = document.getElementById('work');
+        if (workEl) {
+          workEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 80);
+    }
   };
 
   const SECTION_META: Record<
     AdminSectionTab,
     { label: string; subtitle: string }
   > = {
+    portfolio: {
+      label: 'Портфолио и звук · Волна 1',
+      subtitle:
+        'Загрузка WAV/MP3, заголовки кейсов и настройка 3-секундного превью с мгновенным сохранением в локальное состояние CMS',
+    },
     text_blocks: {
       label: 'Текстовые блоки (Live)',
       subtitle:
         'Мгновенное редактирование заголовков и описаний секций Hero, Approach и Pricing в памяти сессии',
-    },
-    portfolio: {
-      label: 'Портфолио и звук',
-      subtitle:
-        'Флагманский шоурил, карточки кейсов, загрузка WAV/MP3 и настройка окна превью 3–5 секунд',
     },
     duel: {
       label: 'Дуэль 15 секунд',
@@ -197,6 +192,11 @@ export function AdminWorkspace({
       label: 'Исследования, FAQ и архив',
       subtitle:
         'Цифры исследований ЦНС, расценки тарифов в рублях, частые вопросы и резервные копии .json',
+    },
+    security: {
+      label: 'Защита от спама и заявки',
+      subtitle:
+        'Журнал верифицированных заявок, теневой карантин ботов, проверка ИНН ФНС и защита рекламного бюджета',
     },
   };
 
@@ -215,7 +215,7 @@ export function AdminWorkspace({
                 e.preventDefault();
                 onNavigateHome();
               }}
-              aria-label="Перейти на главную витрину AudioWorks"
+              aria-label="Перейти на главную витрину FMWorks"
               className="inline-flex items-center whitespace-nowrap shrink-0"
             >
               <BrandLogo variant={brandVariant} size="sm" />
@@ -223,6 +223,30 @@ export function AdminWorkspace({
           </div>
 
           <nav aria-label="Разделы кабинета студии" className="space-y-1.5">
+            <button
+              type="button"
+              data-testid="admin-nav-portfolio"
+              onClick={() => {
+                setActiveTab('portfolio');
+                setSaveBanner(null);
+              }}
+              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
+                activeTab === 'portfolio'
+                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+              }`}
+            >
+              <span className="inline-flex items-center gap-2.5">
+                <FolderKanban className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span>Портфолио и звук</span>
+              </span>
+              {localPortfolioChangeCount > 0 && (
+                <span className="text-[11px] font-bold tabular-nums text-[#FF4820]">
+                  {localPortfolioChangeCount}
+                </span>
+              )}
+            </button>
+
             <button
               type="button"
               data-testid="admin-nav-text-blocks"
@@ -245,23 +269,6 @@ export function AdminWorkspace({
                   {liveModifiedCount}
                 </span>
               )}
-            </button>
-
-            <button
-              type="button"
-              data-testid="admin-nav-portfolio"
-              onClick={() => {
-                setActiveTab('portfolio');
-                setSaveBanner(null);
-              }}
-              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center gap-2.5 transition-colors cursor-pointer whitespace-nowrap ${
-                activeTab === 'portfolio'
-                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
-              }`}
-            >
-              <FolderKanban className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span>Портфолио и звук</span>
             </button>
 
             <button
@@ -296,6 +303,23 @@ export function AdminWorkspace({
             >
               <FileText className="w-4 h-4 shrink-0" aria-hidden="true" />
               <span>Исследования, FAQ и архив</span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="admin-nav-security"
+              onClick={() => {
+                setActiveTab('security');
+                setSaveBanner(null);
+              }}
+              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center gap-2.5 transition-colors cursor-pointer whitespace-nowrap ${
+                activeTab === 'security'
+                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+              }`}
+            >
+              <ShieldCheck className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span>Защита и заявки</span>
             </button>
           </nav>
         </div>
@@ -377,16 +401,21 @@ export function AdminWorkspace({
                     <span>Реальное время · память сессии</span>
                   </span>
                 )
-              ) : isDirty ? (
+              ) : hasLocalChanges ? (
                 <span
-                  data-testid="admin-dirty-status"
-                  className="inline-flex items-center gap-1.5 font-semibold text-[#D97706] dark:text-[#FBBF24]"
+                  data-testid="admin-local-cms-status"
+                  className="inline-flex items-center gap-1.5 font-semibold text-[#16A34A] dark:text-[#4ADE80] tabular-nums"
                 >
-                  <AlertCircle
+                  <CheckCircle2
                     className="w-3.5 h-3.5 shrink-0"
                     aria-hidden="true"
                   />
-                  <span>Есть несохранённые правки</span>
+                  <span>
+                    Сохранено в локальном состоянии CMS
+                    {localPortfolioChangeCount > 0
+                      ? ` (${localPortfolioChangeCount})`
+                      : ''}
+                  </span>
                 </span>
               ) : (
                 <span
@@ -400,7 +429,7 @@ export function AdminWorkspace({
                   <span>
                     {isCustomizedOnServer
                       ? `Опубликовано${formattedTime ? ` в ${formattedTime}` : ''}`
-                      : 'Заводской эталон студии'}
+                      : 'Локальное состояние CMS синхронизировано'}
                   </span>
                 </span>
               )}
@@ -442,26 +471,43 @@ export function AdminWorkspace({
               </>
             ) : (
               <>
-                {isDirty && (
+                {hasLocalChanges && (
                   <button
                     type="button"
-                    onClick={handleDiscardChanges}
-                    className="min-h-[40px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:text-[#111111] dark:hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                    onClick={handleDiscardLocal}
+                    className="min-h-[40px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:text-[#111111] dark:hover:text-white inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
                   >
-                    Отменить правки
+                    <RotateCcw
+                      className="w-3.5 h-3.5 shrink-0"
+                      aria-hidden="true"
+                    />
+                    <span>Сбросить правки</span>
                   </button>
                 )}
 
                 <button
                   type="button"
-                  disabled={isSaving || !isDirty}
+                  data-testid="admin-open-live-site-btn"
+                  onClick={onNavigateHome}
+                  className="min-h-[40px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  <span>Проверить на витрине</span>
+                  <ArrowUpRight
+                    className="w-3.5 h-3.5 shrink-0"
+                    aria-hidden="true"
+                  />
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isSaving || !hasLocalChanges}
                   data-testid="admin-save-publish-btn"
                   onClick={() => void handleSavePublish()}
                   className="min-h-[40px] px-4 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] disabled:opacity-45 text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer disabled:cursor-default whitespace-nowrap shrink-0"
                 >
                   <Save className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                   <span>
-                    {isSaving ? 'Публикация…' : 'Сохранить и опубликовать'}
+                    {isSaving ? 'Сохранение…' : 'Сохранить на сервере'}
                   </span>
                 </button>
               </>
@@ -495,35 +541,52 @@ export function AdminWorkspace({
                 aria-hidden="true"
               />
               <span>
-                Редакционный контроль AudioWorks: в тексте встретились нежелательные штампы или гео-привязки ({guardrailWarnings.join(', ')}). Рекомендуем заменить их на нейтральные формулировки федерального продакшна.
+                Редакционный контроль FMWorks: в тексте встретились нежелательные штампы или гео-привязки ({guardrailWarnings.join(', ')}). Рекомендуем заменить их на нейтральные формулировки федерального продакшна.
               </span>
             </div>
+          )}
+
+          {activeTab === 'portfolio' && (
+            <AdminPortfolioPanel
+              flagshipReel={snapshot.flagshipReel}
+              portfolioCases={snapshot.portfolioCases}
+              onPatchCase={(caseId, patch) =>
+                updateLocalSnapshot((prev) => {
+                  if (prev.flagshipReel.id === caseId) {
+                    return {
+                      ...prev,
+                      flagshipReel: { ...prev.flagshipReel, ...patch },
+                    };
+                  }
+                  return {
+                    ...prev,
+                    portfolioCases: prev.portfolioCases.map((c) =>
+                      c.id === caseId ? { ...c, ...patch } : c
+                    ),
+                  };
+                })
+              }
+              onChangePortfolioCases={(nextCases) =>
+                updateLocalSnapshot((prev) => ({
+                  ...prev,
+                  portfolioCases: nextCases,
+                }))
+              }
+              onUploadAudio={uploadAudioFile}
+              onUploadImage={uploadImageFile}
+              onNavigateToGallery={handleNavigateToGallery}
+            />
           )}
 
           {activeTab === 'text_blocks' && (
             <AdminTextBlocksPanel onNavigateHome={onNavigateHome} />
           )}
 
-          {activeTab === 'portfolio' && (
-            <AdminPortfolioPanel
-              flagshipReel={draft.flagshipReel}
-              portfolioCases={draft.portfolioCases}
-              onChangeFlagshipReel={(nextReel) =>
-                setDraft((prev) => ({ ...prev, flagshipReel: nextReel }))
-              }
-              onChangePortfolioCases={(nextCases) =>
-                setDraft((prev) => ({ ...prev, portfolioCases: nextCases }))
-              }
-              onUploadAudio={uploadAudioFile}
-              onUploadImage={uploadImageFile}
-            />
-          )}
-
           {activeTab === 'duel' && (
             <AdminDuelPanel
-              duel={draft.duel}
+              duel={snapshot.duel}
               onChangeDuel={(nextDuel) =>
-                setDraft((prev) => ({ ...prev, duel: nextDuel }))
+                updateLocalSnapshot((prev) => ({ ...prev, duel: nextDuel }))
               }
               onUploadAudio={uploadAudioFile}
             />
@@ -531,18 +594,23 @@ export function AdminWorkspace({
 
           {activeTab === 'copy' && (
             <AdminSiteCopyPanel
-              draft={draft}
+              draft={snapshot}
               onChangeNeuroApproach={(nextNeuro) =>
-                setDraft((prev) => ({ ...prev, neuroApproach: nextNeuro }))
+                updateLocalSnapshot((prev) => ({
+                  ...prev,
+                  neuroApproach: nextNeuro,
+                }))
               }
               onChangeSiteCopy={(nextCopy) =>
-                setDraft((prev) => ({ ...prev, siteCopy: nextCopy }))
+                updateLocalSnapshot((prev) => ({ ...prev, siteCopy: nextCopy }))
               }
-              onImportSnapshot={(imported) => setDraft(imported)}
+              onImportSnapshot={(imported) => updateLocalSnapshot(imported)}
               onResetToDefaults={handleResetAll}
               onUploadImage={uploadImageFile}
             />
           )}
+
+          {activeTab === 'security' && <AdminSecurityPanel />}
         </main>
       </div>
     </div>

@@ -7,6 +7,7 @@ import {
   BrandKitAssetSpec,
   buildAvatarIconSvgMarkup,
   buildBrandLogoSvgMarkup,
+  computeBadgeWaveWPath,
   getBrandKitAssetSpecs,
 } from '../data/brandKitData';
 import { BrandLogo } from './BrandLogo';
@@ -86,48 +87,19 @@ async function renderSvgMarkupToPngBlob(
 }
 
 function AvatarMonogramPreview() {
+  const wavePath = computeBadgeWaveWPath(0, 0);
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 1000 1000"
+      viewBox="0 0 48 48"
       aria-hidden="true"
       className="w-full h-full"
     >
-      <defs>
-        <linearGradient
-          id="aw-modal-avatar-bg"
-          x1="120"
-          y1="80"
-          x2="880"
-          y2="940"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop offset="0%" stopColor="#FF5932" />
-          <stop offset="55%" stopColor="#FF4820" />
-          <stop offset="100%" stopColor="#E53914" />
-        </linearGradient>
-      </defs>
-      <rect x="0" y="0" width="1000" height="1000" rx="220" fill="url(#aw-modal-avatar-bg)" />
+      <rect x="0" y="0" width="48" height="48" rx="13" fill="#FF4820" />
       <path
-        d="M 218 338 C 252 486, 286 620, 332 738"
+        d={wavePath}
         stroke="#FFFFFF"
-        strokeWidth="76"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-      />
-      <path
-        d="M 434 704 C 468 538, 494 398, 526 398 C 558 398, 584 538, 618 704"
-        stroke="#FFFFFF"
-        strokeWidth="76"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-      />
-      <path
-        d="M 720 738 C 756 572, 790 400, 832 248"
-        stroke="#FFFFFF"
-        strokeWidth="76"
+        strokeWidth="3.4"
         strokeLinecap="round"
         strokeLinejoin="round"
         fill="none"
@@ -242,7 +214,7 @@ export function BrandKitModal({
             className="absolute inset-0 bg-black/62 backdrop-blur-sm"
           />
 
-          {/* Модальное окно Brand Kit AudioWorks */}
+          {/* Модальное окно Brand Kit FMWorks */}
           <motion.div
             role="dialog"
             aria-modal="true"
@@ -263,21 +235,21 @@ export function BrandKitModal({
                   id="brand-kit-modal-title"
                   className="text-xl sm:text-2xl font-bold tracking-tight"
                 >
-                  Brand Kit AudioWorks
+                  Brand Kit FMWorks
                 </h2>
               </div>
 
               <button
                 type="button"
                 onClick={onClose}
-                aria-label="Закрыть Brand Kit AudioWorks"
+                aria-label="Закрыть Brand Kit FMWorks"
                 className="w-10 h-10 rounded-full flex items-center justify-center text-[#111111]/65 dark:text-[#F4F3EF]/65 hover:text-[#111111] dark:hover:text-white hover:bg-[#111111]/6 dark:hover:bg-white/10 transition-colors cursor-pointer shrink-0"
               >
                 <X className="w-4 h-4" aria-hidden="true" />
               </button>
             </div>
 
-            {/* 4. Переключатель превью домена / знака: AudioWorks®, AudioWorks.pro, AirWorks® */}
+            {/* Переключатель превью домена / знака: FMWorks®, FMWorks.ru, FMWorks.pro */}
             <div className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs font-medium text-[#111111]/64 dark:text-[#F4F3EF]/64">
@@ -432,9 +404,9 @@ export function BrandKitModal({
               })}
             </div>
 
-            {/* Подсказка про вызов по правому клику и наведение на волну */}
+            {/* Подсказка про вызов по правому клику и отклик звуковой волны */}
             <div className="pt-2 border-t border-[#111111]/8 dark:border-white/10 text-xs text-[#111111]/56 dark:text-[#F4F3EF]/56">
-              Наведите курсор на логотип для проверки живой волны W · правый клик по логотипу в шапке всегда открывает Brand Kit.
+              Наведите курсор на логотип для проверки живого отклика звуковой волны W · правый клик по логотипу в шапке всегда открывает Brand Kit.
             </div>
           </motion.div>
         </div>
