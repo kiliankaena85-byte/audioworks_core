@@ -450,7 +450,7 @@ export function QuickOrderDrawer({
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-            className="w-full max-w-xl h-full bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111] dark:text-[#F4F3EF] border-l border-[#111111]/10 dark:border-[#F4F3EF]/12 p-6 sm:p-10 flex flex-col justify-between overflow-y-auto"
+            className="w-full max-w-xl h-full bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111] dark:text-[#F4F3EF] border-l border-[#111111]/10 dark:border-[#F4F3EF]/12 p-6 sm:p-10 flex flex-col justify-between overflow-y-auto subtle-scrollbar overscroll-contain"
           >
             <div>
               {/* Drawer Top Header */}

@@ -1,6 +1,7 @@
 import { Menu, Moon, Sun, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from 'react';
+import { BrandDomainVariant } from '../data/brandKitData';
 import {
   COMPACT_NAV_ITEMS,
   computeSmoothScrollTargetY,
@@ -8,12 +9,15 @@ import {
   resolveActiveSectionId,
   SectionViewportBounds,
 } from '../data/navigationData';
+import { BrandLogo } from './BrandLogo';
 
 interface CompactHeaderNavProps {
   isDark: boolean;
   onToggleTheme: () => void;
   isQuickOrderOpen: boolean;
   onOpenQuickOrder: () => void;
+  brandVariant?: BrandDomainVariant;
+  onOpenBrandKit?: () => void;
 }
 
 export function CompactHeaderNav({
@@ -21,6 +25,8 @@ export function CompactHeaderNav({
   onToggleTheme,
   isQuickOrderOpen,
   onOpenQuickOrder,
+  brandVariant = 'audioworks_reg',
+  onOpenBrandKit,
 }: CompactHeaderNavProps) {
   const [isScrolled, setIsScrolled] = useState<boolean>(false);
   const [activeSectionId, setActiveSectionId] = useState<NavSectionId | null>(null);
@@ -158,13 +164,23 @@ export function CompactHeaderNav({
       }`}
     >
       <div className="max-w-7xl mx-auto h-full px-4 sm:px-6 lg:px-12 flex items-center justify-between gap-6 lg:gap-8 relative">
-        {/* Зона 1: Логотип с плавным возвратом к началу */}
+        {/* Зона 1: Дизайнерский векторный логотип с плавным возвратом к началу и Brand Kit по правому клику */}
         <a
           href="#top"
           onClick={handleBrandClick}
-          className="text-base sm:text-lg font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF] whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#FF4820]"
+          onContextMenu={(e) => {
+            if (!onOpenBrandKit) return;
+            e.preventDefault();
+            onOpenBrandKit();
+          }}
+          title="Нажмите для возврата наверх · Правый клик открывает Brand Kit (SVG / PNG)"
+          className="inline-flex items-center whitespace-nowrap shrink-0 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#FF4820]"
         >
-          AudioWorks<sup className="text-[10px] font-semibold ml-0.5 opacity-60">®</sup>
+          <BrandLogo
+            variant={brandVariant}
+            size="md"
+            onOpenBrandKit={onOpenBrandKit}
+          />
         </a>
 
         {/* Зона 2: Компактная навигация к ключевым секциям (Галерея, Стоимость, FAQ и др.) */}

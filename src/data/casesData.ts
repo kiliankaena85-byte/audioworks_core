@@ -1,11 +1,13 @@
 import { LayaPersona } from '../engine/layaTypes';
 import { AUDIOWORKS_TOTAL_DURATION_SEC, AUDIOWORKS_WAV_URL } from './audioworksCommercial';
 
-export type CaseId =
+export type CanonicalCaseId =
   | 'audioworks-reel'
   | 'dmitrogorsky'
   | 'business-estate'
   | 'medical-clinics';
+
+export type CaseId = CanonicalCaseId | (string & {});
 
 export type CasePlaybackMode = 'full' | 'preview';
 
@@ -128,15 +130,18 @@ export const BRAND_CASES: BrandCasePoster[] = [
   },
 ];
 
-export const VALID_CASE_IDS: readonly CaseId[] = [
+export const VALID_CASE_IDS: readonly CanonicalCaseId[] = [
   'audioworks-reel',
   'dmitrogorsky',
   'business-estate',
   'medical-clinics',
 ] as const;
 
-export function isValidCaseId(value: string): value is CaseId {
-  return (VALID_CASE_IDS as readonly string[]).includes(value);
+export function isValidCaseId(
+  value: string,
+  allowedIds: readonly string[] = VALID_CASE_IDS
+): value is CaseId {
+  return allowedIds.includes(value);
 }
 
 export interface CaseHoverRect {
@@ -257,6 +262,97 @@ export function computeCaseCardProgress(
   };
 }
 
+export const CASE_SPECTRUM_BAND_COUNT = 32;
+
+/**
+ * Вычисляет 32-полосный акустический профиль звуковой волны (0.16..1)
+ * с индивидуальным тембральным почерком каждого кейса при прослушивании и предпросмотре.
+ */
+export function computeCaseSpectrumBands(
+  caseId: CaseId,
+  elapsedSec: number,
+  isActive: boolean,
+  fftNormalized?: readonly number[]
+): number[] {
+  if (!isActive) {
+    return Array.from({ length: CASE_SPECTRUM_BAND_COUNT }, () => 0);
+  }
+
+  const t = Number.isFinite(elapsedSec) ? Math.max(0, elapsedSec) : 0;
+
+  let cadenceHz = 5.4;
+  let formantCenter = 0.44;
+  let formantWidth = 0.28;
+  let airSparkle = 0.28;
+  let warmLow = 0.34;
+  let phaseSeed = 0.4;
+
+  if (caseId === 'dmitrogorsky') {
+    cadenceHz = 6.3;
+    formantCenter = 0.48;
+    formantWidth = 0.26;
+    airSparkle = 0.42;
+    warmLow = 0.32;
+    phaseSeed = 1.15;
+  } else if (caseId === 'business-estate') {
+    cadenceHz = 3.7;
+    formantCenter = 0.32;
+    formantWidth = 0.24;
+    airSparkle = 0.18;
+    warmLow = 0.52;
+    phaseSeed = 2.3;
+  } else if (caseId === 'medical-clinics') {
+    cadenceHz = 4.3;
+    formantCenter = 0.42;
+    formantWidth = 0.3;
+    airSparkle = 0.24;
+    warmLow = 0.38;
+    phaseSeed = 3.45;
+  }
+
+  // Естественная речевая фразировка с мягкими микропаузами дыхания
+  const breathGate =
+    0.58 +
+    0.42 *
+      Math.max(
+        0.15,
+        Math.sin(t * 2.1 + phaseSeed) * 0.6 + Math.cos(t * 1.15 + phaseSeed * 0.5) * 0.4 + 0.35
+      );
+
+  const hasLiveFft =
+    Array.isArray(fftNormalized) &&
+    fftNormalized.length > 0 &&
+    fftNormalized.some((v) => v > 0.02);
+
+  return Array.from({ length: CASE_SPECTRUM_BAND_COUNT }, (_, idx) => {
+    const pos = idx / (CASE_SPECTRUM_BAND_COUNT - 1); // 0..1
+
+    const vocalBell = Math.exp(-Math.pow((pos - formantCenter) / formantWidth, 2));
+    const lowShelf = Math.exp(-Math.pow(pos / 0.24, 2)) * warmLow;
+    const highAir = Math.exp(-Math.pow((pos - 0.84) / 0.16, 2)) * airSparkle;
+    const spectralContour = Math.min(1, 0.18 + vocalBell * 0.68 + lowShelf + highAir);
+
+    const syllabicPulse =
+      0.42 +
+      0.36 * Math.abs(Math.sin(t * cadenceHz + idx * 0.46 + phaseSeed)) +
+      0.22 * Math.abs(Math.cos(t * (cadenceHz * 1.62) - idx * 0.31));
+
+    let level = spectralContour * syllabicPulse * Math.min(1.08, breathGate);
+
+    if (hasLiveFft && fftNormalized) {
+      const fftIdx = Math.min(
+        fftNormalized.length - 1,
+        Math.floor((pos * fftNormalized.length) * 0.85)
+      );
+      const fftVal = Math.max(0, Math.min(1, fftNormalized[fftIdx] ?? 0));
+      level = level * 0.48 + (0.16 + fftVal * 0.84) * 0.52;
+    }
+
+    const clamped = Math.min(1, Math.max(0.16, level));
+    return Math.round(clamped * 1000) / 1000;
+  });
+}
+
 /**
  * Формирует прямую ссылку на конкретный кейс портфолио (`?case=<id>#case-<id>`),
  * сохраняя текущие параметры персонализации (например, `?persona=...`).
@@ -277,18 +373,19 @@ export function buildCaseShareUrl(currentHref: string, caseId: CaseId): string {
  */
 export function readSharedCaseIdFromLocation(
   search: string,
-  hash = ''
+  hash = '',
+  allowedIds: readonly string[] = VALID_CASE_IDS
 ): CaseId | null {
   const params = new URLSearchParams(search);
   const fromQuery = (params.get('case') ?? '').trim();
-  if (fromQuery && isValidCaseId(fromQuery)) {
+  if (fromQuery && isValidCaseId(fromQuery, allowedIds)) {
     return fromQuery;
   }
 
   const normalizedHash = hash.replace(/^#/, '').trim();
   if (normalizedHash.startsWith('case-')) {
     const candidate = normalizedHash.slice('case-'.length);
-    if (isValidCaseId(candidate)) {
+    if (isValidCaseId(candidate, allowedIds)) {
       return candidate;
     }
   }
@@ -313,7 +410,40 @@ export function getOrderedCasesForPersona(persona: LayaPersona): BrandCasePoster
 }
 
 export const APPROACH_THESIS =
-  'Радиостанция дает вам миллионную аудиторию. Мы делаем так, чтобы к вам вышли подготовленными — со сценарием, редкими голосами и чистыми документами.';
+  'Радиостанция даёт вам миллионную аудиторию. Мы делаем так, чтобы в рекламном блоке услышали именно вас.';
+
+export const APPROACH_LEAD_PARAGRAPH =
+  'Центральная нервная система человека экономит ресурс и за первые две секунды переводит однотипные рекламные ролики в фоновый шум. Чтобы эфирный бюджет приносил клиентов, а не растворялся между чужими скидками, звук должен переключать восприятие — без крика и заученных штампов.';
+
+export interface NeuroStudyProofCard {
+  id: string;
+  sourceLabel: string;
+  metricValue: string;
+  metricCaption: string;
+  secondaryStat: string;
+  summary: string;
+}
+
+export const APPROACH_NEURO_STUDIES: NeuroStudyProofCard[] = [
+  {
+    id: 'neuro-insight-hear-and-now',
+    sourceLabel: 'Radiocentre × Neuro-Insight · исследование Hear and Now',
+    metricValue: '+22%',
+    metricCaption: 'к записи бренда в долговременную память',
+    secondaryStat: '+23% к вовлечённости мозга в живом бытовом контексте',
+    summary:
+      'По данным нейротомографии активности мозга (SST), слушатель за рулём или в делах автоматически отсекает общий рекламный гул, но мгновенно включает селективное внимание, когда с первых секунд узнаёт свою реальную ситуацию.',
+  },
+  {
+    id: 'system1-listen-up',
+    sourceLabel: 'System1 × Radiocentre · исследование Listen Up! (50 000+ слушателей)',
+    metricValue: '2×',
+    metricCaption: 'двукратный рост доверия к бренду в эфире',
+    secondaryStat: '+8,2% к реальным целевым действиям покупателей',
+    summary:
+      'Сухая скороговорка из цифр, адресов и условий перегружает узкий аналитический канал и стирается через минуту. Живая сцена, пауза и тёплая актёрская подача включают образное восприятие правого полушария и работают вдолгую.',
+  },
+];
 
 export const APPROACH_STUDIO_PHOTO = {
   imageUrl:
@@ -331,17 +461,17 @@ export interface ApproachPillar {
 export const APPROACH_PILLARS: ApproachPillar[] = [
   {
     number: '01',
-    title: 'Сценарий со смыслом',
-    body: 'Не просим вас писать ТЗ на 5 страниц. Сами нащупаем главную выгоду и сложим её в точные 30 секунд.',
+    title: 'Контраст вместо рекламного шума',
+    body: 'Снимаем защитный блок внимания с первой секунды: выстраиваем драматургию паузы, одну точную выгоду и живую сцену вместо попытки зачитать весь буклет за 15 секунд.',
   },
   {
     number: '02',
-    title: 'Незамыленные актеры',
-    body: 'В нашей базе голоса кино и дубляжа, которые еще не приелись слушателям в каждом рекламном блоке.',
+    title: 'Незамыленные голоса кино и дубляжа',
+    body: 'Слушатель мгновенно глушит приевшуюся «дежурную дикторскую подачу». Мы записываем характерных актёров с живым человеческим дыханием, которым веришь с полуслова.',
   },
   {
     number: '03',
-    title: 'Спокойствие за документы',
-    body: 'Проверим текст по требованиям закона о рекламе и подготовим лицензионный паспорт музыки для любой станции.',
+    title: 'Спокойствие за эфир и документы',
+    body: 'Проверяем каждое слово по требованиям закона о рекламе, выверяем хронометраж до десятой доли секунды и готовим лицензионный паспорт музыки для модерации с первого дубля.',
   },
 ];

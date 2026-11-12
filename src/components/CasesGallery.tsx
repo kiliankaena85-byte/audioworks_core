@@ -9,22 +9,26 @@ import {
 } from 'motion/react';
 import { PointerEvent as ReactPointerEvent, RefObject, useEffect, useRef, useState } from 'react';
 import { CasePlayerSnapshot } from '../audio/casePlayerEngine';
+import { useStudioCms } from '../cms/StudioCmsContext';
 import { formatAudioTime } from '../data/audioworksCommercial';
 import {
   BrandCasePoster,
   buildCaseShareUrl,
+  CASE_SPECTRUM_BAND_COUNT,
   CaseCardProgressState,
   CaseId,
   CasePlaybackMode,
   computeCaseCardProgress,
   computeCaseHoverOffset,
-  FLAGSHIP_STUDIO_REEL,
   getCasePreviewWindow,
-  getOrderedCasesForPersona,
   readSharedCaseIdFromLocation,
   shouldStartHoverPreview,
 } from '../data/casesData';
+import { orderPublishedCmsCasesForPersona } from '../data/studioCmsTypes';
 import { useLayaDecision } from '../engine/LayaContext';
+
+const LOCAL_CASE_FALLBACK_IMAGE =
+  '/src/assets/images/hero_studio_editorial_1794399404984.jpg';
 
 const HOVER_PREVIEW_DELAY_MS = 80;
 
@@ -248,12 +252,14 @@ function ShareCaseButton({ item, isCopied, onShare }: ShareCaseButtonProps) {
 interface CaseAudioProgressBarProps {
   item: BrandCasePoster;
   progress: CaseCardProgressState;
+  spectrumBands: readonly number[];
   currentTimeSec: number;
 }
 
 function CaseAudioProgressBar({
   item,
   progress,
+  spectrumBands,
   currentTimeSec,
 }: CaseAudioProgressBarProps) {
   const prefersReducedMotion = useReducedMotion();
@@ -262,36 +268,79 @@ function CaseAudioProgressBar({
     progress.mode === 'preview' ? previewWindow.durationSec : item.durationSec;
 
   return (
-    <div
-      role="progressbar"
-      aria-label={`Прогресс воспроизведения: ${item.client}`}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={progress.percent}
-      aria-valuetext={
-        progress.isActive
-          ? `${progress.mode === 'preview' ? 'Превью ' : ''}${progress.percent}% (${formatAudioTime(currentTimeSec)} из ${formatAudioTime(targetDurationSec)})`
-          : 'Не воспроизводится'
-      }
-      data-testid={`case-progress-${item.id}`}
-      data-playing={progress.isActive ? 'true' : 'false'}
-      data-mode={progress.mode ?? 'idle'}
-      className={`h-1 w-full rounded-full overflow-hidden transition-colors duration-200 ${
-        progress.isActive ? 'bg-white/24' : 'bg-white/12'
-      }`}
-    >
-      <motion.div
-        initial={false}
-        animate={{ scaleX: progress.isActive ? progress.ratio : 0 }}
-        transition={{ duration: prefersReducedMotion ? 0 : 0.1, ease: 'linear' }}
-        className="h-full w-full rounded-full bg-[#FF4820] origin-left will-change-transform"
-      />
+    <div className="h-[30px] w-full flex flex-col justify-end gap-1.5">
+      <div
+        aria-hidden="true"
+        data-testid={`case-visualizer-${item.id}`}
+        data-active={progress.isActive ? 'true' : 'false'}
+        data-mode={progress.mode ?? 'idle'}
+        className="h-5 w-full flex items-end justify-between gap-[2px] pointer-events-none"
+      >
+        {Array.from({ length: CASE_SPECTRUM_BAND_COUNT }, (_, idx) => {
+          const rawBand = progress.isActive ? (spectrumBands[idx] ?? 0.24) : 0;
+          const staticContour =
+            0.28 + 0.52 * Math.exp(-Math.pow((idx / (CASE_SPECTRUM_BAND_COUNT - 1) - 0.45) / 0.28, 2));
+          const targetScaleY = progress.isActive
+            ? prefersReducedMotion
+              ? staticContour
+              : Math.max(0.16, rawBand)
+            : 0.08;
+          const bandPosition = (idx + 0.5) / CASE_SPECTRUM_BAND_COUNT;
+          const isPlayedBand = progress.isActive && bandPosition <= progress.ratio;
+
+          return (
+            <motion.span
+              key={idx}
+              initial={false}
+              animate={{
+                scaleY: targetScaleY,
+                opacity: progress.isActive ? 1 : 0,
+              }}
+              transition={{
+                duration: prefersReducedMotion ? 0 : progress.isActive ? 0.08 : 0.16,
+                ease: 'linear',
+              }}
+              className={`h-full w-[2px] sm:w-[2.5px] rounded-full origin-bottom will-change-transform transition-colors duration-150 ${
+                isPlayedBand ? 'bg-[#FF4820]' : 'bg-white/42'
+              }`}
+            />
+          );
+        })}
+      </div>
+
+      <div
+        role="progressbar"
+        aria-label={`Прогресс воспроизведения: ${item.client}`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress.percent}
+        aria-valuetext={
+          progress.isActive
+            ? `${progress.mode === 'preview' ? 'Превью ' : ''}${progress.percent}% (${formatAudioTime(currentTimeSec)} из ${formatAudioTime(targetDurationSec)})`
+            : 'Не воспроизводится'
+        }
+        data-testid={`case-progress-${item.id}`}
+        data-playing={progress.isActive ? 'true' : 'false'}
+        data-mode={progress.mode ?? 'idle'}
+        className={`h-1 w-full rounded-full overflow-hidden transition-colors duration-200 ${
+          progress.isActive ? 'bg-white/24' : 'bg-white/12'
+        }`}
+      >
+        <motion.div
+          initial={false}
+          animate={{ scaleX: progress.isActive ? progress.ratio : 0 }}
+          transition={{ duration: prefersReducedMotion ? 0 : 0.1, ease: 'linear' }}
+          className="h-full w-full rounded-full bg-[#FF4820] origin-left will-change-transform"
+        />
+      </div>
     </div>
   );
 }
 
 interface StudioCommercialStripProps {
+  reel: BrandCasePoster;
   progress: CaseCardProgressState;
+  spectrumBands: readonly number[];
   isGlobalPlaying: boolean;
   globalPlaybackMode: CasePlaybackMode | null;
   isHighlighted: boolean;
@@ -304,7 +353,9 @@ interface StudioCommercialStripProps {
 }
 
 function StudioCommercialStrip({
+  reel,
   progress,
+  spectrumBands,
   isGlobalPlaying,
   globalPlaybackMode,
   isHighlighted,
@@ -318,7 +369,7 @@ function StudioCommercialStrip({
   const stripRef = useRef<HTMLDivElement | null>(null);
   const isReelFullPlaying = progress.isActive && progress.mode === 'full';
   const isReelPreviewPlaying = progress.isActive && progress.mode === 'preview';
-  const reelPreviewWindow = getCasePreviewWindow(FLAGSHIP_STUDIO_REEL);
+  const reelPreviewWindow = getCasePreviewWindow(reel);
 
   const {
     imageMotionStyle,
@@ -338,7 +389,7 @@ function StudioCommercialStrip({
     handlePreviewPointerLeave,
     clearPendingTimer,
   } = useCaseHoverPreview({
-    item: FLAGSHIP_STUDIO_REEL,
+    item: reel,
     isGlobalPlaying,
     globalPlaybackMode,
     onStartPreview,
@@ -348,7 +399,7 @@ function StudioCommercialStrip({
   return (
     <div
       ref={stripRef}
-      id={`case-${FLAGSHIP_STUDIO_REEL.id}`}
+      id={`case-${reel.id}`}
       data-testid="flagship-studio-reel"
       onPointerEnter={(e) => {
         handlePointerEnter();
@@ -359,15 +410,22 @@ function StudioCommercialStrip({
         handlePointerLeave();
         handlePreviewPointerLeave();
       }}
-      className={`scroll-mt-24 group relative overflow-hidden mb-8 lg:mb-10 rounded-3xl p-6 sm:p-9 lg:p-11 bg-[#141417] text-[#F4F3EF] border transition-colors flex flex-col gap-6 ${
+      className={`scroll-mt-24 group relative overflow-hidden mb-8 lg:mb-10 rounded-3xl p-6 sm:p-9 lg:p-11 bg-[#141417] text-[#F4F3EF] border transition-colors flex flex-col gap-4 ${
         isHighlighted ? 'border-[#FF4820]' : 'border-white/10'
       }`}
     >
       <motion.img
-        src={FLAGSHIP_STUDIO_REEL.coverImageUrl}
-        alt={FLAGSHIP_STUDIO_REEL.coverImageAlt}
+        src={reel.coverImageUrl}
+        alt={reel.coverImageAlt}
         referrerPolicy="no-referrer"
         decoding="async"
+        onError={(e) => {
+          const img = e.currentTarget;
+          if (!img.dataset.fallbackApplied) {
+            img.dataset.fallbackApplied = '1';
+            img.src = LOCAL_CASE_FALLBACK_IMAGE;
+          }
+        }}
         style={imageMotionStyle}
         className="pointer-events-none absolute -inset-6 w-[calc(100%+3rem)] h-[calc(100%+3rem)] max-w-none object-cover opacity-26 brightness-110 will-change-transform"
       />
@@ -379,20 +437,20 @@ function StudioCommercialStrip({
       <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
         <div className="space-y-2 max-w-2xl">
           <p className="text-xs sm:text-sm font-medium text-white/62">
-            {FLAGSHIP_STUDIO_REEL.tag}
+            {reel.tag}
           </p>
           <h3 className="text-2xl sm:text-3xl font-bold tracking-tight leading-snug text-white editorial-balance">
-            {FLAGSHIP_STUDIO_REEL.headline}
+            {reel.headline}
           </h3>
           <p className="text-sm sm:text-base text-white/70 leading-relaxed editorial-pretty">
-            {FLAGSHIP_STUDIO_REEL.summary}
+            {reel.summary}
           </p>
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
           {isReelPreviewPlaying && (
             <span
-              data-testid={`case-preview-status-${FLAGSHIP_STUDIO_REEL.id}`}
+              data-testid={`case-preview-status-${reel.id}`}
               className="text-xs font-medium tabular-nums text-white/85 whitespace-nowrap shrink-0"
             >
               Превью · {formatAudioTime(currentTimeSec)} /{' '}
@@ -404,12 +462,12 @@ function StudioCommercialStrip({
             type="button"
             onClick={() => {
               clearPendingTimer();
-              onToggleCase(FLAGSHIP_STUDIO_REEL);
+              onToggleCase(reel);
             }}
             aria-label={
               isReelFullPlaying
-                ? 'Остановить промо-ролик Audioworks'
-                : 'Слушать промо-ролик Audioworks целиком'
+                ? `Остановить ${reel.client}`
+                : `Слушать ${reel.client} целиком`
             }
             className={`min-h-[44px] px-5 py-2.5 rounded-full inline-flex items-center gap-2.5 text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
               isReelFullPlaying
@@ -425,12 +483,12 @@ function StudioCommercialStrip({
             <span className="tabular-nums">
               {isReelFullPlaying
                 ? `Пауза · ${formatAudioTime(currentTimeSec)}`
-                : `Слушать шоурил · ${formatAudioTime(FLAGSHIP_STUDIO_REEL.durationSec)}`}
+                : `Слушать шоурил · ${formatAudioTime(reel.durationSec)}`}
             </span>
           </button>
 
           <ShareCaseButton
-            item={FLAGSHIP_STUDIO_REEL}
+            item={reel}
             isCopied={isCopied}
             onShare={onShare}
           />
@@ -439,8 +497,9 @@ function StudioCommercialStrip({
 
       <div className="relative z-10">
         <CaseAudioProgressBar
-          item={FLAGSHIP_STUDIO_REEL}
+          item={reel}
           progress={progress}
+          spectrumBands={spectrumBands}
           currentTimeSec={currentTimeSec}
         />
       </div>
@@ -452,6 +511,7 @@ interface BrandCaseCardProps {
   item: BrandCasePoster;
   index: number;
   progress: CaseCardProgressState;
+  spectrumBands: readonly number[];
   isGlobalPlaying: boolean;
   globalPlaybackMode: CasePlaybackMode | null;
   isThisHighlighted: boolean;
@@ -467,6 +527,7 @@ function BrandCaseCard({
   item,
   index,
   progress,
+  spectrumBands,
   isGlobalPlaying,
   globalPlaybackMode,
   isThisHighlighted,
@@ -549,10 +610,11 @@ function BrandCaseCard({
             </p>
           </div>
 
-          <div className="space-y-4 pt-2">
+          <div className="space-y-4">
             <CaseAudioProgressBar
               item={item}
               progress={progress}
+              spectrumBands={spectrumBands}
               currentTimeSec={currentTimeSec}
             />
 
@@ -617,6 +679,13 @@ function BrandCaseCard({
             alt={item.coverImageAlt}
             referrerPolicy="no-referrer"
             decoding="async"
+            onError={(e) => {
+              const img = e.currentTarget;
+              if (!img.dataset.fallbackApplied) {
+                img.dataset.fallbackApplied = '1';
+                img.src = LOCAL_CASE_FALLBACK_IMAGE;
+              }
+            }}
             style={imageMotionStyle}
             className="pointer-events-none absolute -inset-7 w-[calc(100%+3.5rem)] h-[calc(100%+3.5rem)] max-w-none object-cover will-change-transform"
           />
@@ -657,6 +726,13 @@ function BrandCaseCard({
         alt={item.coverImageAlt}
         referrerPolicy="no-referrer"
         decoding="async"
+        onError={(e) => {
+          const img = e.currentTarget;
+          if (!img.dataset.fallbackApplied) {
+            img.dataset.fallbackApplied = '1';
+            img.src = LOCAL_CASE_FALLBACK_IMAGE;
+          }
+        }}
         style={imageMotionStyle}
         className="pointer-events-none absolute -inset-7 w-[calc(100%+3.5rem)] h-[calc(100%+3.5rem)] max-w-none object-cover will-change-transform"
       />
@@ -681,10 +757,11 @@ function BrandCaseCard({
           </p>
         </div>
 
-        <div className="space-y-3.5 pt-1">
+        <div className="space-y-3.5">
           <CaseAudioProgressBar
             item={item}
             progress={progress}
+            spectrumBands={spectrumBands}
             currentTimeSec={currentTimeSec}
           />
 
@@ -751,13 +828,18 @@ export function CasesGallery({
   onStopPreview,
 }: CasesGalleryProps) {
   const { decision } = useLayaDecision();
-  const orderedCases = getOrderedCasesForPersona(decision.choice);
+  const { snapshot } = useStudioCms();
+  const flagshipReel = snapshot.flagshipReel;
+  const orderedCases = orderPublishedCmsCasesForPersona(
+    snapshot.portfolioCases,
+    decision.choice
+  );
   const [copiedCaseId, setCopiedCaseId] = useState<CaseId | null>(null);
   const [highlightedCaseId, setHighlightedCaseId] = useState<CaseId | null>(null);
 
   const activeCaseId = playerSnap.activeCase?.id ?? null;
   const reelProgress = computeCaseCardProgress(
-    FLAGSHIP_STUDIO_REEL.id,
+    flagshipReel.id,
     playerSnap.isPlaying,
     activeCaseId,
     playerSnap.progress,
@@ -766,9 +848,14 @@ export function CasesGallery({
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    const allowedIds = [
+      flagshipReel.id,
+      ...snapshot.portfolioCases.map((c) => c.id),
+    ];
     const sharedId = readSharedCaseIdFromLocation(
       window.location.search,
-      window.location.hash
+      window.location.hash,
+      allowedIds
     );
     if (!sharedId) return;
 
@@ -786,7 +873,7 @@ export function CasesGallery({
       window.clearTimeout(scrollTimer);
       window.clearTimeout(clearHighlight);
     };
-  }, []);
+  }, [flagshipReel.id, snapshot.portfolioCases]);
 
   const handleShareCase = async (item: BrandCasePoster) => {
     if (typeof window === 'undefined') return;
@@ -859,18 +946,22 @@ export function CasesGallery({
           </p>
         </div>
 
-        <StudioCommercialStrip
-          progress={reelProgress}
-          isGlobalPlaying={playerSnap.isPlaying}
-          globalPlaybackMode={playerSnap.playbackMode}
-          isHighlighted={highlightedCaseId === FLAGSHIP_STUDIO_REEL.id}
-          isCopied={copiedCaseId === FLAGSHIP_STUDIO_REEL.id}
-          currentTimeSec={playerSnap.currentTimeSec}
-          onToggleCase={onToggleCase}
-          onStartPreview={onStartPreview}
-          onStopPreview={onStopPreview}
-          onShare={handleShareCase}
-        />
+        {flagshipReel.published !== false && (
+          <StudioCommercialStrip
+            reel={flagshipReel}
+            progress={reelProgress}
+            spectrumBands={playerSnap.spectrumBands}
+            isGlobalPlaying={playerSnap.isPlaying}
+            globalPlaybackMode={playerSnap.playbackMode}
+            isHighlighted={highlightedCaseId === flagshipReel.id}
+            isCopied={copiedCaseId === flagshipReel.id}
+            currentTimeSec={playerSnap.currentTimeSec}
+            onToggleCase={onToggleCase}
+            onStartPreview={onStartPreview}
+            onStopPreview={onStopPreview}
+            onShare={handleShareCase}
+          />
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
           {orderedCases.map((item, index) => (
@@ -885,6 +976,7 @@ export function CasesGallery({
                 playerSnap.progress,
                 playerSnap.playbackMode
               )}
+              spectrumBands={playerSnap.spectrumBands}
               isGlobalPlaying={playerSnap.isPlaying}
               globalPlaybackMode={playerSnap.playbackMode}
               isThisHighlighted={highlightedCaseId === item.id}

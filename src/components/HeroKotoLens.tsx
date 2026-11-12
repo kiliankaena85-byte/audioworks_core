@@ -18,6 +18,7 @@ import {
   contrastAudioEngine,
   ContrastStageSnapshot,
 } from '../audio/contrastAudioEngine';
+import { useSiteTextBlocks } from '../cms/SiteTextBlocksContext';
 import {
   AUDIOWORKS_TOTAL_DURATION_SEC,
   CRASH_TEST_CLUTTER_DURATION_SEC,
@@ -25,10 +26,12 @@ import {
   GREY_RADIO_MARQUEE_BASE,
   HERO_GREY_TRAFFIC_IMAGE,
   HERO_LENS_FRAMES,
-  KOTO_LENS_MANIFESTO_PARAGRAPH,
 } from '../data/audioworksCommercial';
+import { BrandDomainVariant } from '../data/brandKitData';
+import { isSiteTextBlockSubtitleModified } from '../data/siteTextBlocksData';
 import { LAYA_CONTENT_DICTIONARY, VALID_PERSONAS } from '../engine/layaEngine';
 import { useLayaDecision } from '../engine/LayaContext';
+import { BrandLogo } from './BrandLogo';
 
 const LOCAL_FALLBACK_IMAGES: Record<string, string> = {
   traffic: '/src/assets/images/case_auto_mobility_1794399407900.jpg',
@@ -70,8 +73,22 @@ function clampSpotlightPosition(
   };
 }
 
-export function HeroKotoLens() {
+interface HeroKotoLensProps {
+  brandVariant?: BrandDomainVariant;
+  onOpenBrandKit?: () => void;
+}
+
+export function HeroKotoLens({
+  brandVariant = 'audioworks_reg',
+  onOpenBrandKit,
+}: HeroKotoLensProps = {}) {
   const { decision, slot, selectPersonaProfile } = useLayaDecision();
+  const { getBlock } = useSiteTextBlocks();
+  const heroStageBlock = getBlock('hero-stage');
+  const heroManifestoBlock = getBlock('hero-manifesto');
+  const manifestoSubtitle = isSiteTextBlockSubtitleModified(heroManifestoBlock)
+    ? heroManifestoBlock.subtitle ?? slot.kotoManifestoTagline
+    : slot.kotoManifestoTagline;
 
   const [snap, setSnap] = useState<ContrastStageSnapshot>(() =>
     contrastAudioEngine.getSnapshot()
@@ -483,7 +500,7 @@ export function HeroKotoLens() {
                 </div>
               ) : (
                 <p className="hidden sm:block text-xs sm:text-sm font-medium text-white/68">
-                  Обычный рекламный блок · наведите курсор
+                  {heroStageBlock.description}
                 </p>
               )}
             </div>
@@ -546,10 +563,10 @@ export function HeroKotoLens() {
               ) : (
                 <div className="space-y-1.5">
                   <p className="text-xs sm:text-sm font-medium text-white/68">
-                    Краш-тест в реальном рекламном блоке
+                    {heroStageBlock.eyebrow}
                   </p>
                   <h2 className="text-xl sm:text-3xl lg:text-4xl font-bold tracking-tight leading-[1.12] text-white editorial-balance">
-                    Пять роликов подряд сливаются в фон. Выигрывает режиссура паузы.
+                    {heroStageBlock.title}
                   </h2>
                 </div>
               )}
@@ -628,15 +645,23 @@ export function HeroKotoLens() {
       >
         <div className="max-w-7xl mx-auto space-y-10">
           <div className="space-y-6 max-w-5xl">
+            <div className="flex items-center">
+              <BrandLogo
+                variant={brandVariant}
+                size="lg"
+                onOpenBrandKit={onOpenBrandKit}
+              />
+            </div>
+
             <h1 className="text-[clamp(2.25rem,4.2vw,3.75rem)] font-bold tracking-tight leading-[1.06] text-[#111111] dark:text-[#F4F3EF] editorial-balance">
-              Мы AudioWorks.{' '}
+              {heroManifestoBlock.title}{' '}
               <span className="text-[#111111]/44 dark:text-[#F4F3EF]/44">
-                {slot.kotoManifestoTagline}
+                {manifestoSubtitle}
               </span>
             </h1>
 
             <p className="text-lg sm:text-2xl leading-[1.45] tracking-tight text-[#111111]/76 dark:text-[#F4F3EF]/76 max-w-3xl editorial-pretty">
-              {KOTO_LENS_MANIFESTO_PARAGRAPH}
+              {heroManifestoBlock.description}
             </p>
           </div>
 

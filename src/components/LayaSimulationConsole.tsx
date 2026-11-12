@@ -1,5 +1,13 @@
 import { ChangeEvent, useEffect, useRef, useState } from 'react';
-import { Check, Music, RotateCcw, SlidersHorizontal, Upload, X } from 'lucide-react';
+import {
+  Check,
+  Music,
+  Palette,
+  RotateCcw,
+  SlidersHorizontal,
+  Upload,
+  X,
+} from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { casePlayerEngine } from '../audio/casePlayerEngine';
 import {
@@ -12,10 +20,12 @@ import { useLayaDecision } from '../engine/LayaContext';
 
 interface LayaSimulationConsoleProps {
   isCasePlayerVisible?: boolean;
+  onOpenBrandKit?: () => void;
 }
 
 export function LayaSimulationConsole({
   isCasePlayerVisible = false,
+  onOpenBrandKit,
 }: LayaSimulationConsoleProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isScrolling, setIsScrolling] = useState(false);
@@ -120,7 +130,7 @@ export function LayaSimulationConsole({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.97 }}
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-            className="mb-3 w-[calc(100vw-1.75rem)] max-w-sm rounded-3xl bg-[#121216]/96 text-[#F4F3EF] border border-white/14 shadow-2xl p-4 sm:p-5 space-y-4 max-h-[78vh] overflow-y-auto"
+            className="mb-3 w-[calc(100vw-1.75rem)] max-w-sm rounded-3xl bg-[#121216]/96 text-[#F4F3EF] border border-white/14 shadow-2xl p-4 sm:p-5 space-y-4 max-h-[78vh] overflow-y-auto no-scrollbar overscroll-contain"
           >
             {/* Console Header */}
             <div className="flex items-start justify-between gap-3">
@@ -199,6 +209,22 @@ export function LayaSimulationConsole({
                     : 'Подключить 2 WAV дуэли «Зерно и Свет»'}
                 </span>
               </button>
+
+              {/* Brand Kit AudioWorks: скачивание векторного логотипа SVG и прозрачного PNG */}
+              {onOpenBrandKit && (
+                <button
+                  type="button"
+                  data-testid="laya-open-brand-kit-btn"
+                  onClick={() => {
+                    setIsOpen(false);
+                    onOpenBrandKit();
+                  }}
+                  className="w-full inline-flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-white/10 hover:bg-white/16 border border-white/16 text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <Palette className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
+                  <span>Скачать логотип (SVG / PNG)</span>
+                </button>
+              )}
             </div>
 
             {/* 5 Digital Footprint Simulation Traces */}

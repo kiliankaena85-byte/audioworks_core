@@ -7,14 +7,16 @@ import {
   DuelStoreSnapshot,
   DuelTrackKind,
 } from '../audio/duelAudioStore';
+import { useStudioCms } from '../cms/StudioCmsContext';
 import {
   AUDIOWORKS_WAV_URL,
-  DuelSpotSpec,
   formatAudioTime,
-  ZERNO_DUEL_DATA,
 } from '../data/audioworksCommercial';
+import { DuelCmsSpotSpec } from '../data/studioCmsTypes';
 
 export function FifteenSecDuel() {
+  const { snapshot } = useStudioCms();
+  const duelCfg = snapshot.duel;
   const [duelSnap, setDuelSnap] = useState<DuelStoreSnapshot>(() =>
     duelAudioStore.getSnapshot()
   );
@@ -172,14 +174,16 @@ export function FifteenSecDuel() {
     const latestSnap = duelAudioStore.getSnapshot();
     const customMeta =
       side === 'radio' ? latestSnap.radioTrack : latestSnap.audioworksTrack;
+    const cmsSpot = side === 'radio' ? duelCfg.radioSpot : duelCfg.audioworksSpot;
 
-    const srcUrl = customMeta ? customMeta.objectUrl : AUDIOWORKS_WAV_URL;
-    const startOffset = customMeta ? 0 : side === 'radio' ? 0 : 15.5;
+    const srcUrl = customMeta
+      ? customMeta.objectUrl
+      : cmsSpot.audioUrl || AUDIOWORKS_WAV_URL;
+    const startOffset =
+      customMeta || cmsSpot.audioUrl ? 0 : side === 'radio' ? 0 : 15.5;
     const durationLimit = customMeta
       ? customMeta.effectiveDurationSec
-      : side === 'radio'
-        ? ZERNO_DUEL_DATA.radioSpot.durationSec
-        : ZERNO_DUEL_DATA.audioworksSpot.durationSec;
+      : cmsSpot.durationSec;
 
     clipStartOffsetRef.current = startOffset;
     maxDurationRef.current = durationLimit;
@@ -305,7 +309,7 @@ export function FifteenSecDuel() {
     );
   };
 
-  const renderHalfPane = (side: DuelTrackKind, spec: DuelSpotSpec) => {
+  const renderHalfPane = (side: DuelTrackKind, spec: DuelCmsSpotSpec) => {
     const isRadio = side === 'radio';
     const isActive = playingSide === side;
     const attachedMeta = isRadio ? duelSnap.radioTrack : duelSnap.audioworksTrack;
@@ -335,7 +339,7 @@ export function FifteenSecDuel() {
                   : 'text-[#FF4820] font-semibold'
               }
             >
-              {isRadio ? 'Обычный ролик «под радио»' : 'Наш пример · AudioWorks'}
+              {spec.badge || (isRadio ? 'Обычный ролик «под радио»' : 'Наш пример · AudioWorks')}
             </span>
             <span
               className={
@@ -478,19 +482,19 @@ export function FifteenSecDuel() {
       <div className="max-w-7xl mx-auto space-y-10">
         <div className="space-y-3 max-w-3xl">
           <p className="text-sm font-medium text-[#111111]/55 dark:text-[#F4F3EF]/55">
-            Сравнение на одном брифе · {ZERNO_DUEL_DATA.clientName}
+            {duelCfg.sectionEyebrow} · {duelCfg.clientName}
           </p>
           <h2
             id="duel-heading"
             className="text-3xl sm:text-5xl font-bold tracking-tight leading-[1.06] text-[#111111] dark:text-[#F4F3EF] editorial-balance"
           >
-            Один бриф на 15 секунд.{' '}
+            {duelCfg.headingPrimary}{' '}
             <span className="text-[#111111]/42 dark:text-[#F4F3EF]/42">
-              Два разных результата.
+              {duelCfg.headingMuted}
             </span>
           </h2>
           <p className="text-base sm:text-lg text-[#111111]/68 dark:text-[#F4F3EF]/68 editorial-pretty">
-            {ZERNO_DUEL_DATA.briefSummary}
+            {duelCfg.briefSummary}
           </p>
         </div>
 
@@ -543,8 +547,8 @@ export function FifteenSecDuel() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 items-stretch">
-            {renderHalfPane('radio', ZERNO_DUEL_DATA.radioSpot)}
-            {renderHalfPane('audioworks', ZERNO_DUEL_DATA.audioworksSpot)}
+            {renderHalfPane('radio', duelCfg.radioSpot)}
+            {renderHalfPane('audioworks', duelCfg.audioworksSpot)}
           </div>
         </div>
       </div>

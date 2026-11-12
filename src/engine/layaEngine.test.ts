@@ -600,9 +600,294 @@ test('CasesGallery hover preview (3-5s): resolves curated preview windows and pr
 
   // Engine state check in headless/node environment: startPreview -> stopPreview -> clean idle
   assert.equal(casePlayerEngine.getSnapshot().playbackMode, null);
+  assert.equal(casePlayerEngine.getSnapshot().spectrumBands.length, 32);
+  assert.equal(
+    casePlayerEngine.getSnapshot().spectrumBands.every((v) => v === 0),
+    true
+  );
   casePlayerEngine.stop();
   assert.equal(casePlayerEngine.getSnapshot().isPlaying, false);
 });
 
+test('CasesGallery boutique sound wave visualizer: generates 32-band case-specific acoustic profile when active and zeros when idle', async () => {
+  const { CASE_SPECTRUM_BAND_COUNT, computeCaseSpectrumBands } = await import(
+    '../data/casesData'
+  );
 
+  // Idle -> 32 silent bands (0)
+  const idleBands = computeCaseSpectrumBands('dmitrogorsky', 1.2, false);
+  assert.equal(idleBands.length, CASE_SPECTRUM_BAND_COUNT);
+  assert.equal(idleBands.every((v) => v === 0), true);
 
+  // Active -> 32 bands strictly clamped within [0.16, 1]
+  const fmcgAtStart = computeCaseSpectrumBands('dmitrogorsky', 0.35, true);
+  const fmcgLater = computeCaseSpectrumBands('dmitrogorsky', 1.15, true);
+  const estateAtStart = computeCaseSpectrumBands('business-estate', 0.35, true);
+
+  assert.equal(fmcgAtStart.length, 32);
+  assert.equal(
+    fmcgAtStart.every((v) => v >= 0.16 && v <= 1),
+    true
+  );
+
+  // Evolves dynamically over time and differs between case acoustic profiles
+  assert.notDeepEqual(fmcgAtStart, fmcgLater);
+  assert.notDeepEqual(fmcgAtStart, estateAtStart);
+
+  // Supports live Web Audio FFT blending and clamps safely
+  const mockFft = Array.from({ length: 64 }, (_, i) => (i < 24 ? 0.92 : 0.15));
+  const blended = computeCaseSpectrumBands('medical-clinics', 0.8, true, mockFft);
+  assert.equal(blended.length, 32);
+  assert.equal(
+    blended.every((v) => v >= 0.16 && v <= 1),
+    true
+  );
+  assert.equal(blended[4] > blended[28], true);
+});
+
+test('BrandLogo & Brand Kit AudioWorks: generates pure vector SVGs, dynamic oscillogram W wave, and 4-spec asset kit across 3 domain marks', async () => {
+  const {
+    BRAND_DOMAIN_OPTIONS,
+    buildAvatarIconSvgMarkup,
+    buildBrandLogoSvgMarkup,
+    computeMonogramPaths,
+    computeOscillogramWPath,
+    getBrandKitAssetSpecs,
+    getBrandWordmarkGeometry,
+  } = await import('../data/brandKitData');
+
+  assert.deepEqual(
+    BRAND_DOMAIN_OPTIONS.map((o) => o.label),
+    ['AudioWorks®', 'AudioWorks.pro', 'AirWorks®']
+  );
+
+  // Oscillogram W smoothly changes amplitude on hover vs idle
+  const geomDefault = getBrandWordmarkGeometry('audioworks_reg');
+  const idleWave = computeOscillogramWPath(geomDefault.waveStartX, 0, 0);
+  const hoverWaveA = computeOscillogramWPath(geomDefault.waveStartX, 1, 0.7);
+  const hoverWaveB = computeOscillogramWPath(geomDefault.waveStartX, 1, 2.1);
+  assert.notEqual(idleWave, hoverWaveA);
+  assert.notEqual(hoverWaveA, hoverWaveB);
+
+  // Monogram 3 asymmetric acoustic lines also respond to hover energy
+  const idleMono = computeMonogramPaths(0, 0);
+  const hoverMono = computeMonogramPaths(1, 0.9);
+  assert.equal(idleMono.length, 3);
+  assert.notDeepEqual(idleMono, hoverMono);
+
+  // Canonical file names for default AudioWorks®
+  const defaultSpecs = getBrandKitAssetSpecs('audioworks_reg');
+  assert.deepEqual(
+    defaultSpecs.map((s) => [s.svgFileName, s.pngFileName, s.pngWidth, s.pngHeight]),
+    [
+      ['audioworks-logo-dark.svg', 'audioworks-logo-dark.png', 2400, 800],
+      ['audioworks-logo-light.svg', 'audioworks-logo-light.png', 2400, 800],
+      ['audioworks-avatar-icon.svg', 'audioworks-avatar-icon.png', 1000, 1000],
+    ]
+  );
+
+  // Standalone exported SVGs contain explicit dimensions, #FF4820 accent, and no currentColor leaks
+  for (const option of BRAND_DOMAIN_OPTIONS) {
+    const darkSvg = buildBrandLogoSvgMarkup({
+      variant: option.id,
+      colorTheme: 'dark',
+      exportArtboard2400x800: true,
+    });
+    const lightSvg = buildBrandLogoSvgMarkup({
+      variant: option.id,
+      colorTheme: 'light',
+      exportArtboard2400x800: true,
+    });
+    const avatarSvg = buildAvatarIconSvgMarkup(option.id);
+
+    assert.ok(darkSvg.includes('width="2400" height="800"'));
+    assert.ok(darkSvg.includes('#111111'));
+    assert.ok(darkSvg.includes('#FF4820'));
+    assert.equal(darkSvg.includes('currentColor'), false);
+
+    assert.ok(lightSvg.includes('width="2400" height="800"'));
+    assert.ok(lightSvg.includes('#FFFFFF'));
+    assert.ok(lightSvg.includes('#FF4820'));
+    assert.equal(lightSvg.includes('currentColor'), false);
+
+    assert.ok(avatarSvg.includes('width="1000" height="1000"'));
+    assert.ok(avatarSvg.includes('#FF4820'));
+    assert.equal(avatarSvg.includes('currentColor'), false);
+  }
+});
+
+test('Studio CMS & CNS Neuroscience Approach: validates snapshots, clamps 3-5s preview windows, sorts published cases, and enforces editorial guardrails', async () => {
+  const { APPROACH_LEAD_PARAGRAPH, APPROACH_NEURO_STUDIES, readSharedCaseIdFromLocation } =
+    await import('../data/casesData');
+  const {
+    auditEditorialCopyGuardrails,
+    clampPreviewTiming,
+    createDefaultStudioCmsSnapshot,
+    formatPriceRub,
+    orderPublishedCmsCasesForPersona,
+    resolveAppRoute,
+    validateAndNormalizeCmsSnapshot,
+  } = await import('../data/studioCmsTypes');
+
+  // Verify CNS / Selective Attention studies (Neuro-Insight +22% & System1 2x)
+  assert.equal(APPROACH_NEURO_STUDIES.length, 2);
+  assert.equal(APPROACH_NEURO_STUDIES[0].metricValue, '+22%');
+  assert.ok(APPROACH_NEURO_STUDIES[0].sourceLabel.includes('Neuro-Insight'));
+  assert.equal(APPROACH_NEURO_STUDIES[1].metricValue, '2×');
+  assert.ok(APPROACH_NEURO_STUDIES[1].sourceLabel.includes('System1'));
+  assert.ok(APPROACH_LEAD_PARAGRAPH.length > 60);
+
+  // Route resolver
+  assert.equal(resolveAppRoute('/'), 'public');
+  assert.equal(resolveAppRoute('/?persona=fmcg'), 'public');
+  assert.equal(resolveAppRoute('/admin'), 'admin');
+  assert.equal(resolveAppRoute('/admin/'), 'admin');
+
+  // Price formatting
+  assert.equal(formatPriceRub(25000), '25 000 ₽');
+  assert.equal(formatPriceRub(145000), '145 000 ₽');
+
+  // Preview timing clamping strictly bounds hover preview into [3..5]s inside clip bounds
+  const clampedShort = clampPreviewTiming({
+    durationSec: 20,
+    clipStartSec: 2,
+    clipEndSec: 17,
+    previewStartSec: 16,
+    previewDurationSec: 1.2,
+  });
+  assert.equal(clampedShort.previewDurationSec, 3);
+  assert.equal(clampedShort.previewStartSec, 14);
+  assert.equal(clampedShort.durationSec, 15);
+
+  const clampedLong = clampPreviewTiming({
+    durationSec: 30,
+    clipStartSec: 0,
+    clipEndSec: 30,
+    previewStartSec: 4.5,
+    previewDurationSec: 9.5,
+  });
+  assert.equal(clampedLong.previewDurationSec, 5);
+  assert.equal(clampedLong.previewStartSec, 4.5);
+
+  // Default snapshot passes validation with zero banned editorial terms
+  const defaultSnap = createDefaultStudioCmsSnapshot();
+  assert.deepEqual(auditEditorialCopyGuardrails(defaultSnap), []);
+
+  const validRes = validateAndNormalizeCmsSnapshot(defaultSnap);
+  assert.equal(validRes.ok, true);
+  if (validRes.ok) {
+    assert.deepEqual(validRes.editorialWarnings, []);
+    assert.equal(validRes.data.portfolioCases.length, 3);
+  }
+
+  // Rejects snapshots where every portfolio case is unpublished
+  const allUnpublished = {
+    ...defaultSnap,
+    portfolioCases: defaultSnap.portfolioCases.map((c) => ({
+      ...c,
+      published: false,
+    })),
+  };
+  const rejectedRes = validateAndNormalizeCmsSnapshot(allUnpublished);
+  assert.equal(rejectedRes.ok, false);
+
+  // Custom CMS case IDs work with share deep-links and persona sorting
+  const customCases = [
+    ...defaultSnap.portfolioCases,
+    {
+      ...defaultSnap.portfolioCases[0],
+      id: 'custom-retail-launch',
+      client: 'Федеральная сеть пекарен',
+      published: true,
+      sortOrder: 4,
+      personaFocus: 'real_estate' as const,
+    },
+    {
+      ...defaultSnap.portfolioCases[1],
+      id: 'hidden-draft',
+      published: false,
+      sortOrder: 5,
+      personaFocus: 'fmcg' as const,
+    },
+  ];
+  const estateOrdered = orderPublishedCmsCasesForPersona(customCases, 'real_estate');
+  assert.equal(estateOrdered.some((c) => c.id === 'hidden-draft'), false);
+  assert.equal(estateOrdered[0].personaFocus, 'real_estate');
+  assert.equal(
+    readSharedCaseIdFromLocation(
+      '?case=custom-retail-launch',
+      '',
+      customCases.map((c) => c.id)
+    ),
+    'custom-retail-launch'
+  );
+});
+
+test('AdminWorkspace Real-Time Site Text Blocks: provides static content array for Hero, Approach, and Pricing and updates session memory instantaneously', async () => {
+  const {
+    STATIC_SITE_TEXT_BLOCKS,
+    filterSiteTextBlocks,
+    isSiteTextBlockModified,
+    isSiteTextBlockSubtitleModified,
+  } = await import('../data/siteTextBlocksData');
+  const { siteTextBlocksStore } = await import('../cms/siteTextBlocksStore');
+  const { BANNED_EDITORIAL_TERMS } = await import('../data/studioCmsTypes');
+
+  siteTextBlocksStore.resetAllBlocks();
+
+  // Verify static array covers Hero (2), Approach (4), and Pricing (4)
+  assert.equal(STATIC_SITE_TEXT_BLOCKS.length, 10);
+  assert.equal(filterSiteTextBlocks(STATIC_SITE_TEXT_BLOCKS, 'hero').length, 2);
+  assert.equal(filterSiteTextBlocks(STATIC_SITE_TEXT_BLOCKS, 'approach').length, 4);
+  assert.equal(filterSiteTextBlocks(STATIC_SITE_TEXT_BLOCKS, 'pricing').length, 4);
+  assert.equal(
+    filterSiteTextBlocks(STATIC_SITE_TEXT_BLOCKS, 'all', 'фиксированная смета').length,
+    1
+  );
+
+  // Zero banned editorial terms across the entire static content array
+  const dump = JSON.stringify(STATIC_SITE_TEXT_BLOCKS).toLowerCase();
+  for (const term of BANNED_EDITORIAL_TERMS) {
+    assert.equal(dump.includes(term), false, `Found banned term in static blocks: ${term}`);
+  }
+
+  // Real-time update in session memory across Hero, Approach, and Pricing
+  siteTextBlocksStore.updateBlock('hero-manifesto', {
+    title: 'Студия AudioWorks.',
+    subtitle: 'Живой звук в памяти сессии.',
+    description: 'Обновлённое описание первого экрана.',
+  });
+  siteTextBlocksStore.updateBlock('approach-lead', {
+    title: 'Новый заголовок подхода студии',
+    description: 'Новое описание избирательного внимания слушателя.',
+  });
+  siteTextBlocksStore.updateBlock('pricing-tier-turnkey', {
+    title: 'Флагманский продакшн под ключ',
+  });
+
+  const snapAfterEdit = siteTextBlocksStore.getState();
+  assert.equal(snapAfterEdit.modifiedCount, 3);
+  assert.equal(snapAfterEdit.lastEditedBlockId, 'pricing-tier-turnkey');
+
+  const editedHero = siteTextBlocksStore.getBlock('hero-manifesto');
+  assert.equal(isSiteTextBlockModified(editedHero), true);
+  assert.equal(isSiteTextBlockSubtitleModified(editedHero), true);
+  assert.equal(editedHero.title, 'Студия AudioWorks.');
+  assert.equal(editedHero.subtitle, 'Живой звук в памяти сессии.');
+
+  // Per-block reset restores only that block
+  siteTextBlocksStore.resetBlock('approach-lead');
+  assert.equal(siteTextBlocksStore.getState().modifiedCount, 2);
+  assert.equal(
+    isSiteTextBlockModified(siteTextBlocksStore.getBlock('approach-lead')),
+    false
+  );
+
+  // Full session reset restores baseline
+  siteTextBlocksStore.resetAllBlocks();
+  assert.equal(siteTextBlocksStore.getState().modifiedCount, 0);
+  assert.equal(
+    siteTextBlocksStore.getBlock('hero-manifesto').title,
+    'Мы AudioWorks.'
+  );
+});

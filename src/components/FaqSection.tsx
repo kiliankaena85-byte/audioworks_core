@@ -1,12 +1,23 @@
 import { Plus } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useState } from 'react';
-import { EDITORIAL_FAQ_ITEMS, toggleFaqItem } from '../data/faqData';
+import { useEffect, useState } from 'react';
+import { useStudioCms } from '../cms/StudioCmsContext';
+import { toggleFaqItem } from '../data/faqData';
 
 export function FaqSection() {
+  const { snapshot } = useStudioCms();
+  const siteCopy = snapshot.siteCopy;
+  const faqItems = siteCopy.faqItems;
+
   const [openId, setOpenId] = useState<string | null>(
-    EDITORIAL_FAQ_ITEMS[0]?.id ?? null
+    faqItems[0]?.id ?? null
   );
+
+  useEffect(() => {
+    if (openId && !faqItems.some((item) => item.id === openId)) {
+      setOpenId(faqItems[0]?.id ?? null);
+    }
+  }, [faqItems, openId]);
 
   return (
     <section
@@ -19,22 +30,22 @@ export function FaqSection() {
           {/* Left Editorial Masthead */}
           <div className="lg:col-span-4 lg:sticky lg:top-28">
             <p className="text-sm font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58 mb-4 sm:mb-5">
-              Частые вопросы
+              {siteCopy.faqEyebrow}
             </p>
             <h2
               id="faq-heading"
               className="text-3xl sm:text-5xl lg:text-[3.25rem] font-bold tracking-tight leading-[1.06] text-[#111111] dark:text-[#F4F3EF] editorial-balance mb-4 sm:mb-5"
             >
-              Отвечаем до того, как вы спросите.
+              {siteCopy.faqHeading}
             </h2>
             <p className="text-base sm:text-lg leading-relaxed text-[#111111]/66 dark:text-[#F4F3EF]/66 editorial-pretty">
-              Без сложных терминов и мелкого шрифта — прозрачно про бюджет, эфирную модерацию и сроки.
+              {siteCopy.faqSubheading}
             </p>
           </div>
 
-          {/* Right Magazine Accordion (4 Editorial Questions) */}
+          {/* Right Magazine Accordion */}
           <div className="lg:col-span-8 border-b border-[#111111]/12 dark:border-[#F4F3EF]/14">
-            {EDITORIAL_FAQ_ITEMS.map((item) => {
+            {faqItems.map((item) => {
               const isOpen = openId === item.id;
               const buttonId = `faq-trigger-${item.id}`;
               const panelId = `faq-panel-${item.id}`;

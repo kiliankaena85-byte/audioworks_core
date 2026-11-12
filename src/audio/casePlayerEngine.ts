@@ -2,8 +2,10 @@ import { AUDIOWORKS_WAV_URL } from '../data/audioworksCommercial';
 import {
   BRAND_CASES,
   BrandCasePoster,
+  CASE_SPECTRUM_BAND_COUNT,
   CaseId,
   CasePlaybackMode,
+  computeCaseSpectrumBands,
   getCasePreviewWindow,
 } from '../data/casesData';
 import { contrastAudioEngine } from './contrastAudioEngine';
@@ -17,11 +19,17 @@ export interface CasePlayerSnapshot {
   progress: number; // 0..1
   /** 5 живых нормализованных полос (0.18..1) для органической звуковой анимации постера и капсулы */
   waveBars: [number, number, number, number, number];
+  /** 32-полосный акустический профиль звуковой волны карточки кейса (0..1) */
+  spectrumBands: number[];
 }
 
 type CasePlayerListener = (snap: CasePlayerSnapshot) => void;
 
 const IDLE_BARS: [number, number, number, number, number] = [0.22, 0.35, 0.28, 0.4, 0.24];
+const IDLE_SPECTRUM_BANDS: number[] = Array.from(
+  { length: CASE_SPECTRUM_BAND_COUNT },
+  () => 0
+);
 
 class CasePlayerEngine {
   private ctx: AudioContext | null = null;
@@ -98,6 +106,7 @@ class CasePlayerEngine {
         durationSec: this.durationSec,
         progress: 0,
         waveBars: IDLE_BARS,
+        spectrumBands: IDLE_SPECTRUM_BANDS,
       };
     }
 
@@ -119,12 +128,25 @@ class CasePlayerEngine {
       durationSec: this.durationSec,
       progress,
       waveBars: this.sampleWaveBars(clampedElapsed),
+      spectrumBands: this.sampleSpectrumBands(this.activeCase.id, clampedElapsed),
     };
   }
 
   private emit(): void {
     const snap = this.getSnapshot();
     this.listeners.forEach((fn) => fn(snap));
+  }
+
+  private sampleSpectrumBands(caseId: CaseId, elapsedSec: number): number[] {
+    if (!this.htmlAudio && this.analyser && this.freqData) {
+      this.analyser.getByteFrequencyData(this.freqData);
+      const fftNormalized = Array.from(
+        { length: this.freqData.length },
+        (_, i) => (this.freqData?.[i] ?? 0) / 255
+      );
+      return computeCaseSpectrumBands(caseId, elapsedSec, true, fftNormalized);
+    }
+    return computeCaseSpectrumBands(caseId, elapsedSec, true);
   }
 
   private sampleWaveBars(elapsedSec: number): [number, number, number, number, number] {
@@ -160,7 +182,7 @@ class CasePlayerEngine {
       this.ctx = new AudioCtx();
       this.masterGain = this.ctx.createGain();
       this.analyser = this.ctx.createAnalyser();
-      this.analyser.fftSize = 64;
+      this.analyser.fftSize = 128;
       this.analyser.smoothingTimeConstant = 0.78;
       this.freqData = new Uint8Array(new ArrayBuffer(this.analyser.frequencyBinCount));
 
@@ -456,7 +478,7 @@ class CasePlayerEngine {
         return;
       }
       this.emit();
-    }, 100);
+    }, 65);
   }
 
   public playNextCase(orderedList: BrandCasePoster[] = BRAND_CASES): void {

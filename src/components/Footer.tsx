@@ -1,5 +1,7 @@
 import { Check, Copy } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { BrandDomainVariant } from '../data/brandKitData';
+import { BrandLogo } from './BrandLogo';
 
 const STUDIO_EMAIL = 'hello@audioworks.ru';
 
@@ -27,7 +29,17 @@ function copyTextFallback(text: string): boolean {
   }
 }
 
-export function Footer() {
+interface FooterProps {
+  brandVariant?: BrandDomainVariant;
+  onOpenBrandKit?: () => void;
+  onOpenAdmin?: () => void;
+}
+
+export function Footer({
+  brandVariant = 'audioworks_reg',
+  onOpenBrandKit,
+  onOpenAdmin,
+}: FooterProps = {}) {
   const [studioTime, setStudioTime] = useState<string>(() => readStudioTimeHHMM());
   const [isEmailCopied, setIsEmailCopied] = useState<boolean>(false);
 
@@ -124,18 +136,45 @@ export function Footer() {
           </div>
         </div>
 
-        {/* Нижняя строка копирайта */}
-        <div className="pt-8 border-t border-[#111111]/10 dark:border-[#F4F3EF]/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-sm text-[#111111]/62 dark:text-[#F4F3EF]/62">
-          <p className="font-medium text-[#111111] dark:text-[#F4F3EF]">
-            AudioWorks<sup className="text-[10px] font-semibold ml-0.5 opacity-75">®</sup> — Аудиореклама, которая работает
-          </p>
+        {/* Нижняя строка копирайта с векторным логотипом студии */}
+        <div className="pt-8 border-t border-[#111111]/10 dark:border-[#F4F3EF]/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-sm text-[#111111]/62 dark:text-[#F4F3EF]/62">
+          <div className="flex flex-wrap items-center gap-3">
+            <BrandLogo
+              variant={brandVariant}
+              size="sm"
+              onOpenBrandKit={onOpenBrandKit}
+            />
+            <span aria-hidden="true" className="opacity-35">
+              —
+            </span>
+            <span className="font-medium text-[#111111]/78 dark:text-[#F4F3EF]/78">
+              Аудиореклама, которая работает
+            </span>
+          </div>
 
-          <a
-            href={`mailto:${STUDIO_EMAIL}`}
-            className="min-h-[44px] inline-flex items-center hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors"
-          >
-            audioworks.ru
-          </a>
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            <a
+              href="/admin"
+              onClick={(e) => {
+                if (onOpenAdmin) {
+                  e.preventDefault();
+                  onOpenAdmin();
+                }
+              }}
+              className="min-h-[44px] inline-flex items-center text-[#111111]/48 dark:text-[#F4F3EF]/48 hover:text-[#111111] dark:hover:text-[#F4F3EF] transition-colors whitespace-nowrap"
+            >
+              Кабинет студии
+            </a>
+            <span aria-hidden="true" className="opacity-25">
+              ·
+            </span>
+            <a
+              href={`mailto:${STUDIO_EMAIL}`}
+              className="min-h-[44px] inline-flex items-center hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors whitespace-nowrap"
+            >
+              audioworks.ru
+            </a>
+          </div>
         </div>
       </div>
     </footer>
