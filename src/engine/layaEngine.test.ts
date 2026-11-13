@@ -1201,6 +1201,7 @@ test('Wave 1 Media-Buyer Rules: Effective Frequency concentration (100-250k), Mo
       sampleTimeSlots: ['13:10', '14:10', '15:10'],
       spotsIncluded: 3,
       maxDuration: 15 as const,
+      pricePerSecond: 844,
       officialPrice: 65_000,
       hotPrice: 38_000,
       reachOTS: 190_000,
@@ -1311,6 +1312,7 @@ test('RadioInventoryAdmin Smart Parser & Store: parses raw Telegram dump and CSV
     SAMPLE_RADIO_SALES_DUMP,
     parseRawRadioSalesDump,
     radioInventoryStore,
+    resolveSlotHotPrice,
     validateMediaHoldReservation,
   } = await import('../data/radioInventory');
 
@@ -1329,7 +1331,7 @@ test('RadioInventoryAdmin Smart Parser & Store: parses raw Telegram dump and CSV
   assert.equal(parsed15.slots[0].maxDuration, 30);
   assert.deepEqual(parsed15.slots[0].weekdays, [1, 2, 3, 4, 5]);
   assert.deepEqual(parsed15.slots[1].weekdays, [3, 4, 5, 6, 7]);
-  assert.equal(parsed25.slots[0].hotPrice > parsed15.slots[0].hotPrice, true);
+  assert.equal(resolveSlotHotPrice(parsed25.slots[0]) > resolveSlotHotPrice(parsed15.slots[0]), true);
 
   // 2. Parse semicolon CSV line
   const csvParsed = parseRawRadioSalesDump(
@@ -1338,7 +1340,7 @@ test('RadioInventoryAdmin Smart Parser & Store: parses raw Telegram dump and CSV
   );
   assert.equal(csvParsed.slots.length, 1);
   assert.equal(csvParsed.slots[0].station, 'Новое Радио');
-  assert.equal(csvParsed.slots[0].hotPrice, 102_000);
+  assert.equal(resolveSlotHotPrice(csvParsed.slots[0]), 102_000);
   assert.equal(csvParsed.slots[0].maxDuration, 15);
   assert.deepEqual(csvParsed.slots[0].weekdays, [1, 2, 3, 4, 5]);
 

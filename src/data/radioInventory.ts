@@ -65,6 +65,8 @@ export interface RadioInventorySlot {
   sampleTimeSlots: string[];
   spotsIncluded: number;
   maxDuration: 15 | 30;
+  /** Посекундная стоимость слота (₽ за 1 секунду 1 выхода) вместо фиксированной цены за слот */
+  pricePerSecond: number;
   /** Минимально допустимый хронометраж ролика для слота (сек, по умолчанию 5) */
   minDurationSec?: number;
   /** Максимальный допустимый точный хронометраж ролика для слота (сек, например 20, 30, 45, 60) */
@@ -81,8 +83,10 @@ export interface RadioInventorySlot {
   fmworksMarginPercent?: number;
   /** Структура данных посекундного ценообразования квоты с методом пересчёта `calculateCost` */
   secondBasedPricing?: SecondBasedPricing;
-  officialPrice: number;
-  hotPrice: number;
+  /** Расчётная справочная стоимость пакета по официальному прайсу (₽, вычисляется из посекундной ставки) */
+  officialPrice?: number;
+  /** Расчётная горящая стоимость пакета (₽, вычисляется из `pricePerSecond`) */
+  hotPrice?: number;
   reachOTS: number;
   deadlineHours: number;
   isHidden?: boolean;
@@ -132,9 +136,66 @@ export const MEDIA_NICHE_OPTIONS: readonly MediaNicheOption[] = [
 export const AIR_BONUS_THRESHOLD_RUB = 400_000;
 export const EXPRESS_15S_PRODUCTION_RUB = 15_000;
 export const TURNKEY_30S_PRODUCTION_RUB = 25_000;
-export const MIN_MEDIA_BUDGET_RUB = 100_000;
+/** Минимальный пороговый бюджет для тестового запуска радиокампании (40 000 ₽) */
+export const MIN_TEST_LAUNCH_BUDGET_RUB = 40_000;
+export const MIN_MEDIA_BUDGET_RUB = MIN_TEST_LAUNCH_BUDGET_RUB;
 export const MAX_MEDIA_BUDGET_RUB = 1_500_000;
 export const DEFAULT_MEDIA_BUDGET_RUB = 300_000;
+
+export interface TestLaunchBudgetValidationResult {
+  valid: boolean;
+  requestedBudgetRub: number;
+  normalizedBudgetRub: number;
+  clampedBudgetRub: number;
+  minRequiredBudgetRub: number;
+  deficitRub: number;
+  /** Находится ли бюджет в тестовом диапазоне запуска (40 000 – 99 999 ₽) */
+  isTestLaunchTier: boolean;
+  errorRu?: string;
+  error?: string;
+}
+
+/**
+ * Проверяет соблюдение минимального бюджета 40 000 ₽ для тестового запуска радиоэфира.
+ */
+export function validateMinTestLaunchBudget(
+  budgetRub: number,
+  minBudgetRub: number = MIN_TEST_LAUNCH_BUDGET_RUB
+): TestLaunchBudgetValidationResult {
+  const safeMin = Math.max(1, Math.round(minBudgetRub));
+  const rawRounded = Number.isFinite(budgetRub) ? Math.round(budgetRub) : 0;
+
+  if (!Number.isFinite(budgetRub) || rawRounded < safeMin) {
+    const deficitRub = Math.max(0, safeMin - Math.max(0, rawRounded));
+    const message = `Минимальный бюджет для тестового запуска — ${safeMin
+      .toString()
+      .replace(/\B(?=(\d{3})+(?!\d))/g, '\u00A0')} ₽ (не хватает ${deficitRub
+      .toString()
+      .replace(/\B(?=(\d{3})+(?!\d))/g, '\u00A0')} ₽). На меньшей сумме эфир не наберёт пороговую частоту касаний.`;
+    return {
+      valid: false,
+      requestedBudgetRub: rawRounded,
+      normalizedBudgetRub: safeMin,
+      clampedBudgetRub: safeMin,
+      minRequiredBudgetRub: safeMin,
+      deficitRub,
+      isTestLaunchTier: false,
+      errorRu: message,
+      error: message,
+    };
+  }
+
+  const normalizedBudgetRub = Math.min(MAX_MEDIA_BUDGET_RUB, rawRounded);
+  return {
+    valid: true,
+    requestedBudgetRub: rawRounded,
+    normalizedBudgetRub,
+    clampedBudgetRub: normalizedBudgetRub,
+    minRequiredBudgetRub: safeMin,
+    deficitRub: 0,
+    isTestLaunchTier: normalizedBudgetRub >= safeMin && normalizedBudgetRub < 100_000,
+  };
+}
 
 /** Пороги тайм-гейта модерации и эффективной частоты */
 export const PRODUCTION_MODERATION_GATE_HOURS = 24;
@@ -168,6 +229,7 @@ const RAW_DEFAULT_RADIO_INVENTORY_SLOTS: readonly RadioInventorySlot[] = [
     sampleTimeSlots: ['08:15', '08:45', '09:15', '10:05'],
     spotsIncluded: 16,
     maxDuration: 30,
+    pricePerSecond: 678,
     minDurationSec: 5,
     maxSpotSeconds: 60,
     durationMultiplicitySec: 1,
@@ -195,6 +257,7 @@ const RAW_DEFAULT_RADIO_INVENTORY_SLOTS: readonly RadioInventorySlot[] = [
     sampleTimeSlots: ['17:50', '18:40', '19:20', '20:05'],
     spotsIncluded: 15,
     maxDuration: 30,
+    pricePerSecond: 540,
     minDurationSec: 5,
     maxSpotSeconds: 60,
     durationMultiplicitySec: 1,
@@ -222,6 +285,7 @@ const RAW_DEFAULT_RADIO_INVENTORY_SLOTS: readonly RadioInventorySlot[] = [
     sampleTimeSlots: ['08:20', '09:05', '09:40', '10:15'],
     spotsIncluded: 20,
     maxDuration: 15,
+    pricePerSecond: 558,
     minDurationSec: 5,
     maxSpotSeconds: 20,
     durationMultiplicitySec: 1,
@@ -249,6 +313,7 @@ const RAW_DEFAULT_RADIO_INVENTORY_SLOTS: readonly RadioInventorySlot[] = [
     sampleTimeSlots: ['12:35', '13:45', '14:20', '15:40'],
     spotsIncluded: 18,
     maxDuration: 30,
+    pricePerSecond: 420,
     minDurationSec: 5,
     maxSpotSeconds: 60,
     durationMultiplicitySec: 1,
@@ -276,6 +341,7 @@ const RAW_DEFAULT_RADIO_INVENTORY_SLOTS: readonly RadioInventorySlot[] = [
     sampleTimeSlots: ['17:45', '18:35', '19:25', '20:10'],
     spotsIncluded: 16,
     maxDuration: 15,
+    pricePerSecond: 438,
     minDurationSec: 5,
     maxSpotSeconds: 45,
     durationMultiplicitySec: 1,
@@ -303,6 +369,7 @@ const RAW_DEFAULT_RADIO_INVENTORY_SLOTS: readonly RadioInventorySlot[] = [
     sampleTimeSlots: ['08:10', '08:50', '09:30', '10:10'],
     spotsIncluded: 14,
     maxDuration: 30,
+    pricePerSecond: 456,
     minDurationSec: 5,
     maxSpotSeconds: 60,
     durationMultiplicitySec: 1,
@@ -330,6 +397,7 @@ const RAW_DEFAULT_RADIO_INVENTORY_SLOTS: readonly RadioInventorySlot[] = [
     sampleTimeSlots: ['08:30', '12:30', '15:30', '18:30'],
     spotsIncluded: 16,
     maxDuration: 15,
+    pricePerSecond: 294,
     minDurationSec: 5,
     maxSpotSeconds: 30,
     durationMultiplicitySec: 5,
@@ -357,6 +425,7 @@ const RAW_DEFAULT_RADIO_INVENTORY_SLOTS: readonly RadioInventorySlot[] = [
     sampleTimeSlots: ['07:55', '08:40', '09:25', '10:05'],
     spotsIncluded: 14,
     maxDuration: 30,
+    pricePerSecond: 330,
     minDurationSec: 5,
     maxSpotSeconds: 60,
     durationMultiplicitySec: 1,
@@ -384,6 +453,7 @@ const RAW_DEFAULT_RADIO_INVENTORY_SLOTS: readonly RadioInventorySlot[] = [
     sampleTimeSlots: ['17:55', '18:25', '19:15', '19:55'],
     spotsIncluded: 14,
     maxDuration: 30,
+    pricePerSecond: 414,
     minDurationSec: 5,
     maxSpotSeconds: 60,
     durationMultiplicitySec: 1,
@@ -411,6 +481,7 @@ const RAW_DEFAULT_RADIO_INVENTORY_SLOTS: readonly RadioInventorySlot[] = [
     sampleTimeSlots: ['08:20', '09:15', '18:40'],
     spotsIncluded: 15,
     maxDuration: 30,
+    pricePerSecond: 345.6,
     minDurationSec: 5,
     maxSpotSeconds: 30,
     durationMultiplicitySec: 5,
@@ -438,6 +509,7 @@ const RAW_DEFAULT_RADIO_INVENTORY_SLOTS: readonly RadioInventorySlot[] = [
     sampleTimeSlots: ['08:15', '09:10', '10:05'],
     spotsIncluded: 18,
     maxDuration: 15,
+    pricePerSecond: 393.6,
     minDurationSec: 5,
     maxSpotSeconds: 20,
     durationMultiplicitySec: 1,
@@ -465,6 +537,7 @@ const RAW_DEFAULT_RADIO_INVENTORY_SLOTS: readonly RadioInventorySlot[] = [
     sampleTimeSlots: ['08:25', '09:25', '10:25'],
     spotsIncluded: 16,
     maxDuration: 30,
+    pricePerSecond: 345.6,
     minDurationSec: 5,
     maxSpotSeconds: 60,
     durationMultiplicitySec: 1,
@@ -1265,13 +1338,94 @@ export function calculateDynamicAirPrice(
 }
 
 /**
- * Извлекает согласованные посекундные ставки (`нетто станции`, `горящая ставка клиента`, `официальный прайс`)
+ * Вычисляет горящую стоимость пакета слота (₽) на основе `pricePerSecond`
+ * (или возвращает явно зафиксированный `hotPrice`, если хронометраж не переопределён).
+ */
+export function resolveSlotHotPrice(
+  slot: Partial<Pick<RadioInventorySlot, 'pricePerSecond' | 'spotsIncluded' | 'maxDuration' | 'hotPrice'>>,
+  durationSecondsOverride?: number
+): number {
+  const spots = Math.max(1, slot.spotsIncluded ?? 1);
+  const refSec =
+    durationSecondsOverride !== undefined && durationSecondsOverride > 0
+      ? Math.ceil(durationSecondsOverride)
+      : slot.maxDuration === 15
+        ? 15
+        : 20;
+
+  if (
+    durationSecondsOverride === undefined &&
+    typeof slot.hotPrice === 'number' &&
+    slot.hotPrice > 0
+  ) {
+    return Math.round(slot.hotPrice);
+  }
+
+  if (typeof slot.pricePerSecond === 'number' && slot.pricePerSecond > 0) {
+    return Math.round(slot.pricePerSecond * refSec * spots);
+  }
+
+  return typeof slot.hotPrice === 'number' && slot.hotPrice > 0
+    ? Math.round(slot.hotPrice)
+    : 0;
+}
+
+/**
+ * Вычисляет официальную прайсовую стоимость пакета слота (₽) на основе посекундной ставки.
+ */
+export function resolveSlotOfficialPrice(
+  slot: Partial<
+    Pick<
+      RadioInventorySlot,
+      | 'pricePerSecond'
+      | 'officialRatePerSec'
+      | 'spotsIncluded'
+      | 'maxDuration'
+      | 'officialPrice'
+      | 'hotPrice'
+    >
+  >,
+  durationSecondsOverride?: number
+): number {
+  const spots = Math.max(1, slot.spotsIncluded ?? 1);
+  const refSec =
+    durationSecondsOverride !== undefined && durationSecondsOverride > 0
+      ? Math.ceil(durationSecondsOverride)
+      : slot.maxDuration === 15
+        ? 15
+        : 20;
+
+  if (
+    durationSecondsOverride === undefined &&
+    typeof slot.officialPrice === 'number' &&
+    slot.officialPrice > 0
+  ) {
+    return Math.round(slot.officialPrice);
+  }
+
+  const hotTotal = resolveSlotHotPrice(slot, durationSecondsOverride);
+  if (typeof slot.officialRatePerSec === 'number' && slot.officialRatePerSec > 0) {
+    return Math.max(hotTotal, Math.round(slot.officialRatePerSec * refSec * spots));
+  }
+
+  if (typeof slot.pricePerSecond === 'number' && slot.pricePerSecond > 0) {
+    return Math.max(hotTotal, Math.round(slot.pricePerSecond * 1.58 * refSec * spots));
+  }
+
+  return typeof slot.officialPrice === 'number' && slot.officialPrice > 0
+    ? Math.round(slot.officialPrice)
+    : Math.round(hotTotal * 1.58);
+}
+
+/**
+ * Извлекает согласованные посекундные ставки (`pricePerSecond`, `нетто станции`, `горящая ставка клиента`, `официальный прайс`)
  * из любого слота `RadioInventorySlot` (включая импортированные и ручные слоты из админ-панели).
  */
 export function resolveSlotPerSecondRates(
   slot: RadioInventorySlot,
   fmworksMarginOverride?: number
 ): {
+  pricePerSecondRub: number;
   stationNetRatePerSecRub: number;
   clientHotRatePerSecRub: number;
   officialRatePerSecRub: number;
@@ -1286,25 +1440,45 @@ export function resolveSlotPerSecondRates(
       ? normalizeFmworksMargin(fmworksMarginOverride).marginPercent
       : baseSlotMargin;
 
-  const stationNetRatePerSecRub =
-    typeof slot.stationNetRatePerSec === 'number' && slot.stationNetRatePerSec > 0
-      ? slot.stationNetRatePerSec
-      : Math.round(
-          (slot.hotPrice / (1 + baseSlotMargin / 100) / (spots * referenceDurationSec)) * 100
-        ) / 100;
+  const hasExplicitPricePerSecond =
+    typeof slot.pricePerSecond === 'number' && slot.pricePerSecond > 0;
+  const hasExplicitStationNet =
+    typeof slot.stationNetRatePerSec === 'number' && slot.stationNetRatePerSec > 0;
+
+  let stationNetRatePerSecRub: number;
+  if (hasExplicitStationNet) {
+    stationNetRatePerSecRub = slot.stationNetRatePerSec!;
+  } else if (hasExplicitPricePerSecond) {
+    stationNetRatePerSecRub =
+      Math.round((slot.pricePerSecond / (1 + baseSlotMargin / 100)) * 100) / 100;
+  } else {
+    const fallbackHotPrice = resolveSlotHotPrice(slot);
+    stationNetRatePerSecRub =
+      Math.round(
+        (fallbackHotPrice / (1 + baseSlotMargin / 100) / (spots * referenceDurationSec)) * 100
+      ) / 100;
+  }
 
   const clientHotRatePerSecRub =
-    Math.round(stationNetRatePerSecRub * (1 + effectiveMarginPct / 100) * 100) / 100;
+    fmworksMarginOverride === undefined && hasExplicitPricePerSecond && !hasExplicitStationNet
+      ? Math.round(slot.pricePerSecond * 100) / 100
+      : Math.round(stationNetRatePerSecRub * (1 + effectiveMarginPct / 100) * 100) / 100;
 
+  const pricePerSecondRub = hasExplicitPricePerSecond
+    ? Math.round(slot.pricePerSecond * 100) / 100
+    : clientHotRatePerSecRub;
+
+  const fallbackOfficialPrice = resolveSlotOfficialPrice(slot);
   const officialRatePerSecRub =
     typeof slot.officialRatePerSec === 'number' && slot.officialRatePerSec > 0
       ? slot.officialRatePerSec
       : Math.max(
           Math.ceil(clientHotRatePerSecRub * 1.4),
-          Math.round((slot.officialPrice / (spots * referenceDurationSec)) * 100) / 100
+          Math.round((fallbackOfficialPrice / (spots * referenceDurationSec)) * 100) / 100
         );
 
   return {
+    pricePerSecondRub,
     stationNetRatePerSecRub,
     clientHotRatePerSecRub,
     officialRatePerSecRub,
@@ -1596,9 +1770,29 @@ export function createSecondBasedPricingFromSlot(
 }
 
 function withSlotSecondBasedPricing(slot: RadioInventorySlot): RadioInventorySlot {
+  const rates = resolveSlotPerSecondRates(slot);
+  const resolvedHot = resolveSlotHotPrice({
+    ...slot,
+    pricePerSecond: rates.pricePerSecondRub,
+  });
+  const resolvedOfficial = resolveSlotOfficialPrice({
+    ...slot,
+    pricePerSecond: rates.pricePerSecondRub,
+    officialRatePerSec: rates.officialRatePerSecRub,
+    hotPrice: resolvedHot,
+  });
+
   return {
     ...slot,
-    secondBasedPricing: createSecondBasedPricingFromSlot(slot),
+    pricePerSecond: rates.pricePerSecondRub,
+    hotPrice: resolvedHot,
+    officialPrice: resolvedOfficial,
+    secondBasedPricing: createSecondBasedPricingFromSlot({
+      ...slot,
+      pricePerSecond: rates.pricePerSecondRub,
+      hotPrice: resolvedHot,
+      officialPrice: resolvedOfficial,
+    }),
   };
 }
 
@@ -1698,10 +1892,22 @@ export function resolveMediaNicheFromLaya(
 }
 
 export function computeSlotDiscountPercent(
-  slot: Pick<RadioInventorySlot, 'officialPrice' | 'hotPrice'>
+  slot: Partial<
+    Pick<
+      RadioInventorySlot,
+      | 'officialPrice'
+      | 'hotPrice'
+      | 'pricePerSecond'
+      | 'officialRatePerSec'
+      | 'spotsIncluded'
+      | 'maxDuration'
+    >
+  >
 ): number {
-  if (slot.officialPrice <= 0 || slot.hotPrice >= slot.officialPrice) return 0;
-  return Math.round(((slot.officialPrice - slot.hotPrice) / slot.officialPrice) * 100);
+  const officialPrice = resolveSlotOfficialPrice(slot);
+  const hotPrice = resolveSlotHotPrice(slot);
+  if (officialPrice <= 0 || hotPrice >= officialPrice) return 0;
+  return Math.round(((officialPrice - hotPrice) / officialPrice) * 100);
 }
 
 /**
@@ -1937,6 +2143,8 @@ export interface ScoredRadioSlot {
 export interface MediaGridPlanResult {
   niche: MediaClientNiche;
   totalBudget: number;
+  /** Результат проверки минимального бюджета 40 000 ₽ для тестового запуска */
+  minBudgetValidation: TestLaunchBudgetValidationResult;
   durationPref: SpotDurationPreference;
   spotReadinessMode: SpotReadinessMode;
   minRequiredDeadlineHours: number;
@@ -2149,6 +2357,7 @@ export function generateMediaBuyerRationale(params: {
 export function computeMediaPlanSummary(params: {
   niche: MediaClientNiche;
   totalBudget: number;
+  requestedBudgetRub?: number;
   durationPref: SpotDurationPreference;
   spotReadinessMode?: SpotReadinessMode;
   lockedUrgentSlots?: readonly RadioInventorySlot[];
@@ -2158,12 +2367,14 @@ export function computeMediaPlanSummary(params: {
   const {
     niche,
     totalBudget,
+    requestedBudgetRub,
     durationPref,
     scoredSlots,
     selectedSlotIds,
     lockedUrgentSlots = [],
   } = params;
 
+  const minBudgetValidation = validateMinTestLaunchBudget(requestedBudgetRub ?? totalBudget);
   const spotReadinessMode = resolveSpotReadinessMode(durationPref, params.spotReadinessMode);
   const minRequiredDeadlineHours = resolveMinDeadlineGateHours(spotReadinessMode);
 
@@ -2173,8 +2384,14 @@ export function computeMediaPlanSummary(params: {
   const totalSpots = selectedSlots.reduce((acc, item) => acc + item.slot.spotsIncluded, 0);
   const totalReachOTS = selectedSlots.reduce((acc, item) => acc + item.slot.reachOTS, 0);
   const targetAudienceSharePct = computeTargetAudienceSharePct(selectedSlots);
-  const officialAirTotal = selectedSlots.reduce((acc, item) => acc + item.slot.officialPrice, 0);
-  const hotAirTotal = selectedSlots.reduce((acc, item) => acc + item.slot.hotPrice, 0);
+  const officialAirTotal = selectedSlots.reduce(
+    (acc, item) => acc + resolveSlotOfficialPrice(item.slot),
+    0
+  );
+  const hotAirTotal = selectedSlots.reduce(
+    (acc, item) => acc + resolveSlotHotPrice(item.slot),
+    0
+  );
 
   const baseSpec = resolveBaseProductionSpec(durationPref);
   const isBonusProductionUnlocked = hotAirTotal >= AIR_BONUS_THRESHOLD_RUB;
@@ -2219,6 +2436,7 @@ export function computeMediaPlanSummary(params: {
   return {
     niche,
     totalBudget,
+    minBudgetValidation,
     durationPref,
     spotReadinessMode,
     minRequiredDeadlineHours,
@@ -2254,13 +2472,14 @@ export interface BuildOptimalGridOptions {
 
 /**
  * Профессиональный алгоритм сборки эфирной сетки медиабайера (2D ДП по бюджету и лимиту станций):
- * 1) Правило эффективной частоты: защищает бюджет 100–250 тыс. ₽ от размазывания по 4–5 станциям,
- *    концентрируя удар на 1–2 целевых станциях с плотной частотой (12–20 выходов), а с ростом бюджета
+ * 1) Проверка минимального бюджета 40 000 ₽ для тестового запуска (`validateMinTestLaunchBudget`).
+ * 2) Правило эффективной частоты: защищает бюджет 40–250 тыс. ₽ от размазывания по 4–5 станциям,
+ *    концентрируя удар на 1–2 целевых станциях с плотной частотой, а с ростом бюджета
  *    подключает охватные радиостанции второго эшелона.
- * 2) Тайм-гейт модерации: при заказе ролика за 24ч оставляет только квоты `deadlineHours >= 24`,
+ * 3) Тайм-гейт модерации: при заказе ролика за 24ч оставляет только квоты `deadlineHours >= 24`,
  *    а при готовом ролике с паспортом открывает сверхсрочные слоты на завтра (`deadlineHours >= 6`) с доп. скидкой.
- * 3) Коммерческий бонус: при сумме эфира `>= 400 000 ₽` включает ролик «Под ключ (25 000 ₽)» за `0 ₽`.
- * 4) Формирует экспертное резюме `aiRationale` (2–3 предложения) под собранную связку.
+ * 4) Коммерческий бонус: при сумме эфира `>= 400 000 ₽` включает ролик «Под ключ (25 000 ₽)» за `0 ₽`.
+ * 5) Формирует экспертное резюме `aiRationale` (2–3 предложения) под собранную связку.
  */
 export function buildOptimalMediaGrid(
   niche: MediaClientNiche,
@@ -2268,10 +2487,8 @@ export function buildOptimalMediaGrid(
   durationPref: SpotDurationPreference,
   options: BuildOptimalGridOptions = {}
 ): MediaGridPlanResult {
-  const clampedBudget = Math.max(
-    MIN_MEDIA_BUDGET_RUB,
-    Math.min(MAX_MEDIA_BUDGET_RUB, Math.round(totalBudget))
-  );
+  const budgetValidation = validateMinTestLaunchBudget(totalBudget);
+  const clampedBudget = budgetValidation.normalizedBudgetRub;
   const layaPersona = options.layaPersona ?? 'default';
   const productNote = options.productNote ?? '';
   const spotReadinessMode = resolveSpotReadinessMode(durationPref, options.spotStatus);
@@ -2342,7 +2559,8 @@ export function buildOptimalMediaGrid(
 
   for (let i = 0; i < eligible.length; i += 1) {
     const candidate = eligible[i];
-    const costSteps = Math.max(1, Math.ceil(candidate.slot.hotPrice / STEP));
+    const candidateHotPrice = resolveSlotHotPrice(candidate.slot);
+    const costSteps = Math.max(1, Math.ceil(candidateHotPrice / STEP));
     if (costSteps > maxSteps) continue;
 
     const affinityNorm = candidate.affinity / 100;
@@ -2370,7 +2588,7 @@ export function buildOptimalMediaGrid(
     const reachWeightPerK = isFocusedSmallBudget ? 22 : 48;
 
     const utility =
-      (candidate.slot.hotPrice *
+      (candidateHotPrice *
         (0.24 + Math.pow(affinityNorm, 2.25) * 1.65) *
         durationFitFactor *
         frequencyFactor +
@@ -2416,7 +2634,7 @@ export function buildOptimalMediaGrid(
 
       const pickedIndices = dpChoice[s][k];
       const exactAirSpend = pickedIndices.reduce(
-        (sum, idx) => sum + eligible[idx].slot.hotPrice,
+        (sum, idx) => sum + resolveSlotHotPrice(eligible[idx].slot),
         0
       );
 
@@ -2443,18 +2661,75 @@ export function buildOptimalMediaGrid(
     }
   }
 
-  const selectedIds =
+  let selectedIds =
     bestStep > 0 && bestK > 0
       ? dpChoice[bestStep][bestK].map((idx) => eligible[idx].slot.id)
       : [];
 
+  let effectiveScoredSlots = allScored;
+
+  // Если бюджет находится в тестовом диапазоне запуска (40 000 – 99 999 ₽) и полный пакет не поместился,
+  // масштабируем лучшую профильную радиостанцию посекундно через `pricePerSecond` без перерасхода бюджета
+  if (selectedIds.length === 0 && eligible.length > 0 && clampedBudget >= MIN_TEST_LAUNCH_BUDGET_RUB) {
+    const airBudgetCap = Math.max(12_000, clampedBudget - baseProd);
+    const sortedForTest = [...eligible].sort((a, b) => {
+      if (b.affinity !== a.affinity) return b.affinity - a.affinity;
+      return a.slot.pricePerSecond - b.slot.pricePerSecond;
+    });
+    const bestTestCandidate =
+      sortedForTest.find((item) => item.slot.pricePerSecond * 10 * 5 <= airBudgetCap) ??
+      sortedForTest[0];
+
+    const perSecRate = Math.max(1, bestTestCandidate.slot.pricePerSecond);
+    const testSpotSec = durationPref === '30' ? 15 : 10;
+    const singleSpotPrice = Math.max(1, Math.round(perSecRate * testSpotSec));
+    const affordableSpots = Math.max(
+      4,
+      Math.min(
+        bestTestCandidate.slot.spotsIncluded,
+        Math.floor(airBudgetCap / singleSpotPrice)
+      )
+    );
+    const scaledHotPrice = Math.min(airBudgetCap, singleSpotPrice * affordableSpots);
+    const officialRate =
+      bestTestCandidate.slot.officialRatePerSec ?? Math.round(perSecRate * 1.58);
+    const scaledOfficialPrice = Math.max(
+      scaledHotPrice + 5_000,
+      Math.round(officialRate * testSpotSec * affordableSpots)
+    );
+    const scaledReachOTS = Math.round(
+      (bestTestCandidate.slot.reachOTS / Math.max(1, bestTestCandidate.slot.spotsIncluded)) *
+        affordableSpots
+    );
+
+    const scaledSlot: RadioInventorySlot = withSlotSecondBasedPricing({
+      ...bestTestCandidate.slot,
+      spotsIncluded: affordableSpots,
+      hotPrice: scaledHotPrice,
+      officialPrice: scaledOfficialPrice,
+      reachOTS: scaledReachOTS,
+    });
+
+    effectiveScoredSlots = allScored.map((item) =>
+      item.slot.id === scaledSlot.id
+        ? {
+            ...item,
+            slot: scaledSlot,
+            discountPercent: computeSlotDiscountPercent(scaledSlot),
+          }
+        : item
+    );
+    selectedIds = [scaledSlot.id];
+  }
+
   return computeMediaPlanSummary({
     niche,
     totalBudget: clampedBudget,
+    requestedBudgetRub: totalBudget,
     durationPref,
     spotReadinessMode,
     lockedUrgentSlots,
-    scoredSlots: allScored,
+    scoredSlots: effectiveScoredSlots,
     selectedSlotIds: selectedIds,
   });
 }
@@ -2623,28 +2898,33 @@ export function parseRawRadioSalesDump(
         Math.round(withMargin / 0.68 / 1000) * 1000
       );
       const hotPrice = Math.min(withMargin, Math.round((officialPrice * 0.72) / 1000) * 1000);
+      const refSec = maxDuration === 15 ? 15 : 20;
+      const pricePerSecond = Math.round((hotPrice / (spots * refSec)) * 100) / 100;
 
-      parsedSlots.push({
-        id: `imp-${Date.now()}-${index}`,
-        station: stationRaw.replace(/\d{2,3}\.\d\s*FM/i, '').trim() || stationRaw,
-        frequencyFm: (
-          stationRaw.match(/(\d{2,3}\.\d\s*FM)/i)?.[1] ?? inferred.frequencyFm
-        ).toUpperCase(),
-        formatDesc: inferred.formatDesc,
-        audienceTags: inferred.tags,
-        daypart: daypartInfo.daypart,
-        daysPattern,
-        weekdays,
-        sampleTimeSlots: daypartInfo.sampleTimeSlots,
-        spotsIncluded: spots,
-        maxDuration,
-        officialPrice,
-        hotPrice,
-        reachOTS: otsRaw,
-        deadlineHours: Math.max(4, Math.min(72, deadlineRaw)),
-        isHidden: false,
-        sourceKind: 'imported',
-      });
+      parsedSlots.push(
+        normalizeSlotRecord({
+          id: `imp-${Date.now()}-${index}`,
+          station: stationRaw.replace(/\d{2,3}\.\d\s*FM/i, '').trim() || stationRaw,
+          frequencyFm: (
+            stationRaw.match(/(\d{2,3}\.\d\s*FM)/i)?.[1] ?? inferred.frequencyFm
+          ).toUpperCase(),
+          formatDesc: inferred.formatDesc,
+          audienceTags: inferred.tags,
+          daypart: daypartInfo.daypart,
+          daysPattern,
+          weekdays,
+          sampleTimeSlots: daypartInfo.sampleTimeSlots,
+          spotsIncluded: spots,
+          maxDuration,
+          pricePerSecond,
+          officialPrice,
+          hotPrice,
+          reachOTS: otsRaw,
+          deadlineHours: Math.max(4, Math.min(72, deadlineRaw)),
+          isHidden: false,
+          sourceKind: 'imported',
+        })
+      );
       return;
     }
 
@@ -2706,6 +2986,8 @@ export function parseRawRadioSalesDump(
 
     const durMatch = line.match(/(?:до\s*|по\s*)?(15|30)\s*(?:сек|с\b)/i);
     const maxDuration: 15 | 30 = durMatch && durMatch[1] === '15' ? 15 : 30;
+    const refSec = maxDuration === 15 ? 15 : 20;
+    const pricePerSecond = Math.round((hotPrice / (spotsIncluded * refSec)) * 100) / 100;
 
     const daysMatch = line.match(
       /(Пн\s*[–-]\s*Пт|Ср\s*[–-]\s*Вс|Пн\s*[–-]\s*Сб|Пн\s*[–-]\s*Вс|Сб\s*[–-]\s*Вс)/i
@@ -2747,6 +3029,7 @@ export function parseRawRadioSalesDump(
         sampleTimeSlots: daypartInfo.sampleTimeSlots,
         spotsIncluded,
         maxDuration,
+        pricePerSecond,
         officialPrice,
         hotPrice,
         reachOTS,
@@ -2767,21 +3050,36 @@ export interface MediaHoldReservationInput {
   contactLine: string;
   companyName: string;
   selectedCount: number;
+  /** Общий бюджет тестового или основного запуска (опционально для проверки порога 40 000 ₽) */
+  totalBudgetRub?: number;
 }
 
 export interface MediaHoldValidationResult {
   valid: boolean;
   contactError?: string;
   slotsError?: string;
+  budgetError?: string;
+  error?: string;
 }
 
 export function validateMediaHoldReservation(
   input: MediaHoldReservationInput
 ): MediaHoldValidationResult {
+  if (input.totalBudgetRub !== undefined) {
+    const budgetCheck = validateMinTestLaunchBudget(input.totalBudgetRub);
+    if (!budgetCheck.valid) {
+      return {
+        valid: false,
+        budgetError: budgetCheck.errorRu,
+        error: budgetCheck.errorRu,
+      };
+    }
+  }
   if (input.selectedCount <= 0) {
     return {
       valid: false,
       slotsError: 'Выберите хотя бы одну радиостанцию в сетке для резерва квоты.',
+      error: 'Выберите хотя бы одну радиостанцию в сетке для резерва квоты.',
     };
   }
   const contact = input.contactLine.trim();
@@ -2789,6 +3087,7 @@ export function validateMediaHoldReservation(
     return {
       valid: false,
       contactError: 'Укажите телефон, @Telegram или рабочую почту для фиксации 4-часовой брони.',
+      error: 'Укажите телефон, @Telegram или рабочую почту для фиксации 4-часовой брони.',
     };
   }
   return { valid: true };
@@ -2805,7 +3104,16 @@ function cloneDefaultSlots(): RadioInventorySlot[] {
   );
 }
 
-function normalizeSlotRecord(raw: RadioInventorySlot): RadioInventorySlot {
+export type RadioInventorySlotInput = Omit<
+  RadioInventorySlot,
+  'pricePerSecond' | 'hotPrice' | 'officialPrice'
+> & {
+  pricePerSecond?: number;
+  hotPrice?: number;
+  officialPrice?: number;
+};
+
+export function normalizeSlotRecord(raw: RadioInventorySlotInput): RadioInventorySlot {
   const daysPattern = raw.daysPattern || 'Пн–Пт';
   const weekdays =
     Array.isArray(raw.weekdays) && raw.weekdays.length > 0
@@ -2815,12 +3123,25 @@ function normalizeSlotRecord(raw: RadioInventorySlot): RadioInventorySlot {
     Array.isArray(raw.sampleTimeSlots) && raw.sampleTimeSlots.length > 0
       ? raw.sampleTimeSlots
       : ['08:20', '09:15', '18:40'];
+  const spots = Math.max(1, raw.spotsIncluded);
+  const refSec = raw.maxDuration === 15 ? 15 : 20;
+  const marginPct = raw.fmworksMarginPercent ?? DEFAULT_FMWORKS_MARGIN_PERCENT;
+
+  const resolvedPricePerSecond =
+    typeof raw.pricePerSecond === 'number' && raw.pricePerSecond > 0
+      ? raw.pricePerSecond
+      : typeof raw.stationNetRatePerSec === 'number' && raw.stationNetRatePerSec > 0
+        ? Math.round(raw.stationNetRatePerSec * (1 + marginPct / 100) * 100) / 100
+        : typeof raw.hotPrice === 'number' && raw.hotPrice > 0
+          ? Math.round((raw.hotPrice / (spots * refSec)) * 100) / 100
+          : 400;
 
   const normalizedBase: RadioInventorySlot = {
     ...raw,
     daysPattern,
     weekdays,
     sampleTimeSlots,
+    pricePerSecond: resolvedPricePerSecond,
   };
 
   return withSlotSecondBasedPricing(normalizedBase);
@@ -2839,12 +3160,11 @@ function readStoredSlots(): RadioInventorySlot[] {
     }
     const valid = parsed
       .filter(
-        (item): item is RadioInventorySlot =>
+        (item): item is RadioInventorySlotInput =>
           Boolean(item) &&
           typeof item.id === 'string' &&
           typeof item.station === 'string' &&
-          typeof item.hotPrice === 'number' &&
-          typeof item.officialPrice === 'number'
+          (typeof item.pricePerSecond === 'number' || typeof item.hotPrice === 'number')
       )
       .map(normalizeSlotRecord);
 
@@ -2867,9 +3187,12 @@ type InventoryListener = (slots: RadioInventorySlot[]) => void;
 
 export type ManualSlotInput = Omit<
   RadioInventorySlot,
-  'id' | 'sourceKind' | 'weekdays'
+  'id' | 'sourceKind' | 'weekdays' | 'pricePerSecond' | 'hotPrice' | 'officialPrice'
 > & {
   weekdays?: WeekdayNumber[];
+  pricePerSecond?: number;
+  hotPrice?: number;
+  officialPrice?: number;
 };
 
 class RadioInventoryStore {
@@ -2923,6 +3246,7 @@ class RadioInventoryStore {
     patch: Partial<
       Pick<
         RadioInventorySlot,
+        | 'pricePerSecond'
         | 'hotPrice'
         | 'officialPrice'
         | 'spotsIncluded'
@@ -2936,14 +3260,33 @@ class RadioInventoryStore {
   ): void {
     const next = this.slots.map((item) => {
       if (item.id !== slotId) return item;
-      const updatedHot =
-        patch.hotPrice !== undefined
-          ? Math.max(15_000, Math.round(patch.hotPrice))
-          : item.hotPrice;
+      const nextSpots =
+        patch.spotsIncluded !== undefined
+          ? Math.max(1, Math.round(patch.spotsIncluded))
+          : item.spotsIncluded;
+      const refSec = item.maxDuration === 15 ? 15 : 20;
+
+      const baseHot = resolveSlotHotPrice(item);
+      const baseOfficial = resolveSlotOfficialPrice(item);
+
+      let updatedPricePerSec = item.pricePerSecond;
+      let updatedHot = baseHot;
+
+      if (patch.pricePerSecond !== undefined && patch.pricePerSecond > 0) {
+        updatedPricePerSec = Math.round(patch.pricePerSecond * 100) / 100;
+        updatedHot =
+          patch.hotPrice !== undefined
+            ? Math.max(15_000, Math.round(patch.hotPrice))
+            : Math.max(15_000, Math.round(updatedPricePerSec * refSec * nextSpots));
+      } else if (patch.hotPrice !== undefined) {
+        updatedHot = Math.max(15_000, Math.round(patch.hotPrice));
+        updatedPricePerSec = Math.round((updatedHot / (refSec * nextSpots)) * 100) / 100;
+      }
+
       const updatedOfficial =
         patch.officialPrice !== undefined
           ? Math.max(updatedHot + 5_000, Math.round(patch.officialPrice))
-          : Math.max(item.officialPrice, updatedHot + 10_000);
+          : Math.max(baseOfficial, updatedHot + 10_000);
       const nextDaysPattern = patch.daysPattern ?? item.daysPattern;
       const nextWeekdays =
         patch.weekdays ??
@@ -2956,12 +3299,10 @@ class RadioInventoryStore {
         ...patch,
         daysPattern: nextDaysPattern,
         weekdays: nextWeekdays,
+        pricePerSecond: updatedPricePerSec,
         hotPrice: updatedHot,
         officialPrice: updatedOfficial,
-        spotsIncluded:
-          patch.spotsIncluded !== undefined
-            ? Math.max(1, Math.round(patch.spotsIncluded))
-            : item.spotsIncluded,
+        spotsIncluded: nextSpots,
         deadlineHours:
           patch.deadlineHours !== undefined
             ? Math.max(1, Math.round(patch.deadlineHours))
@@ -3202,8 +3543,8 @@ export function buildMediaReservationPayload(params: {
       sampleTimeSlots: [...slot.sampleTimeSlots],
       spotsIncluded: slot.spotsIncluded,
       maxDuration: slot.maxDuration,
-      officialPrice: slot.officialPrice,
-      hotPrice: slot.hotPrice,
+      officialPrice: resolveSlotOfficialPrice(slot),
+      hotPrice: resolveSlotHotPrice(slot),
       discountPercent,
       reachOTS: slot.reachOTS,
       packageMultiplier: packageMultipliers[slot.id] ?? 1,

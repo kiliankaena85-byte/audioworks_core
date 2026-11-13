@@ -51,10 +51,12 @@ import {
   formatRubCompact,
   MEDIA_NICHE_OPTIONS,
   MediaGridReservationPayload,
+  MIN_TEST_LAUNCH_BUDGET_RUB,
   RadioInventorySlot,
   radioInventoryStore,
   resolveMediaNicheFromLaya,
   SpotReadinessMode,
+  validateMinTestLaunchBudget,
   WeekdayNumber,
 } from '../data/radioInventory';
 import {
@@ -540,11 +542,22 @@ export function MediaGridPlanner({
     );
   };
 
+  // Проверка минимального бюджета 40 000 ₽ для тестового запуска
+  const minBudgetValidation = useMemo(() => {
+    const digitsOnly = budgetInputDraft.replace(/\D/g, '');
+    if (!digitsOnly) {
+      return validateMinTestLaunchBudget(0, MIN_TEST_LAUNCH_BUDGET_RUB);
+    }
+    const parsedDraft = parseInt(digitsOnly, 10);
+    return validateMinTestLaunchBudget(parsedDraft, MIN_TEST_LAUNCH_BUDGET_RUB);
+  }, [budgetInputDraft]);
+
   // Управление бюджетом
   const applyClampedBudget = (rawAmount: number) => {
+    const check = validateMinTestLaunchBudget(rawAmount, MIN_TEST_LAUNCH_BUDGET_RUB);
     const clamped = Math.max(
       MIN_FLEXIBLE_BUDGET_RUB,
-      Math.min(MAX_FLEXIBLE_BUDGET_RUB, Math.round(rawAmount))
+      Math.min(MAX_FLEXIBLE_BUDGET_RUB, check.clampedBudgetRub)
     );
     setTotalBudget(clamped);
     setBudgetInputDraft(formatNumberSpaced(clamped));
@@ -563,7 +576,8 @@ export function MediaGridPlanner({
     const capped = Math.min(MAX_FLEXIBLE_BUDGET_RUB, parsed);
     setBudgetInputDraft(formatNumberSpaced(capped));
 
-    if (capped >= MIN_FLEXIBLE_BUDGET_RUB) {
+    const check = validateMinTestLaunchBudget(capped, MIN_TEST_LAUNCH_BUDGET_RUB);
+    if (check.valid && capped >= MIN_FLEXIBLE_BUDGET_RUB) {
       setTotalBudget(capped);
       if (activeTab === 'packages') {
         setManualSelections(null);
@@ -573,7 +587,7 @@ export function MediaGridPlanner({
 
   const handleManualBudgetBlur = () => {
     const digitsOnly = budgetInputDraft.replace(/\D/g, '');
-    const parsed = digitsOnly ? parseInt(digitsOnly, 10) : MIN_FLEXIBLE_BUDGET_RUB;
+    const parsed = digitsOnly ? parseInt(digitsOnly, 10) : MIN_TEST_LAUNCH_BUDGET_RUB;
     applyClampedBudget(parsed);
   };
 
@@ -984,6 +998,7 @@ export function MediaGridPlanner({
             onSelectCampaignGoal={setCampaignGoal}
             totalBudget={totalBudget}
             budgetInputDraft={budgetInputDraft}
+            minBudgetValidation={minBudgetValidation}
             onSliderBudgetChange={applyClampedBudget}
             onManualBudgetInputChange={handleManualBudgetInputChange}
             onManualBudgetBlur={handleManualBudgetBlur}

@@ -15,7 +15,10 @@ import {
   AIR_BONUS_THRESHOLD_RUB,
   formatNumberSpaced,
   formatRubCompact,
+  MIN_TEST_LAUNCH_BUDGET_RUB,
   SpotReadinessMode,
+  TestLaunchBudgetValidationResult,
+  validateMinTestLaunchBudget,
 } from '../data/radioInventory';
 
 interface HotAirPackagesTabProps {
@@ -23,6 +26,7 @@ interface HotAirPackagesTabProps {
   onSelectCampaignGoal: (goal: CampaignGoalId) => void;
   totalBudget: number;
   budgetInputDraft: string;
+  minBudgetValidation?: TestLaunchBudgetValidationResult;
   onSliderBudgetChange: (amount: number) => void;
   onManualBudgetInputChange: (rawValue: string) => void;
   onManualBudgetBlur: () => void;
@@ -43,6 +47,7 @@ export function HotAirPackagesTab({
   onSelectCampaignGoal,
   totalBudget,
   budgetInputDraft,
+  minBudgetValidation,
   onSliderBudgetChange,
   onManualBudgetInputChange,
   onManualBudgetBlur,
@@ -61,6 +66,8 @@ export function HotAirPackagesTab({
   const activeGoalSpec =
     CAMPAIGN_GOAL_OPTIONS.find((g) => g.id === campaignGoal) ??
     CAMPAIGN_GOAL_OPTIONS[0];
+  const resolvedBudgetCheck =
+    minBudgetValidation ?? validateMinTestLaunchBudget(totalBudget, MIN_TEST_LAUNCH_BUDGET_RUB);
 
   return (
     <div data-testid="hot-air-packages-tab" className="space-y-5 sm:space-y-6">
@@ -151,7 +158,13 @@ export function HotAirPackagesTab({
                   : '2. Бюджет на акционный залп'}
               </label>
 
-              <div className="inline-flex items-center gap-1.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/16 dark:border-white/16 px-3 h-10 focus-within:border-[#FF4820]">
+              <div
+                className={`inline-flex items-center gap-1.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border px-3 h-10 focus-within:border-[#FF4820] ${
+                  !resolvedBudgetCheck.valid
+                    ? 'border-[#FF4820]'
+                    : 'border-[#111111]/16 dark:border-white/16'
+                }`}
+              >
                 <input
                   id="media-budget-manual-input"
                   data-testid="media-budget-manual-input"
@@ -167,6 +180,7 @@ export function HotAirPackagesTab({
                     }
                   }}
                   aria-label="Точная сумма бюджета в рублях"
+                  aria-invalid={!resolvedBudgetCheck.valid}
                   className="w-26 sm:w-28 text-right text-base sm:text-lg font-bold tabular-nums bg-transparent text-[#111111] dark:text-[#F4F3EF] focus:outline-none"
                 />
                 <span className="text-sm font-bold text-[#111111]/55 dark:text-[#F4F3EF]/55">
@@ -174,6 +188,26 @@ export function HotAirPackagesTab({
                 </span>
               </div>
             </div>
+
+            {!resolvedBudgetCheck.valid && resolvedBudgetCheck.error && (
+              <div
+                role="alert"
+                data-testid="min-budget-validation-alert"
+                className="rounded-xl bg-[#FF4820]/10 border border-[#FF4820]/30 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs text-[#111111] dark:text-[#F4F3EF]"
+              >
+                <span className="font-medium leading-snug">
+                  {resolvedBudgetCheck.error}
+                </span>
+                <button
+                  type="button"
+                  data-testid="apply-min-budget-btn"
+                  onClick={() => onSliderBudgetChange(MIN_TEST_LAUNCH_BUDGET_RUB)}
+                  className="min-h-[28px] px-2.5 py-1 rounded-lg bg-[#FF4820] text-white font-semibold cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  Выставить {formatRubCompact(MIN_TEST_LAUNCH_BUDGET_RUB)}
+                </button>
+              </div>
+            )}
 
             <div>
               <input

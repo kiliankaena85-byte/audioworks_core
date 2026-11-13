@@ -341,3 +341,99 @@ test('calculateSlotPriceForUniqueChronometry и evaluateInventoryForChronometry 
   assert.equal(coreSponsor17.billedSeconds, 20);
   assert.equal(coreSponsor17.hotPriceRub, bfmTrafficVar.hotRatePerSec * 20 * 10);
 });
+
+test('RadioInventorySlot.pricePerSecond и проверка минимального бюджета 40 000 ₽ для тестового запуска', async () => {
+  const {
+    buildOptimalMediaGrid,
+    MIN_MEDIA_BUDGET_RUB,
+    MIN_TEST_LAUNCH_BUDGET_RUB,
+    resolveSlotHotPrice,
+    resolveSlotOfficialPrice,
+    resolveSlotPerSecondRates,
+    validateMediaHoldReservation,
+    validateMinTestLaunchBudget,
+  } = await import('./radioInventory');
+
+  // 1. Константа минимального бюджета тестового запуска = 40 000 ₽
+  assert.equal(MIN_TEST_LAUNCH_BUDGET_RUB, 40_000);
+  assert.equal(MIN_MEDIA_BUDGET_RUB, 40_000);
+
+  // 2. Все слоты инвентаря содержат валидное поле pricePerSecond > 0
+  for (const slot of DEFAULT_RADIO_INVENTORY_SLOTS) {
+    assert.equal(typeof slot.pricePerSecond, 'number');
+    assert.ok(slot.pricePerSecond > 0, `Slot ${slot.id} must have pricePerSecond > 0`);
+  }
+
+  // 3. Слот, созданный только с pricePerSecond (без фиксированных hotPrice / officialPrice)
+  const purePerSecondSlot = {
+    id: 'pure-per-sec-slot',
+    station: 'Business FM',
+    frequencyFm: '87.5 FM',
+    formatDesc: 'Деловые новости (посекундный тариф)',
+    audienceTags: ['b2b' as const, 'real_estate' as const],
+    daypart: 'Утренний прайм 07:30–10:30' as const,
+    daysPattern: 'Пн–Пт',
+    weekdays: [1, 2, 3, 4, 5] as (1 | 2 | 3 | 4 | 5)[],
+    sampleTimeSlots: ['08:15', '09:15', '10:15'],
+    spotsIncluded: 10,
+    maxDuration: 15 as const,
+    pricePerSecond: 400, // 400 ₽/сек -> 10 выходов × 15 сек = 60 000 ₽
+    reachOTS: 240_000,
+    deadlineHours: 28,
+    isHidden: false,
+  };
+
+  const resolvedHot = resolveSlotHotPrice(purePerSecondSlot, 15);
+  const resolvedOfficial = resolveSlotOfficialPrice(purePerSecondSlot, 15);
+  const rates = resolveSlotPerSecondRates(purePerSecondSlot);
+
+  assert.equal(resolvedHot, 400 * 10 * 15); // 60 000 ₽
+  assert.ok(resolvedOfficial > resolvedHot);
+  assert.equal(rates.pricePerSecondRub, 400);
+  assert.equal(rates.clientHotRatePerSecRub, 400);
+
+  // 4. Проверка минимального бюджета 40 000 ₽ через validateMinTestLaunchBudget
+  const belowMin = validateMinTestLaunchBudget(25_000);
+  assert.equal(belowMin.valid, false);
+  assert.equal(belowMin.minRequiredBudgetRub, 40_000);
+  assert.equal(belowMin.clampedBudgetRub, 40_000);
+  assert.equal(belowMin.deficitRub, 15_000);
+  assert.ok(belowMin.error?.includes('40'));
+
+  const exactMin = validateMinTestLaunchBudget(40_000);
+  assert.equal(exactMin.valid, true);
+  assert.equal(exactMin.clampedBudgetRub, 40_000);
+  assert.equal(exactMin.deficitRub, 0);
+  assert.equal(exactMin.error, undefined);
+
+  // 5. buildOptimalMediaGrid: при бюджете 40 000 ₽ собирает тестовый запуск по pricePerSecond
+  const testLaunchPlan40k = buildOptimalMediaGrid('b2b_finance', 40_000, '15');
+  assert.equal(testLaunchPlan40k.totalBudget, 40_000);
+  assert.equal(testLaunchPlan40k.minBudgetValidation?.valid, true);
+  assert.ok(testLaunchPlan40k.selectedSlots.length >= 1);
+  assert.ok(testLaunchPlan40k.hotAirTotal <= 40_000);
+  assert.ok(testLaunchPlan40k.totalClientCost <= 40_000);
+
+  const clampedFromLow = buildOptimalMediaGrid('b2b_finance', 20_000, '15');
+  assert.equal(clampedFromLow.totalBudget, 40_000);
+  assert.equal(clampedFromLow.minBudgetValidation?.valid, false);
+  assert.equal(clampedFromLow.minBudgetValidation?.deficitRub, 20_000);
+
+  // 6. validateMediaHoldReservation блокирует бронь с бюджетом < 40 000 ₽
+  const holdBelow40k = validateMediaHoldReservation({
+    contactLine: '+7 999 123-45-67',
+    companyName: 'Тест Компания',
+    selectedCount: 1,
+    totalBudgetRub: 30_000,
+  });
+  assert.equal(holdBelow40k.valid, false);
+  assert.ok(holdBelow40k.error?.includes('40'));
+
+  const holdAt40k = validateMediaHoldReservation({
+    contactLine: '+7 999 123-45-67',
+    companyName: 'Тест Компания',
+    selectedCount: 1,
+    totalBudgetRub: 40_000,
+  });
+  assert.equal(holdAt40k.valid, true);
+});

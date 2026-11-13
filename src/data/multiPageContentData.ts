@@ -6,6 +6,8 @@ import {
   DEFAULT_RADIO_INVENTORY_SLOTS,
   MediaClientNiche,
   RadioInventorySlot,
+  resolveSlotHotPrice,
+  resolveSlotOfficialPrice,
 } from './radioInventory';
 import { PortfolioCaseRecord } from './studioCmsTypes';
 
@@ -299,11 +301,13 @@ export function buildStationCatalogProfiles(
       sl.audienceTags.forEach((t) => tagSet.add(t));
       const pricing = sl.secondBasedPricing ?? createSecondBasedPricingFromSlot(sl);
       const quote1Sec = pricing.calculateCost(Math.max(10, pricing.minDurationSeconds));
-      minRatePerSecRub = Math.min(minRatePerSecRub, quote1Sec.clientRatePerSecRub);
-      minPackageHotPriceRub = Math.min(minPackageHotPriceRub, sl.hotPrice);
+      const slotHotPrice = resolveSlotHotPrice(sl);
+      const slotOfficialPrice = resolveSlotOfficialPrice(sl);
+      minRatePerSecRub = Math.min(minRatePerSecRub, sl.pricePerSecond || quote1Sec.clientRatePerSecRub);
+      minPackageHotPriceRub = Math.min(minPackageHotPriceRub, slotHotPrice);
       const disc =
-        sl.officialPrice > 0
-          ? Math.round(((sl.officialPrice - sl.hotPrice) / sl.officialPrice) * 100)
+        slotOfficialPrice > 0
+          ? Math.round(((slotOfficialPrice - slotHotPrice) / slotOfficialPrice) * 100)
           : 0;
       maxDiscountPercent = Math.max(maxDiscountPercent, disc);
       totalStationOTS += sl.reachOTS;

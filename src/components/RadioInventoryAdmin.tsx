@@ -21,6 +21,8 @@ import {
   formatRubCompact,
   RadioInventorySlot,
   radioInventoryStore,
+  resolveSlotHotPrice,
+  resolveSlotOfficialPrice,
   resolveWeekdayNumbers,
   SecondBasedPricing,
   SlotDurationMultiplicitySec,
@@ -589,9 +591,10 @@ function resolveSlotProducerMeta(
 ): ProducerSlotMeta {
   const existing = ledger[slot.id];
   if (existing) return existing;
+  const hotPrice = resolveSlotHotPrice(slot);
   // Базовые квоты имеют заложенную агентскую маржу 20% поверх входного нетто станции
   return {
-    netCostRub: Math.round(slot.hotPrice / 1.2 / 1000) * 1000,
+    netCostRub: Math.round(hotPrice / 1.2 / 1000) * 1000,
     packagesRemaining: slot.isHidden ? 0 : 2,
   };
 }
@@ -681,10 +684,11 @@ export function RadioInventoryAdmin({ isOpen, onClose }: RadioInventoryAdminProp
     for (const slot of activeSlots) {
       const meta = resolveSlotProducerMeta(slot, producerLedger);
       const pkgCount = Math.max(1, meta.packagesRemaining);
-      const unitProfit = Math.max(0, slot.hotPrice - meta.netCostRub);
+      const slotHotPrice = resolveSlotHotPrice(slot);
+      const unitProfit = Math.max(0, slotHotPrice - meta.netCostRub);
 
       totalPackagesOnShowcase += pkgCount;
-      totalShowcaseClientRub += slot.hotPrice * pkgCount;
+      totalShowcaseClientRub += slotHotPrice * pkgCount;
       totalPotentialCommissionRub += unitProfit * pkgCount;
     }
 
@@ -833,6 +837,7 @@ export function RadioInventoryAdmin({ isOpen, onClose }: RadioInventoryAdminProp
         maxSpotSeconds: row.maxDuration === 15 ? 20 : 60,
         durationMultiplicitySec,
         spotsMultiplicityStep: isSponsorship ? 3 : 1,
+        pricePerSecond: quotaEval.clientRatePerSecRub,
         stationNetRatePerSec: quotaEval.stationRatePerSecRub,
         officialRatePerSec: Math.round((officialPrice / (spots * refSec)) * 100) / 100,
         fmworksMarginPercent: row.marginPercent,
@@ -1680,7 +1685,9 @@ export function RadioInventoryAdmin({ isOpen, onClose }: RadioInventoryAdminProp
                         {slots.map((slot) => {
                           const disc = computeSlotDiscountPercent(slot);
                           const meta = resolveSlotProducerMeta(slot, producerLedger);
-                          const unitCommission = Math.max(0, slot.hotPrice - meta.netCostRub);
+                          const slotHotPrice = resolveSlotHotPrice(slot);
+                          const slotOfficialPrice = resolveSlotOfficialPrice(slot);
+                          const unitCommission = Math.max(0, slotHotPrice - meta.netCostRub);
 
                           return (
                             <tr
@@ -1698,7 +1705,7 @@ export function RadioInventoryAdmin({ isOpen, onClose }: RadioInventoryAdminProp
                                 </div>
                                 <div className="text-[11px] text-[#111111]/58 dark:text-[#F4F3EF]/58">
                                   {slot.daypart} · {slot.daysPattern} · {slot.spotsIncluded} вых. ·{' '}
-                                  {formatNumberSpaced(slot.reachOTS)} OTS
+                                  {formatNumberSpaced(slot.reachOTS)} OTS · {formatNumberSpaced(Math.round(slot.pricePerSecond))} ₽/с
                                 </div>
                               </td>
 
@@ -1750,7 +1757,7 @@ export function RadioInventoryAdmin({ isOpen, onClose }: RadioInventoryAdminProp
                                   step={1000}
                                   min={15000}
                                   aria-label={`Горящая цена для ${slot.station}`}
-                                  value={slot.hotPrice}
+                                  value={slotHotPrice}
                                   onChange={(e) =>
                                     radioInventoryStore.updateSlot(slot.id, {
                                       hotPrice: Number(e.target.value),
@@ -1759,7 +1766,7 @@ export function RadioInventoryAdmin({ isOpen, onClose }: RadioInventoryAdminProp
                                   className="w-28 h-8 px-2.5 rounded-lg bg-[#F7F6F2] dark:bg-[#1B1B22] border border-[#111111]/14 dark:border-white/14 text-xs font-bold"
                                 />
                                 <div className="text-[10px] text-[#111111]/50 dark:text-[#F4F3EF]/50">
-                                  Прайс {formatRubCompact(slot.officialPrice)} (−{disc}%)
+                                  Прайс {formatRubCompact(slotOfficialPrice)} (−{disc}%)
                                 </div>
                               </td>
 
