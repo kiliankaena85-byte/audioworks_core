@@ -666,8 +666,8 @@ export function HeroKotoLens({
           </div>
 
           {/* Спокойная строка отраслевого фокуса без лишних дублирующих ссылок */}
-          <div className="pt-6 border-t border-[#111111]/10 dark:border-white/10 -mx-4 px-4 sm:mx-0 sm:px-0 overflow-x-auto no-scrollbar">
-            <div className="inline-flex items-center gap-x-6 text-xs sm:text-sm">
+          <div className="pt-6 border-t border-[#111111]/10 dark:border-white/10">
+            <div className="flex flex-wrap items-center gap-x-4 sm:gap-x-6 gap-y-1.5 text-xs sm:text-sm">
               <span className="text-[#111111]/46 dark:text-[#F4F3EF]/46 font-medium whitespace-nowrap shrink-0">
                 Отраслевой фокус
               </span>
@@ -680,7 +680,7 @@ export function HeroKotoLens({
                     type="button"
                     onClick={() => selectPersonaProfile(personaKey)}
                     aria-pressed={isSelected}
-                    className={`min-h-[42px] inline-flex items-center font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 border-b-2 ${
+                    className={`min-h-[38px] sm:min-h-[42px] inline-flex items-center font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 border-b-2 ${
                       isSelected
                         ? 'text-[#111111] dark:text-[#F4F3EF] border-[#FF4820]'
                         : 'text-[#111111]/55 dark:text-[#F4F3EF]/55 border-transparent hover:text-[#111111] dark:hover:text-[#F4F3EF]'

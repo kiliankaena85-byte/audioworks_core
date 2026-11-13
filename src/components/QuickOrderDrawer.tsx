@@ -16,6 +16,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 're
 import { casePlayerEngine } from '../audio/casePlayerEngine';
 import { contrastAudioEngine } from '../audio/contrastAudioEngine';
 import {
+  EDITORIAL_PRICING_ROWS,
   generateOrderNumber,
   OrderFormatId,
   QUICK_ORDER_PILLS,
@@ -24,6 +25,7 @@ import {
   validateQuickOrder,
   writeSavedVipProfile,
 } from '../data/pricingData';
+import { buildMediaPlanSnapshotFromReservation } from '../data/orderCrmTypes';
 import {
   ComputedReservationTotals,
   computeReservationTotalsForSelection,
@@ -39,6 +41,7 @@ import {
   clientLeadRateLimiter,
   resolveLeadFormRateScope,
 } from '../security/leadShield';
+import { useLeadShieldForm } from '../security/useLeadShieldForm';
 
 interface QuickOrderDrawerProps {
   isOpen: boolean;
@@ -125,6 +128,10 @@ export function QuickOrderDrawer({
   const audioCtxRef = useRef<AudioContext | null>(null);
   const htmlPlayerRef = useRef<HTMLAudioElement | null>(null);
   const simPlaybackTimerRef = useRef<number | null>(null);
+
+  const { submitProtectedLead } = useLeadShieldForm(
+    isMediaBookingMode ? 'air_plus_production' : 'production_only'
+  );
 
   const reservationTotals = useMemo<ComputedReservationTotals | null>(() => {
     if (!mediaReservation) return null;
@@ -491,38 +498,29 @@ export function QuickOrderDrawer({
 
       const holdNum = 2810 + (mediaReservation.totalSpots % 580);
       const orderNum = `FM-HOLD-${holdNum}`;
+      const hasVoice = voiceStatus === 'recorded' || voiceStatus === 'recording';
 
-      if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
-        window
-          .fetch('/api/orders/submit', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              source: 'order_page',
-              checkoutMode: 'air_plus_production',
-              orderNumberCandidate: orderNum,
-              formatLabel: reservationTotals.spotStatusLabel,
-              totalBudgetRub: reservationTotals.unifiedTotalRub,
-              contactLine: effectiveContact,
-              companyLine: nextVip.company,
-              briefText: briefText.trim(),
-              hasVoiceRecording: voiceStatus === 'recorded' || voiceStatus === 'recording',
-              hasAttachedFile: Boolean(attachedFileName),
-              isReturningFastTrack,
-              requireBriefOrVoice: false,
-              websiteTrap: '',
-              dwellMs: 3200,
-              pointerMoves: 4,
-              keystrokes: 8,
-              focusEvents: 2,
-              challengeId: '',
-              challengeSalt: '',
-              challengeNonce: '',
-              powSolution: '',
-            }),
-          })
-          .catch(() => {});
-      }
+      void submitProtectedLead({
+        source: 'quick_order_drawer',
+        checkoutMode: 'air_plus_production',
+        orderNumberCandidate: orderNum,
+        formatLabel: reservationTotals.spotStatusLabel,
+        totalBudgetRub: reservationTotals.unifiedTotalRub,
+        contactLine: effectiveContact,
+        companyLine: nextVip.company,
+        briefText: briefText.trim(),
+        hasVoiceRecording: hasVoice,
+        voiceDurationSec: hasVoice ? Math.max(4, recordSeconds) : 0,
+        hasAttachedFile: Boolean(attachedFileName),
+        attachedFileName,
+        mediaPlanSnapshot: buildMediaPlanSnapshotFromReservation(
+          mediaReservation,
+          reservationTotals
+        ),
+        isReturningFastTrack,
+        requireBriefOrVoice: false,
+        skipClientRateConsume: true,
+      });
 
       setConfirmedOrder({
         orderNumber: orderNum,
@@ -530,7 +528,7 @@ export function QuickOrderDrawer({
         contact: effectiveContact,
         companyRequisites: nextVip.company,
         briefNote: briefText.trim(),
-        hasVoice: voiceStatus === 'recorded' || voiceStatus === 'recording',
+        hasVoice,
         voiceSec: Math.max(4, recordSeconds),
         fileName: attachedFileName,
         lockedMediaReservation: mediaReservation,
@@ -572,38 +570,28 @@ export function QuickOrderDrawer({
 
     const chosenPill =
       QUICK_ORDER_PILLS.find((p) => p.id === selectedFormat) ?? QUICK_ORDER_PILLS[1];
+    const pricingRow = EDITORIAL_PRICING_ROWS.find((r) => r.id === selectedFormat) ?? null;
     const orderNum = generateOrderNumber();
+    const hasVoice = voiceStatus === 'recorded' || voiceStatus === 'recording';
 
-    if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
-      window
-        .fetch('/api/orders/submit', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            source: 'order_page',
-            checkoutMode: 'production_only',
-            orderNumberCandidate: orderNum,
-            formatLabel: chosenPill.label,
-            contactLine: effectiveContact,
-            companyLine: nextVip.company,
-            briefText: briefText.trim(),
-            hasVoiceRecording: voiceStatus === 'recorded' || voiceStatus === 'recording',
-            hasAttachedFile: Boolean(attachedFileName),
-            isReturningFastTrack,
-            requireBriefOrVoice: true,
-            websiteTrap: '',
-            dwellMs: 3200,
-            pointerMoves: 4,
-            keystrokes: 8,
-            focusEvents: 2,
-            challengeId: '',
-            challengeSalt: '',
-            challengeNonce: '',
-            powSolution: '',
-          }),
-        })
-        .catch(() => {});
-    }
+    void submitProtectedLead({
+      source: 'quick_order_drawer',
+      checkoutMode: 'production_only',
+      orderNumberCandidate: orderNum,
+      formatLabel: chosenPill.label,
+      totalBudgetRub: pricingRow?.priceRub ?? 25_000,
+      contactLine: effectiveContact,
+      companyLine: nextVip.company,
+      briefText: briefText.trim(),
+      hasVoiceRecording: hasVoice,
+      voiceDurationSec: hasVoice ? Math.max(4, recordSeconds) : 0,
+      hasAttachedFile: Boolean(attachedFileName),
+      attachedFileName,
+      mediaPlanSnapshot: null,
+      isReturningFastTrack,
+      requireBriefOrVoice: true,
+      skipClientRateConsume: true,
+    });
 
     setConfirmedOrder({
       orderNumber: orderNum,
@@ -1312,10 +1300,10 @@ export function QuickOrderDrawer({
                         type="button"
                         data-testid="drawer-attach-requisites-btn"
                         onClick={() => fileInputRef.current?.click()}
-                        className="min-h-[42px] inline-flex items-center gap-2 px-3.5 py-2 rounded-full border border-[#111111]/15 dark:border-[#F4F3EF]/15 text-xs font-medium text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:border-[#111111]/40 dark:hover:border-[#F4F3EF]/40 transition-colors cursor-pointer whitespace-nowrap"
+                        className="min-h-[42px] max-w-full inline-flex items-center gap-2 px-3.5 py-2 rounded-full border border-[#111111]/15 dark:border-[#F4F3EF]/15 text-xs font-medium text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:border-[#111111]/40 dark:hover:border-[#F4F3EF]/40 transition-colors cursor-pointer whitespace-nowrap overflow-hidden"
                       >
                         <Paperclip className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                        <span className="truncate max-w-[260px]">
+                        <span className="truncate max-w-[220px] sm:max-w-[260px]">
                           {attachedFileName
                             ? attachedFileName
                             : isMediaBookingMode

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { OrderMediaPlanSnapshot } from '../data/orderCrmTypes';
 import {
   DEFAULT_LEAD_MAX_ATTEMPTS,
   DEFAULT_LEAD_MIN_INTERVAL_MS,
@@ -28,7 +29,10 @@ export interface SubmitProtectedLeadInput {
   companyLine: string;
   briefText: string;
   hasVoiceRecording: boolean;
+  voiceDurationSec?: number;
   hasAttachedFile: boolean;
+  attachedFileName?: string | null;
+  mediaPlanSnapshot?: OrderMediaPlanSnapshot | null;
   isReturningFastTrack: boolean;
   requireBriefOrVoice: boolean;
   /** Если вызывающий компонент (например, OrderPage) уже зафиксировал попытку через useRateLimit */

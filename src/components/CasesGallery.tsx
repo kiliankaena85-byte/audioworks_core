@@ -235,7 +235,7 @@ function ShareCaseButton({ item, isCopied, onShare }: ShareCaseButtonProps) {
       onClick={() => onShare(item)}
       aria-label={isCopied ? 'Ссылка скопирована' : `Поделиться кейсом «${item.client}»`}
       title={isCopied ? 'Ссылка скопирована' : 'Поделиться кейсом'}
-      className={`h-11 w-11 rounded-full inline-flex items-center justify-center transition-colors cursor-pointer backdrop-blur-md border shrink-0 ${
+      className={`h-10 w-10 sm:h-11 sm:w-11 rounded-full inline-flex items-center justify-center transition-colors cursor-pointer backdrop-blur-md border shrink-0 ${
         isCopied
           ? 'bg-white text-[#111111] border-white'
           : 'bg-black/40 hover:bg-black/65 text-white/85 hover:text-white border-white/18'
@@ -450,7 +450,7 @@ function StudioCommercialStrip({
           </p>
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           {isReelPreviewPlaying && (
             <span
               data-testid={`case-preview-status-${reel.id}`}
@@ -472,7 +472,7 @@ function StudioCommercialStrip({
                 ? `Остановить ${reel.client}`
                 : `Слушать ${reel.client} целиком`
             }
-            className={`min-h-[44px] px-5 py-2.5 rounded-full inline-flex items-center gap-2.5 text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+            className={`min-h-[42px] sm:min-h-[44px] px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-full inline-flex items-center gap-2 text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
               isReelFullPlaying
                 ? 'bg-[#FF4820] text-white'
                 : 'bg-white text-[#111111] hover:bg-[#FF4820] hover:text-white'
@@ -504,7 +504,7 @@ function StudioCommercialStrip({
                 clearPendingTimer();
                 onOpenCaseDetail(reel.id);
               }}
-              className="min-h-[44px] px-4 py-2.5 rounded-full inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold bg-white/10 hover:bg-white/20 text-white border border-white/18 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              className="min-h-[42px] sm:min-h-[44px] px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-full inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold bg-white/10 hover:bg-white/20 text-white border border-white/18 transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
               <span>Разбор</span>
               <ArrowUpRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
@@ -638,8 +638,8 @@ function BrandCaseCard({
               currentTimeSec={currentTimeSec}
             />
 
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
                 <button
                   type="button"
                   onClick={() => {
@@ -651,7 +651,7 @@ function BrandCaseCard({
                       ? `Остановить кейс «${item.client}»`
                       : `Слушать кейс «${item.client}»`
                   }
-                  className={`min-h-[44px] px-5 py-2.5 rounded-full inline-flex items-center gap-2.5 text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  className={`min-h-[42px] sm:min-h-[44px] px-4 sm:px-5 py-2 sm:py-2.5 rounded-full inline-flex items-center gap-2 text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                     isThisFullPlaying
                       ? 'bg-[#FF4820] text-white'
                       : 'bg-white text-[#111111] hover:bg-[#FF4820] hover:text-white'
@@ -679,7 +679,7 @@ function BrandCaseCard({
                       clearPendingTimer();
                       onOpenCaseDetail(item.id);
                     }}
-                    className="min-h-[44px] px-4 py-2.5 rounded-full inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold bg-white/10 hover:bg-white/20 text-white border border-white/18 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                    className="min-h-[42px] sm:min-h-[44px] px-3 sm:px-4 py-2 sm:py-2.5 rounded-full inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold bg-white/10 hover:bg-white/20 text-white border border-white/18 transition-colors cursor-pointer whitespace-nowrap shrink-0"
                   >
                     <span>Сценарий</span>
                     <ArrowUpRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
@@ -800,8 +800,8 @@ function BrandCaseCard({
             currentTimeSec={currentTimeSec}
           />
 
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
               <button
                 type="button"
                 onClick={() => {
@@ -813,7 +813,7 @@ function BrandCaseCard({
                     ? `Остановить кейс «${item.client}»`
                     : `Слушать кейс «${item.client}»`
                 }
-                className={`min-h-[44px] px-5 py-2.5 rounded-full inline-flex items-center gap-2.5 text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap backdrop-blur-md border shrink-0 ${
+                className={`min-h-[42px] sm:min-h-[44px] px-4 sm:px-5 py-2 sm:py-2.5 rounded-full inline-flex items-center gap-2 text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap backdrop-blur-md border shrink-0 ${
                   isThisFullPlaying
                     ? 'bg-[#FF4820] border-[#FF4820] text-white'
                     : 'bg-black/45 hover:bg-black/65 border-white/22 text-white'
@@ -841,7 +841,7 @@ function BrandCaseCard({
                     clearPendingTimer();
                     onOpenCaseDetail(item.id);
                   }}
-                  className="min-h-[44px] px-4 py-2.5 rounded-full inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold bg-black/45 hover:bg-black/65 text-white border border-white/20 backdrop-blur-md transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                  className="min-h-[42px] sm:min-h-[44px] px-3 sm:px-4 py-2 sm:py-2.5 rounded-full inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold bg-black/45 hover:bg-black/65 text-white border border-white/20 backdrop-blur-md transition-colors cursor-pointer whitespace-nowrap shrink-0"
                 >
                   <span>Сценарий</span>
                   <ArrowUpRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />

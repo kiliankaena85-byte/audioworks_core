@@ -1,7 +1,8 @@
-import { Menu, Moon, Sun, X } from 'lucide-react';
+import { CheckCircle2, Menu, Moon, Sun, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from 'react';
 import { BrandDomainVariant } from '../data/brandKitData';
+import { ReservationLifecycleStatus } from '../data/orderDraftStore';
 import {
   MAIN_PLATFORM_NAV_ITEMS,
   PlatformRoute,
@@ -16,8 +17,11 @@ interface CompactHeaderNavProps {
   activeRoute: PlatformRoute;
   hasActiveHold: boolean;
   holdStationsCount: number;
+  reservationStatus?: ReservationLifecycleStatus;
+  confirmedOrderNumber?: string | null;
   onNavigate: (route: PlatformRoute) => void;
   onOpenOrder: () => void;
+  onOpenConfirmedModal?: () => void;
   brandVariant?: BrandDomainVariant;
   onOpenBrandKit?: () => void;
 }
@@ -43,8 +47,11 @@ export function CompactHeaderNav({
   activeRoute,
   hasActiveHold,
   holdStationsCount,
+  reservationStatus,
+  confirmedOrderNumber = null,
   onNavigate,
   onOpenOrder,
+  onOpenConfirmedModal,
   brandVariant = 'fmworks_reg',
   onOpenBrandKit,
 }: CompactHeaderNavProps) {
@@ -54,6 +61,9 @@ export function CompactHeaderNav({
   const headerRef = useRef<HTMLElement | null>(null);
   const activeTopSection = resolveActiveTopNavSection(activeRoute);
   const isOrderActive = activeRoute.kind === 'order';
+
+  const effectiveStatus: ReservationLifecycleStatus =
+    reservationStatus ?? (hasActiveHold ? 'draft_selected' : 'none');
 
   useEffect(() => {
     const syncScroll = () => {
@@ -113,6 +123,15 @@ export function CompactHeaderNav({
     onNavigate(targetRoute);
   };
 
+  const handlePrimaryCtaClick = () => {
+    setIsMobileMenuOpen(false);
+    if (effectiveStatus === 'confirmed_hold' && onOpenConfirmedModal) {
+      onOpenConfirmedModal();
+      return;
+    }
+    onOpenOrder();
+  };
+
   return (
     <header
       ref={headerRef}
@@ -123,7 +142,7 @@ export function CompactHeaderNav({
           : 'border-transparent'
       }`}
     >
-      <div className="max-w-7xl mx-auto h-full px-4 sm:px-6 lg:px-12 flex items-center justify-between gap-8 relative">
+      <div className="max-w-7xl mx-auto h-full px-3 sm:px-6 lg:px-12 flex items-center justify-between gap-2 sm:gap-4 lg:gap-8 relative">
         {/* Зона 1: Логотип бренда */}
         <a
           href="/"
@@ -134,7 +153,7 @@ export function CompactHeaderNav({
             onOpenBrandKit();
           }}
           title="Главная страница FMWorks · Правый клик открывает Brand Kit"
-          className="inline-flex items-center whitespace-nowrap shrink-0 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#FF4820]"
+          className="inline-flex items-center whitespace-nowrap shrink-0 rounded-lg max-sm:scale-[0.86] origin-left focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#FF4820]"
         >
           <BrandLogo
             variant={brandVariant}
@@ -177,13 +196,13 @@ export function CompactHeaderNav({
           })}
         </nav>
 
-        {/* Зона 3: Тема, мобильное меню и единственное главное действие */}
-        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        {/* Зона 3: Тема, мобильное меню и единственное главное действие с разделением черновика и принятой брони */}
+        <div className="flex items-center gap-1 sm:gap-2 shrink-0 min-w-0">
           <button
             type="button"
             onClick={onToggleTheme}
             aria-label={isDark ? 'Включить светлую тему' : 'Включить тёмную тему'}
-            className="w-10 h-10 rounded-full flex items-center justify-center text-[#111111]/68 dark:text-[#F4F3EF]/68 hover:text-[#111111] dark:hover:text-[#F4F3EF] hover:bg-[#111111]/6 dark:hover:bg-white/8 transition-colors cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+            className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-[#111111]/68 dark:text-[#F4F3EF]/68 hover:text-[#111111] dark:hover:text-[#F4F3EF] hover:bg-[#111111]/6 dark:hover:bg-white/8 transition-colors cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
           >
             {isDark ? (
               <Sun className="w-4 h-4" aria-hidden="true" />
@@ -198,7 +217,7 @@ export function CompactHeaderNav({
             aria-expanded={isMobileMenuOpen}
             aria-controls="compact-mobile-nav"
             aria-label={isMobileMenuOpen ? 'Закрыть меню разделов' : 'Открыть меню разделов'}
-            className="md:hidden w-10 h-10 rounded-full flex items-center justify-center text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:bg-[#111111]/6 dark:hover:bg-white/8 transition-colors cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+            className="md:hidden w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:bg-[#111111]/6 dark:hover:bg-white/8 transition-colors cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
           >
             {isMobileMenuOpen ? (
               <X className="w-4 h-4" aria-hidden="true" />
@@ -210,22 +229,42 @@ export function CompactHeaderNav({
           <button
             type="button"
             data-testid="header-order-cta"
-            onClick={() => {
-              setIsMobileMenuOpen(false);
-              onOpenOrder();
-            }}
+            data-reservation-status={effectiveStatus}
+            onClick={handlePrimaryCtaClick}
             aria-current={isOrderActive ? 'page' : undefined}
-            className={`h-9 sm:h-10 px-4 sm:px-5 rounded-full text-xs sm:text-[13px] font-semibold tracking-tight inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
-              isOrderActive
-                ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                : 'bg-[#FF4820] hover:bg-[#E63D18] text-white'
+            className={`h-8 sm:h-10 px-2.5 sm:px-5 rounded-full text-[11px] sm:text-[13px] font-semibold tracking-tight inline-flex items-center justify-center gap-1 sm:gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
+              effectiveStatus === 'confirmed_hold'
+                ? 'bg-[#111111] text-[#F7F6F2] hover:bg-[#FF4820] hover:text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white'
+                : isOrderActive
+                  ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                  : 'bg-[#FF4820] hover:bg-[#E63D18] text-white'
             }`}
           >
-            <span>
-              {hasActiveHold
-                ? `Бронь эфира · ${holdStationsCount}`
-                : 'Оформить заказ'}
-            </span>
+            {effectiveStatus === 'confirmed_hold' ? (
+              <>
+                <CheckCircle2
+                  className="w-3.5 h-3.5 text-[#FF4820] shrink-0"
+                  aria-hidden="true"
+                />
+                <span className="sm:hidden">Бронь принята</span>
+                <span className="hidden sm:inline">
+                  {confirmedOrderNumber
+                    ? `Бронь #${confirmedOrderNumber} принята`
+                    : 'Бронь принята · Статус'}
+                </span>
+              </>
+            ) : effectiveStatus === 'draft_selected' ? (
+              <>
+                <span className="sm:hidden">
+                  Выбрано {holdStationsCount} ст.
+                </span>
+                <span className="hidden sm:inline">
+                  Выбрано {holdStationsCount} ст. · Завершить бронь
+                </span>
+              </>
+            ) : (
+              <span>Оформить заказ</span>
+            )}
           </button>
         </div>
 

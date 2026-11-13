@@ -95,7 +95,7 @@ export function CasesPage({
 
           <a
             href="#industry-solutions-hub"
-            className="min-h-[44px] px-5 py-2.5 rounded-full border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 self-start lg:self-auto"
+            className="min-h-[44px] max-w-full px-4 sm:px-5 py-2.5 rounded-full border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition-colors sm:whitespace-nowrap shrink-0 self-start lg:self-auto"
           >
             <span>Отраслевые решения: ЖК, медицина, ритейл, B2B ↓</span>
           </a>

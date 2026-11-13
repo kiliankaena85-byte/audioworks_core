@@ -5,6 +5,7 @@ import {
   FlexibleMediaPlanResult,
   formatAudienceSummaryLine,
 } from '../data/mediaPlannerCore';
+import { buildMediaPlanSnapshotFromFlexiblePlan } from '../data/orderCrmTypes';
 import {
   formatNumberSpaced,
   formatRubCompact,
@@ -284,7 +285,7 @@ export function MediaProposalModal({
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-1 print:hidden">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 print:hidden">
                 <p className="text-xs text-[#111111]/55">
                   hello@fmworks.ru · Все закрывающие документы и регистрация ОРД включены
                 </p>
@@ -294,7 +295,7 @@ export function MediaProposalModal({
                     onClose();
                     onReserveFromProposal();
                   }}
-                  className="min-h-[42px] px-5 py-2.5 rounded-full bg-[#FF4820] hover:bg-[#E63E19] text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
+                  className="w-full sm:w-auto max-w-full min-h-[42px] px-4 sm:px-5 py-2.5 rounded-full bg-[#FF4820] hover:bg-[#E63E19] text-white text-xs font-semibold transition-colors cursor-pointer text-center leading-snug inline-flex items-center justify-center shrink-0"
                 >
                   Поставить этот медиаплан в резерв на 4 часа
                 </button>
@@ -359,6 +360,7 @@ export function StandaloneHoldModal({ isOpen, plan, onClose }: StandaloneHoldMod
       briefText: plan.productNote,
       hasVoiceRecording: false,
       hasAttachedFile: false,
+      mediaPlanSnapshot: buildMediaPlanSnapshotFromFlexiblePlan(plan),
       isReturningFastTrack: false,
       requireBriefOrVoice: false,
     });

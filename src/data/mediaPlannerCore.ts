@@ -1820,7 +1820,7 @@ export function computeFlexibleMediaPlanSummary(params: {
 
       const activeSpots = selectionMap.get(variation.id) ?? variation.defaultSpots;
       const effectiveFloor =
-        selectionMap.has(variation.id) && totalBudgetRub <= 75_000
+        selectionMap.has(variation.id) && (totalBudgetRub <= 75_000 || spotSeconds >= 22)
           ? Math.min(3, variation.minSpots)
           : variation.minSpots;
       const clampedSpots = Math.max(
@@ -1994,9 +1994,11 @@ export function recommendOptimalMediaPlan(params: {
     ? [...params.stationsCatalog]
     : buildMergedStationCatalog();
 
-  // Базовая оценка всех слотов без выбора
+  // Базовая оценка слотов для автоподбора выполняется по единому эталону,
+  // чтобы переключение «Нужен ролик / Есть свой ролик» не меняло выбранные радиостанции и охваты OTS
   const baseEval = computeFlexibleMediaPlanSummary({
     ...params,
+    spotReadiness: 'need_production_24h',
     totalBudgetRub: clampedBudget,
     spotSeconds,
     selectedVariations: [],

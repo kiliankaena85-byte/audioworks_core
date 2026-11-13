@@ -4,10 +4,9 @@ import {
   DEFAULT_LEAD_MIN_INTERVAL_MS,
   DEFAULT_LEAD_WINDOW_MS,
   LEAD_RATE_LIMIT_STORAGE_KEY,
-  RateLimitCheckResult,
   RateLimiter,
-  StorageLike,
-} from './rateLimiter';
+} from './rateLimiter.ts';
+import type { RateLimitCheckResult, StorageLike } from './rateLimiter.ts';
 
 export interface UseRateLimitOptions {
   /** Идентификатор формы или действия в localStorage (например, 'production_order', 'air_booking', 'quota_import') */

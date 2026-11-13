@@ -7,15 +7,15 @@ export {
   LEAD_RATE_LIMIT_STORAGE_KEY,
   RateLimiter,
   resolveLeadFormRateScope,
-} from './rateLimiter';
+} from './rateLimiter.ts';
 export type {
   LeadFormRateScope,
   RateLimitCheckResult,
   RateLimiterConfig,
   StorageLike,
-} from './rateLimiter';
-export { createRateLimitController, useRateLimit } from './useRateLimit';
-export type { UseRateLimitOptions, UseRateLimitReturn } from './useRateLimit';
+} from './rateLimiter.ts';
+export { createRateLimitController, useRateLimit } from './useRateLimit.ts';
+export type { UseRateLimitOptions, UseRateLimitReturn } from './useRateLimit.ts';
 
 export type ContactChannelKind = 'phone' | 'telegram' | 'email' | 'vip_saved';
 

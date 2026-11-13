@@ -61,12 +61,12 @@ export function TestimonialsSection({
             </p>
           </div>
 
-          {/* Interactive Filter Controls (Swipeable on <640px, Fully Visible on sm:+ / Desktop) */}
-          <div className="-mx-4 px-4 sm:mx-0 sm:px-0 overflow-x-auto sm:overflow-visible no-scrollbar">
+          {/* Interactive Filter Controls */}
+          <div className="w-full sm:w-auto">
             <div
               role="group"
               aria-label="Фильтр отзывов по индустрии"
-              className="inline-flex sm:flex sm:flex-wrap items-center gap-1 p-1 rounded-2xl bg-[#EFECE5] dark:bg-[#16161B] border border-[#111111]/8 dark:border-white/10 w-max sm:w-fit"
+              className="flex flex-wrap items-center gap-1 p-1 rounded-2xl bg-[#EFECE5] dark:bg-[#16161B] border border-[#111111]/8 dark:border-white/10 w-full sm:w-fit"
             >
               {TESTIMONIAL_FILTERS.map((tab) => {
                 const isActive = activeFilter === tab.id;
@@ -76,7 +76,7 @@ export function TestimonialsSection({
                     type="button"
                     onClick={() => setActiveFilter(tab.id)}
                     aria-pressed={isActive}
-                    className={`min-h-[44px] px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
+                    className={`min-h-[38px] sm:min-h-[44px] px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
                       isActive
                         ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] shadow-xs'
                         : 'text-[#111111]/68 dark:text-[#F4F3EF]/68 hover:text-[#111111] dark:hover:text-[#F4F3EF]'

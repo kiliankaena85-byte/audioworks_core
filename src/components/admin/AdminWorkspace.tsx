@@ -3,7 +3,9 @@ import {
   ArrowUpRight,
   AudioWaveform,
   CheckCircle2,
+  ClipboardList,
   FileText,
+  FlaskConical,
   FolderKanban,
   LogOut,
   Moon,
@@ -24,12 +26,15 @@ import {
 import { BrandLogo } from '../BrandLogo';
 import { AdminDuelPanel } from './AdminDuelPanel';
 import { AdminLoginScreen } from './AdminLoginScreen';
+import { AdminOrdersCrmPanel } from './AdminOrdersCrmPanel';
 import { AdminPortfolioPanel } from './AdminPortfolioPanel';
 import { AdminSecurityPanel } from './AdminSecurityPanel';
 import { AdminSiteCopyPanel } from './AdminSiteCopyPanel';
 import { AdminTextBlocksPanel } from './AdminTextBlocksPanel';
 
 export type AdminSectionTab =
+  | 'orders_crm'
+  | 'science_plan'
   | 'portfolio'
   | 'text_blocks'
   | 'duel'
@@ -86,7 +91,7 @@ export function AdminWorkspace({
     resetAllBlocks: resetLiveTextBlocks,
   } = useSiteTextBlocks();
 
-  const [activeTab, setActiveTab] = useState<AdminSectionTab>('portfolio');
+  const [activeTab, setActiveTab] = useState<AdminSectionTab>('orders_crm');
   const [saveBanner, setSaveBanner] = useState<{
     kind: 'ok' | 'error';
     text: string;
@@ -173,6 +178,16 @@ export function AdminWorkspace({
     AdminSectionTab,
     { label: string; subtitle: string }
   > = {
+    orders_crm: {
+      label: 'Заказы и воронка (CRM)',
+      subtitle:
+        'Приём резервов эфира с таймером 4ч, генератор счёта-спецификации ЭДО и шлюзы доставки в Telegram и внешние CRM',
+    },
+    science_plan: {
+      label: 'Научный план развития',
+      subtitle:
+        'Когнитивный порог 5+ касаний, атрибуция Search Lift за рулём, психоакустика первых 3 секунд и LTV повторных волн',
+    },
     portfolio: {
       label: 'Портфолио и звук · Волна 1',
       subtitle:
@@ -202,6 +217,8 @@ export function AdminWorkspace({
 
   const formattedTime = formatUpdatedTimestamp(snapshot.updatedAt);
   const isLiveTextTab = activeTab === 'text_blocks';
+  const isOrdersOrScienceTab =
+    activeTab === 'orders_crm' || activeTab === 'science_plan';
 
   return (
     <div className="min-h-screen bg-[#F7F6F2] text-[#111111] dark:bg-[#0D0D0F] dark:text-[#F4F3EF] flex flex-col lg:flex-row">
@@ -223,6 +240,46 @@ export function AdminWorkspace({
           </div>
 
           <nav aria-label="Разделы кабинета студии" className="space-y-1.5">
+            <button
+              type="button"
+              data-testid="admin-nav-orders-crm"
+              onClick={() => {
+                setActiveTab('orders_crm');
+                setSaveBanner(null);
+              }}
+              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
+                activeTab === 'orders_crm'
+                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+              }`}
+            >
+              <span className="inline-flex items-center gap-2.5">
+                <ClipboardList className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span>Заказы и воронка (CRM)</span>
+              </span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="admin-nav-science-plan"
+              onClick={() => {
+                setActiveTab('science_plan');
+                setSaveBanner(null);
+              }}
+              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
+                activeTab === 'science_plan'
+                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+              }`}
+            >
+              <span className="inline-flex items-center gap-2.5">
+                <FlaskConical className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span>Научный план развития</span>
+              </span>
+            </button>
+
+            <div className="my-2 border-t border-[#111111]/8 dark:border-white/8" />
+
             <button
               type="button"
               data-testid="admin-nav-portfolio"
@@ -375,7 +432,18 @@ export function AdminWorkspace({
                 {SECTION_META[activeTab].label}
               </span>
               <span aria-hidden="true">·</span>
-              {isLiveTextTab ? (
+              {isOrdersOrScienceTab ? (
+                <span
+                  data-testid="admin-crm-realtime-status"
+                  className="inline-flex items-center gap-1.5 font-medium text-[#16A34A] dark:text-[#4ADE80] tabular-nums"
+                >
+                  <CheckCircle2
+                    className="w-3.5 h-3.5 shrink-0"
+                    aria-hidden="true"
+                  />
+                  <span>Реестр сделок на сервере · автосохранение</span>
+                </span>
+              ) : isLiveTextTab ? (
                 liveModifiedCount > 0 ? (
                   <span
                     data-testid="admin-live-session-status"
@@ -440,7 +508,20 @@ export function AdminWorkspace({
           </div>
 
           <div className="flex items-center gap-2.5 shrink-0">
-            {isLiveTextTab ? (
+            {isOrdersOrScienceTab ? (
+              <button
+                type="button"
+                data-testid="admin-open-live-site-btn"
+                onClick={onNavigateHome}
+                className="min-h-[40px] px-4 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <span>На витрину сайта</span>
+                <ArrowUpRight
+                  className="w-3.5 h-3.5 shrink-0"
+                  aria-hidden="true"
+                />
+              </button>
+            ) : isLiveTextTab ? (
               <>
                 {liveModifiedCount > 0 && (
                   <button
@@ -544,6 +625,12 @@ export function AdminWorkspace({
                 Редакционный контроль FMWorks: в тексте встретились нежелательные штампы или гео-привязки ({guardrailWarnings.join(', ')}). Рекомендуем заменить их на нейтральные формулировки федерального продакшна.
               </span>
             </div>
+          )}
+
+          {isOrdersOrScienceTab && (
+            <AdminOrdersCrmPanel
+              initialSubView={activeTab === 'science_plan' ? 'science' : 'funnel'}
+            />
           )}
 
           {activeTab === 'portfolio' && (

@@ -20,7 +20,13 @@ import { casePlayerEngine } from '../../audio/casePlayerEngine';
 import { contrastAudioEngine } from '../../audio/contrastAudioEngine';
 import { INDUSTRY_SOLUTIONS } from '../../data/multiPageContentData';
 import {
+  buildMediaPlanSnapshotFromReservation,
+} from '../../data/orderCrmTypes';
+import {
+  buildClientNextStepsTimeline,
   computeRemainingHoldSeconds,
+  ConfirmedReservationSummary,
+  DEFAULT_HOLD_WINDOW_SECONDS,
   OrderCheckoutMode,
   OrderDraftSnapshot,
   orderDraftStore,
@@ -33,7 +39,6 @@ import {
 import {
   EDITORIAL_PRICING_ROWS,
   generateOrderNumber,
-  OrderFormatId,
   QUICK_ORDER_PILLS,
   readSavedVipProfile,
   SavedVipProfile,
@@ -47,7 +52,6 @@ import {
   formatHoldCountdown,
   formatNumberSpaced,
   formatRubCompact,
-  MediaGridReservationPayload,
   ReservationProductionSelection,
 } from '../../data/radioInventory';
 import { useLayaDecision } from '../../engine/LayaContext';
@@ -58,6 +62,7 @@ import {
 } from '../../security/leadShield';
 import { useLeadShieldForm } from '../../security/useLeadShieldForm';
 import { useRateLimit } from '../../security/useRateLimit';
+import { ReservationConfirmedModal } from '../ReservationConfirmedModal';
 
 interface OrderPageProps {
   draft: OrderDraftSnapshot;
@@ -112,22 +117,9 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
   const [companyError, setCompanyError] = useState<string | undefined>();
   const [taskError, setTaskError] = useState<string | undefined>();
   const [rateLimitError, setRateLimitError] = useState<string | undefined>();
-  const [confirmedOrder, setConfirmedOrder] = useState<{
-    orderNumber: string;
-    formatLabel: string;
-    spotDurationSec: number;
-    industryLabel: string | null;
-    contact: string;
-    companyRequisites: string;
-    briefNote: string;
-    hasVoice: boolean;
-    voiceSec: number;
-    fileName: string | null;
-    lockedMediaReservation: MediaGridReservationPayload | null;
-    lockedTotals: ComputedReservationTotals | null;
-    conversionAllowed: boolean;
-    innVerified: boolean;
-  } | null>(null);
+  const [confirmedOrder, setConfirmedOrder] =
+    useState<ConfirmedReservationSummary | null>(() => draft.confirmedReservation);
+  const [isConfirmedModalOpen, setIsConfirmedModalOpen] = useState<boolean>(false);
 
   const activeRateScope = resolveLeadFormRateScope(
     isMediaBookingMode ? 'air_plus_production' : 'production_only'
@@ -176,6 +168,18 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       draft.reservationProdSelection
     );
   }, [mediaReservation, draft.reservationProdSelection]);
+
+  // При открытии страницы оформления всегда прокручиваем экран к началу (Шаг 01 — быстрый контакт)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
+    }
+  }, []);
+
+  // Синхронизация подтверждённой брони из хранилища (например, если была создана новая бронь в медиапланере)
+  useEffect(() => {
+    setConfirmedOrder(draft.confirmedReservation);
+  }, [draft.confirmedReservation]);
 
   // Автоподстановка сохранённого VIP-профиля при входе на страницу
   useEffect(() => {
@@ -228,6 +232,8 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
 
   const handleSwitchMode = (nextMode: OrderCheckoutMode) => {
     setConfirmedOrder(null);
+    setIsConfirmedModalOpen(false);
+    orderDraftStore.clearConfirmedReservation();
     setContactError(undefined);
     setCompanyError(undefined);
     setTaskError(undefined);
@@ -518,7 +524,13 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
         companyLine: effectiveCompany,
         briefText: draft.briefText.trim(),
         hasVoiceRecording: hasVoice,
+        voiceDurationSec: hasVoice ? Math.max(4, recordSeconds) : 0,
         hasAttachedFile: Boolean(attachedFileName),
+        attachedFileName,
+        mediaPlanSnapshot: buildMediaPlanSnapshotFromReservation(
+          mediaReservation,
+          reservationTotals
+        ),
         isReturningFastTrack,
         requireBriefOrVoice: false,
         skipClientRateConsume: true,
@@ -545,13 +557,18 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
         setIsEditingVipContact(false);
       }
 
-      setConfirmedOrder({
+      const nowMs = Date.now();
+      const summary: ConfirmedReservationSummary = {
         orderNumber: shieldResult.orderNumber,
+        confirmedAtMs: nowMs,
+        holdExpiresAtMs:
+          draft.holdExpiresAtMs ?? nowMs + DEFAULT_HOLD_WINDOW_SECONDS * 1000,
+        checkoutMode: 'air_plus_production',
         formatLabel: reservationTotals.spotStatusLabel,
         spotDurationSec: mediaReservation.spotDurationSec ?? draft.spotDurationSec,
         industryLabel: mediaReservation.nicheLabel,
-        contact: effectiveContact,
-        companyRequisites: nextVip.company,
+        contactLine: effectiveContact,
+        companyLine: nextVip.company,
         briefNote: draft.briefText.trim(),
         hasVoice,
         voiceSec: Math.max(4, recordSeconds),
@@ -560,7 +577,11 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
         lockedTotals: reservationTotals,
         conversionAllowed: shieldResult.conversionAllowed,
         innVerified: shieldResult.innVerified,
-      });
+      };
+
+      orderDraftStore.confirmReservationOrder(summary);
+      setConfirmedOrder(summary);
+      setIsConfirmedModalOpen(true);
       return;
     }
 
@@ -615,7 +636,10 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       companyLine: effectiveCompany,
       briefText: draft.briefText.trim(),
       hasVoiceRecording: hasVoice,
+      voiceDurationSec: hasVoice ? Math.max(4, recordSeconds) : 0,
       hasAttachedFile: Boolean(attachedFileName),
+      attachedFileName,
+      mediaPlanSnapshot: null,
       isReturningFastTrack,
       requireBriefOrVoice: true,
       skipClientRateConsume: true,
@@ -642,13 +666,17 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       setIsEditingVipContact(false);
     }
 
-    setConfirmedOrder({
+    const nowMs = Date.now();
+    const summary: ConfirmedReservationSummary = {
       orderNumber: shieldResult.orderNumber,
+      confirmedAtMs: nowMs,
+      holdExpiresAtMs: nowMs + DEFAULT_HOLD_WINDOW_SECONDS * 1000,
+      checkoutMode: 'production_only',
       formatLabel: chosenPill.label,
       spotDurationSec: draft.spotDurationSec,
       industryLabel: activeIndustrySpec?.shortTitle ?? null,
-      contact: effectiveContact,
-      companyRequisites: nextVip.company,
+      contactLine: effectiveContact,
+      companyLine: nextVip.company,
       briefNote: draft.briefText.trim(),
       hasVoice,
       voiceSec: Math.max(4, recordSeconds),
@@ -657,7 +685,11 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       lockedTotals: null,
       conversionAllowed: shieldResult.conversionAllowed,
       innVerified: shieldResult.innVerified,
-    });
+    };
+
+    orderDraftStore.confirmReservationOrder(summary);
+    setConfirmedOrder(summary);
+    setIsConfirmedModalOpen(true);
   };
 
   const handleCopyBookingSpec = async () => {
@@ -666,8 +698,8 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       orderNumber: confirmedOrder.orderNumber,
       payload: confirmedOrder.lockedMediaReservation,
       totals: confirmedOrder.lockedTotals,
-      contact: confirmedOrder.contact,
-      companyRequisites: confirmedOrder.companyRequisites,
+      contact: confirmedOrder.contactLine,
+      companyRequisites: confirmedOrder.companyLine,
       briefText: confirmedOrder.briefNote,
       hasVoice: confirmedOrder.hasVoice,
       voiceSec: confirmedOrder.voiceSec,
@@ -691,8 +723,8 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       orderNumber: confirmedOrder.orderNumber,
       payload: confirmedOrder.lockedMediaReservation,
       totals: confirmedOrder.lockedTotals,
-      contact: confirmedOrder.contact,
-      companyRequisites: confirmedOrder.companyRequisites,
+      contact: confirmedOrder.contactLine,
+      companyRequisites: confirmedOrder.companyLine,
       briefText: confirmedOrder.briefNote,
       hasVoice: confirmedOrder.hasVoice,
       voiceSec: confirmedOrder.voiceSec,
@@ -711,6 +743,8 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
 
   const resetForAnotherOrder = () => {
     setConfirmedOrder(null);
+    setIsConfirmedModalOpen(false);
+    orderDraftStore.clearConfirmedReservation();
     setCopiedSpec(false);
     setRateLimitError(undefined);
     orderDraftStore.updateDraft({ briefText: '' });
@@ -741,6 +775,14 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
         { id: 'ready_spot', label: 'Готовый ролик (0 ₽)' },
       ];
 
+  const confirmedNextSteps = useMemo(() => {
+    if (!confirmedOrder) return [];
+    return buildClientNextStepsTimeline(
+      confirmedOrder.checkoutMode,
+      confirmedOrder.lockedMediaReservation?.stations.length ?? 0
+    );
+  }, [confirmedOrder]);
+
   return (
     <section
       data-testid="fullscreen-order-page"
@@ -748,7 +790,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       className="py-10 sm:py-16 lg:py-20"
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 space-y-8 sm:space-y-10">
-        {/* Верхняя навигационная строка возврата и живой таймер квоты */}
+        {/* Верхняя навигационная строка возврата и честный статус шага резерва */}
         <div className="flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-[#111111]/10 dark:border-white/10">
           <button
             type="button"
@@ -767,30 +809,38 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2.5">
               <div
                 data-testid="drawer-hold-timer"
-                className="inline-flex items-center gap-2 text-xs sm:text-[13px] font-semibold tabular-nums text-[#111111] dark:text-[#F4F3EF]"
+                className="inline-flex flex-wrap items-center gap-2 text-xs sm:text-[13px] font-semibold tabular-nums text-[#111111] dark:text-[#F4F3EF]"
               >
                 <Clock className="w-4 h-4 text-[#FF4820] shrink-0" aria-hidden="true" />
-                <span>
-                  Приоритетный резерв:{' '}
-                  <strong className="text-[#FF4820]">
-                    {formatHoldCountdown(holdRemainingSec)}
-                  </strong>
-                </span>
-                <span className="text-[#111111]/48 dark:text-[#F4F3EF]/48 hidden sm:inline">
-                  · Квота без предоплаты
-                </span>
+                {confirmedOrder ? (
+                  <span>
+                    Бронь{' '}
+                    <strong className="text-[#FF4820]">
+                      #{confirmedOrder.orderNumber}
+                    </strong>{' '}
+                    зафиксирована · Резерв: {formatHoldCountdown(holdRemainingSec)}
+                  </span>
+                ) : (
+                  <span>
+                    Шаг 2 из 2: Укажите контакт для активации резерва (
+                    <strong className="text-[#FF4820]">
+                      {formatHoldCountdown(holdRemainingSec)}
+                    </strong>
+                    )
+                  </span>
+                )}
               </div>
 
               <div
                 role="group"
                 aria-label="Режим оформления"
-                className="inline-flex items-center p-1 rounded-xl bg-[#EFECE5] dark:bg-[#16161B] border border-[#111111]/10 dark:border-white/10"
+                className="inline-flex flex-wrap sm:flex-nowrap items-center max-w-full p-1 rounded-xl bg-[#EFECE5] dark:bg-[#16161B] border border-[#111111]/10 dark:border-white/10"
               >
                 <button
                   type="button"
                   onClick={() => handleSwitchMode('air_plus_production')}
                   aria-pressed={isMediaBookingMode}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                  className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
                     isMediaBookingMode
                       ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
                       : 'text-[#111111]/65 dark:text-[#F4F3EF]/65 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
@@ -802,7 +852,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                   type="button"
                   onClick={() => handleSwitchMode('production_only')}
                   aria-pressed={!isMediaBookingMode}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                  className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
                     !isMediaBookingMode
                       ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
                       : 'text-[#111111]/65 dark:text-[#F4F3EF]/65 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
@@ -817,28 +867,34 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
 
         {/* Заголовок экрана оформления */}
         <div className="max-w-3xl space-y-3">
-          <p className="text-sm font-medium text-[#111111]/56 dark:text-[#F4F3EF]/56">
-            {isMediaBookingMode
-              ? 'Единое окно запуска FMWorks · Эфирные квоты и студийное производство'
-              : 'Консьерж-оформление FMWorks · Работаем по договору и ЭДО'}
+          <p className="text-sm font-medium text-[#FF4820]">
+            {confirmedOrder
+              ? `Заявка #${confirmedOrder.orderNumber} отправлена · Ждите звонка продюсера в течение 15–20 минут`
+              : isMediaBookingMode
+                ? `Выбрано радиостанций: ${mediaReservation?.stations.length ?? 0} · Оставьте контакт, чтобы закрепить слоты за вашей компанией`
+                : 'Консьерж-оформление FMWorks · Работаем по договору и ЭДО'}
           </p>
           <h1
             id="order-page-heading"
             className="text-3xl sm:text-5xl font-bold tracking-tight leading-[1.06] text-[#111111] dark:text-[#F4F3EF] editorial-balance"
           >
-            {isMediaBookingMode
-              ? 'Оформление приоритетной брони эфира и ролика'
-              : 'Запуск аудиоролика за 24–48 часов'}
+            {confirmedOrder
+              ? 'Ваша приоритетная бронь принята в работу'
+              : isMediaBookingMode
+                ? 'Завершение бронирования эфира за 15 секунд'
+                : 'Запуск аудиоролика за 24–48 часов'}
           </h1>
           <p className="text-base sm:text-lg text-[#111111]/70 dark:text-[#F4F3EF]/70 editorial-pretty">
-            {isMediaBookingMode
-              ? 'Поставьте выбранные тайм-слоты на бесплатный 4-часовой резерв без предоплаты. Исполнительный продюсер проверит сетку на станциях и выставит единый счёт в ЭДО в течение 20 минут.'
-              : 'Передайте задачу 30-секундным голосовым сообщением или парой строк — продюсер предложит три концепции сценария, кастинг актёров и возьмёт на себя юридическую очистку прав.'}
+            {confirmedOrder
+              ? 'Ниже показан пошаговый маршрут работы по вашей заявке и полная спецификация. В любой момент вы можете открыть диалоговое окно статуса.'
+              : isMediaBookingMode
+                ? 'Для постановки выбранных станций на бесплатный 4-часовой резерв достаточно указать Имя и Телефон (или @Telegram). Задачу на сценарий ролика можно добавить ниже по желанию или обсудить с продюсером устно.'
+                : 'Передайте задачу 30-секундным голосовым сообщением или парой строк — продюсер предложит три концепции сценария, кастинг актёров и возьмёт на себя юридическую очистку прав.'}
           </p>
         </div>
 
         {confirmedOrder ? (
-          /* ЭКРАН ПОДТВЕРЖДЕНИЯ БРОНИ ИЛИ СТУДИЙНОГО ЗАКАЗА */
+          /* ЭКРАН ПОДТВЕРЖДЕНИЯ БРОНИ ИЛИ СТУДИЙНОГО ЗАКАЗА С МАРШРУТОМ 3 ШАГОВ */
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
@@ -848,7 +904,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
           >
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-[#111111]/10 dark:border-white/10">
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-full bg-[#FF4820]/15 text-[#FF4820] flex items-center justify-center shrink-0">
+                <div className="w-12 h-12 rounded-2xl bg-[#FF4820] text-white flex items-center justify-center shrink-0">
                   <CheckCircle2 className="w-6 h-6" aria-hidden="true" />
                 </div>
                 <div>
@@ -865,11 +921,11 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                 </div>
               </div>
 
-              <div className="text-xs sm:text-sm font-medium text-[#111111]/62 dark:text-[#F4F3EF]/62 tabular-nums sm:text-right space-y-0.5">
+              <div className="text-xs sm:text-sm font-medium text-[#111111]/62 dark:text-[#F4F3EF]/62 tabular-nums sm:text-right space-y-1">
                 <div>
                   Контакт:{' '}
                   <strong className="text-[#111111] dark:text-[#F4F3EF]">
-                    {confirmedOrder.contact}
+                    {confirmedOrder.contactLine}
                   </strong>
                 </div>
                 {confirmedOrder.conversionAllowed && (
@@ -881,6 +937,42 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                     {confirmedOrder.innVerified ? ' · ИНН проверен по ключу ФНС' : ''}
                   </div>
                 )}
+                <button
+                  type="button"
+                  data-testid="reopen-confirmed-modal-btn"
+                  onClick={() => setIsConfirmedModalOpen(true)}
+                  className="text-xs font-semibold text-[#FF4820] hover:underline cursor-pointer"
+                >
+                  Открыть диалоговое окно статуса →
+                </button>
+              </div>
+            </div>
+
+            {/* Наглядная дорожная карта из 3 шагов: что происходит дальше */}
+            <div className="space-y-3">
+              <h3 className="text-base sm:text-lg font-bold text-[#111111] dark:text-[#F4F3EF]">
+                Что происходит дальше (пошагово)
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {confirmedNextSteps.map((step) => (
+                  <div
+                    key={step.stepNumber}
+                    className="rounded-2xl p-5 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-2 text-xs font-semibold tabular-nums">
+                      <span className="text-[#FF4820]">Шаг {step.stepNumber}</span>
+                      <span className="text-[#111111]/58 dark:text-[#F4F3EF]/58">
+                        {step.timingLabel}
+                      </span>
+                    </div>
+                    <p className="text-sm sm:text-base font-bold leading-snug text-[#111111] dark:text-[#F4F3EF]">
+                      {step.title}
+                    </p>
+                    <p className="text-xs sm:text-sm leading-relaxed text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                      {step.description}
+                    </p>
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -919,7 +1011,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                       type="button"
                       data-testid="copy-booking-spec-btn"
                       onClick={handleCopyBookingSpec}
-                      className="min-h-[46px] px-5 py-2.5 rounded-full bg-[#FF4820] hover:bg-[#E63C17] text-white text-sm font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
+                      className="min-h-[46px] px-5 py-2.5 rounded-full bg-[#FF4820] hover:bg-[#E63C17] text-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer text-center leading-snug"
                     >
                       <Copy className="w-4 h-4 shrink-0" aria-hidden="true" />
                       <span>
@@ -933,7 +1025,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                       type="button"
                       data-testid="download-booking-spec-btn"
                       onClick={handleDownloadBookingSpec}
-                      className="min-h-[46px] px-5 py-2.5 rounded-full border border-[#111111]/18 dark:border-[#F4F3EF]/18 hover:border-[#FF4820] text-sm font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
+                      className="min-h-[46px] px-5 py-2.5 rounded-full border border-[#111111]/18 dark:border-[#F4F3EF]/18 hover:border-[#FF4820] text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer text-center leading-snug"
                     >
                       <Download className="w-4 h-4 shrink-0" aria-hidden="true" />
                       <span>Скачать спецификацию (.txt)</span>
@@ -1009,12 +1101,12 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                 className="min-h-[46px] inline-flex items-center gap-2 px-5 py-3 rounded-full border border-[#111111]/15 dark:border-[#F4F3EF]/15 text-sm font-semibold hover:border-[#FF4820] transition-colors cursor-pointer"
               >
                 <RotateCcw className="w-4 h-4" aria-hidden="true" />
-                <span>Оформить ещё один проект</span>
+                <span>Изменить данные или оформить ещё проект</span>
               </button>
             </div>
           </motion.div>
         ) : (
-          /* ДВУХКОЛОНОЧНАЯ ПОЛНОЭКРАННАЯ ФОРМА КОНСЬЕРЖ-ОФОРМЛЕНИЯ */
+          /* ДВУХКОЛОНОЧНАЯ ПОЛНОЭКРАННАЯ ФОРМА: В РЕЖИМЕ БРОНИ ЭФИРА ШАГ 1 = КОНТАКТ, ШАГ 2 = ПО ЖЕЛАНИЮ БРИФ */
           <form
             onSubmit={handleSubmit}
             onPointerMove={registerPointerActivity}
@@ -1039,9 +1131,344 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
               />
             </div>
 
-            {/* ЛЕВАЯ КОЛОНКА (7 колонок): Настройка формата, хронометража, голосовое ТЗ и контакты */}
+            {/* ЛЕВАЯ КОЛОНКА (7 колонок) */}
             <div className="lg:col-span-7 space-y-8">
-              {!isMediaBookingMode && (
+              {isMediaBookingMode ? (
+                /* =========================================================
+                   РЕЖИМ БРОНИРОВАНИЯ ЭФИРА: СНАЧАЛА БЫСТРЫЙ РЕЗЕРВ ПО КОНТАКТУ,
+                   БРИФ И ГОЛОСОВОЕ ТЗ НА РОЛИК — ПО ЖЕЛАНИЮ НИЖЕ
+                   ========================================================= */
+                <>
+                  {/* ШАГ 01 (ГЛАВНЫЙ): Контакт для мгновенной фиксации 4-часового резерва */}
+                  <div
+                    data-testid="contact-first-booking-step"
+                    className="rounded-3xl p-5 sm:p-7 bg-[#EFECE5]/90 dark:bg-[#16161B] border border-[#111111]/12 dark:border-white/12 space-y-5"
+                  >
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold text-[#FF4820]">
+                        01. Быстрая фиксация эфира (обязательный шаг)
+                      </p>
+                      <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF]">
+                        Куда прислать подтверждение слотов и счёт в ЭДО
+                      </h2>
+                      <p className="text-xs sm:text-sm text-[#111111]/68 dark:text-[#F4F3EF]/68">
+                        Укажите телефон или @Telegram — после нажатия кнопки откроется диалоговое окно с номером вашей брони, а продюсер свяжется в течение 15–20 минут.
+                      </p>
+                    </div>
+
+                    {isReturningFastTrack ? (
+                      <div className="rounded-2xl p-4 sm:p-5 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 flex items-center justify-between gap-4">
+                        <div className="min-w-0">
+                          <p className="text-xs text-[#FF4820] font-semibold">
+                            Сохранённый профиль постоянного клиента · запуск в 1 клик
+                          </p>
+                          <p className="text-sm sm:text-base font-semibold mt-0.5">
+                            {savedVip.contactLine}
+                            {savedVip.company ? ` · ${savedVip.company}` : ''}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingVipContact(true)}
+                          className="text-xs font-semibold underline underline-offset-4 opacity-75 hover:opacity-100 cursor-pointer shrink-0"
+                        >
+                          Изменить
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label
+                            htmlFor="order-contact-input"
+                            className="block text-xs font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72"
+                          >
+                            Имя и Телефон / @Telegram *
+                          </label>
+                          <input
+                            id="order-contact-input"
+                            type="text"
+                            data-testid="drawer-contact-input"
+                            aria-label="Имя и Телефон / @Telegram"
+                            value={draft.contactLine}
+                            onChange={(e) => {
+                              orderDraftStore.updateDraft({ contactLine: e.target.value });
+                              if (contactError) setContactError(undefined);
+                            }}
+                            placeholder="Например: Алексей +7 999 123-45-67"
+                            className="w-full min-h-[48px] px-4 py-3 rounded-2xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/18 dark:border-[#F4F3EF]/18 text-sm sm:text-base text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none focus:border-[#FF4820]"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label
+                            htmlFor="order-requisites-input"
+                            className="block text-xs font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72"
+                          >
+                            Компания или ИНН (по желанию, для ЭДО)
+                          </label>
+                          <input
+                            id="order-requisites-input"
+                            type="text"
+                            data-testid="drawer-requisites-input"
+                            aria-label="Компания или ИНН для выставления счёта в ЭДО"
+                            value={draft.companyLine}
+                            onChange={(e) => {
+                              orderDraftStore.updateDraft({ companyLine: e.target.value });
+                              if (companyError) setCompanyError(undefined);
+                            }}
+                            placeholder="ООО или ИНН 10 / 12 цифр"
+                            className="w-full min-h-[48px] px-4 py-3 rounded-2xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/18 dark:border-[#F4F3EF]/18 text-sm sm:text-base text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none focus:border-[#FF4820]"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {contactError && (
+                      <p
+                        role="alert"
+                        data-testid="drawer-contact-error"
+                        className="text-xs font-semibold text-[#FF4820]"
+                      >
+                        {contactError}
+                      </p>
+                    )}
+
+                    {companyError && (
+                      <p
+                        role="alert"
+                        data-testid="drawer-company-error"
+                        className="text-xs font-semibold text-[#FF4820]"
+                      >
+                        {companyError}
+                      </p>
+                    )}
+
+                    {rateLimitError && (
+                      <p
+                        role="alert"
+                        data-testid="drawer-rate-limit-error"
+                        className="text-xs font-semibold text-[#FF4820]"
+                      >
+                        {rateLimitError}
+                      </p>
+                    )}
+
+                    <div className="pt-1 space-y-2.5">
+                      <button
+                        type="submit"
+                        disabled={isSubmittingLead}
+                        data-testid="drawer-submit-btn"
+                        className="w-full sm:w-auto min-w-[280px] min-h-[52px] py-3.5 px-7 rounded-full bg-[#FF4820] hover:bg-[#E63C17] disabled:opacity-65 active:scale-[0.99] text-white text-sm sm:text-base font-semibold transition-all cursor-pointer disabled:cursor-default text-center leading-snug"
+                      >
+                        {isSubmittingLead
+                          ? 'Проверка и фиксация квот…'
+                          : rateLimitCountdownSec > 0
+                            ? `Повторная отправка через ${rateLimitCountdownSec} сек`
+                            : 'Поставить эфирную сетку на 4-часовой холд'}
+                      </button>
+
+                      <p
+                        data-testid="order-antispam-caption"
+                        className="text-xs text-[#111111]/56 dark:text-[#F4F3EF]/56 flex flex-wrap items-center gap-1.5 tabular-nums"
+                      >
+                        <ShieldCheck className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
+                        <span>
+                          Антиспам-фильтр без капчи · Проверка ИНН ФНС · RateLimiter (доступно попыток:{' '}
+                          {remainingAttempts})
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* ШАГ 02 (ПО ЖЕЛАНИЮ): Формат ролика, голосовое ТЗ и карточка реквизитов */}
+                  <div className="rounded-3xl p-5 sm:p-7 bg-[#EFECE5]/55 dark:bg-[#141419] border border-[#111111]/10 dark:border-white/10 space-y-5">
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold text-[#111111]/58 dark:text-[#F4F3EF]/58">
+                        02. По желанию: формат ролика, голосовое ТЗ или реквизиты
+                      </p>
+                      <h3 className="text-lg sm:text-xl font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF]">
+                        Пожелания к аудиоролику (необязательно для брони эфира)
+                      </h3>
+                      <p className="text-xs sm:text-sm text-[#111111]/64 dark:text-[#F4F3EF]/64">
+                        Если хотите, выберите вариант производства ролика и надиктуйте задачу голосом прямо сейчас — или оставьте пустым и обсудите всё с продюсером по телефону.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2.5">
+                      <p className="text-xs font-semibold text-[#111111]/64 dark:text-[#F4F3EF]/64">
+                        Статус производства ролика в составе брони:
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {mediaProductionOptions.map((opt) => {
+                          const active =
+                            reservationTotals?.productionSelection === opt.id ||
+                            draft.reservationProdSelection === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              data-testid={`drawer-prod-opt-${opt.id}`}
+                              onClick={() =>
+                                orderDraftStore.updateDraft({
+                                  reservationProdSelection: opt.id,
+                                })
+                              }
+                              aria-pressed={active}
+                              className={`min-h-[42px] px-4 py-2 rounded-full text-xs sm:text-sm font-semibold transition-colors border cursor-pointer text-center leading-snug ${
+                                active
+                                  ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] border-transparent'
+                                  : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/80 dark:text-[#F4F3EF]/80 border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820]'
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Голосовая надиктовка */}
+                    <div className="rounded-2xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10">
+                      {voiceStatus === 'idle' && (
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <button
+                            type="button"
+                            data-testid="drawer-voice-record-btn"
+                            onClick={startVoiceRecording}
+                            className="min-h-[42px] inline-flex items-center gap-2.5 px-4 py-2 rounded-full bg-[#111111] hover:bg-[#FF4820] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer text-center leading-snug"
+                          >
+                            <Mic className="w-4 h-4 shrink-0" aria-hidden="true" />
+                            <span>Надиктовать задачу для ролика голосом (по желанию)</span>
+                          </button>
+                          <span className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58">
+                            30 секунд своими словами
+                          </span>
+                        </div>
+                      )}
+
+                      {voiceStatus === 'recording' && (
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex items-center gap-3">
+                            <span className="w-2.5 h-2.5 rounded-full bg-[#FF4820]" />
+                            <span className="text-sm font-semibold tabular-nums">
+                              Идёт запись · 0:{String(recordSeconds).padStart(2, '0')}
+                            </span>
+                            <div aria-hidden="true" className="flex items-end gap-1 h-5 ml-1">
+                              {pulseBars.map((bar, idx) => (
+                                <span
+                                  key={idx}
+                                  className={`w-1 bg-[#FF4820] rounded-full transition-all duration-150 ${getPulseBarHeightClass(
+                                    bar
+                                  )}`}
+                                />
+                              ))}
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            data-testid="drawer-voice-stop-btn"
+                            onClick={stopVoiceRecording}
+                            className="min-h-[40px] inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] text-xs font-semibold cursor-pointer"
+                          >
+                            <Square className="w-3 h-3 fill-current" aria-hidden="true" />
+                            <span>Готово</span>
+                          </button>
+                        </div>
+                      )}
+
+                      {voiceStatus === 'recorded' && (
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <button
+                              type="button"
+                              onClick={togglePlaybackRecordedVoice}
+                              className="min-h-[40px] inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#FF4820] hover:bg-[#E63C17] text-white text-xs font-semibold cursor-pointer shrink-0"
+                            >
+                              {isPlayingVoice ? (
+                                <>
+                                  <Pause className="w-3.5 h-3.5 fill-current" />
+                                  <span>Пауза</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Play className="w-3.5 h-3.5 fill-current" />
+                                  <span>Прослушать</span>
+                                </>
+                              )}
+                            </button>
+
+                            <span className="text-xs sm:text-sm font-medium tabular-nums">
+                              Голосовое ТЗ · 0:{String(Math.max(1, recordSeconds)).padStart(2, '0')}
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={deleteRecordedVoice}
+                            aria-label="Удалить голосовую запись"
+                            className="w-10 h-10 rounded-full flex items-center justify-center text-[#111111]/65 dark:text-[#F4F3EF]/65 hover:text-[#FF4820] transition-colors cursor-pointer shrink-0"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <textarea
+                      rows={2}
+                      aria-label="О чем ролик или какая акция?"
+                      value={draft.briefText}
+                      onChange={(e) => {
+                        orderDraftStore.updateDraft({ briefText: e.target.value });
+                        if (taskError) setTaskError(undefined);
+                      }}
+                      placeholder="Кратко о продукте, акции или пожеланиях к подаче (необязательно)"
+                      className="w-full px-4 py-3 rounded-2xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-[#F4F3EF]/14 text-sm text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none focus:border-[#FF4820]"
+                    />
+
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".doc,.docx,.pdf,.txt,.rtf,.xls,.xlsx,.jpg,.png"
+                        onChange={handleFileChange}
+                        className="hidden"
+                      />
+
+                      <button
+                        type="button"
+                        data-testid="drawer-attach-requisites-btn"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="min-h-[42px] max-w-full inline-flex items-center gap-2 px-4 py-2 rounded-full border border-[#111111]/16 dark:border-[#F4F3EF]/16 text-xs sm:text-sm font-medium text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:border-[#FF4820] transition-colors cursor-pointer leading-snug"
+                      >
+                        <Paperclip className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                        <span>
+                          {attachedFileName
+                            ? attachedFileName
+                            : 'Прикрепить карточку реквизитов или бриф (.pdf, .doc)'}
+                        </span>
+                      </button>
+
+                      {attachedFileName && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAttachedFileName(null);
+                            if (fileInputRef.current) fileInputRef.current.value = '';
+                          }}
+                          className="text-xs font-medium text-[#111111]/55 dark:text-[#F4F3EF]/55 hover:text-[#FF4820] cursor-pointer"
+                        >
+                          Убрать файл
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                /* =========================================================
+                   РЕЖИМ СТУДИЙНОГО ЗАКАЗА РОЛИКА (ТОЛЬКО ПРОДАКШН)
+                   ========================================================= */
                 <>
                   {/* Переключатель: Новый проект / Постоянный клиент */}
                   <div
@@ -1116,7 +1543,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                     </div>
                   </div>
 
-                  {/* Шаг 2: Точный хронометраж ролика и отрасль (для юридического пре-чека) */}
+                  {/* Шаг 2: Точный хронометраж ролика и отрасль */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-2 border-t border-[#111111]/10 dark:border-white/10">
                     <div className="space-y-2.5">
                       <label
@@ -1191,318 +1618,269 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                       </select>
                     </div>
                   </div>
+
+                  {/* Шаг 3: Голосовая надиктовка задачи + текстовый бриф + прикрепление файла */}
+                  <div className="space-y-3.5 pt-2 border-t border-[#111111]/10 dark:border-white/10">
+                    <p className="text-xs font-semibold text-[#111111]/60 dark:text-[#F4F3EF]/60">
+                      03. Передайте задачу голосом или текстом
+                    </p>
+
+                    <div className="rounded-2xl p-4 sm:p-5 bg-[#EFECE5] dark:bg-[#16161B] border border-[#111111]/10 dark:border-white/10">
+                      {voiceStatus === 'idle' && (
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <button
+                            type="button"
+                            data-testid="drawer-voice-record-btn"
+                            onClick={startVoiceRecording}
+                            className="min-h-[44px] inline-flex items-center gap-2.5 px-5 py-2.5 rounded-full bg-[#FF4820] hover:bg-[#E63C17] text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer text-center leading-snug"
+                          >
+                            <Mic className="w-4 h-4 shrink-0" aria-hidden="true" />
+                            <span>Надиктовать задачу голосом</span>
+                          </button>
+                          <span className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58">
+                            30 секунд своими словами вместо заполнения анкеты
+                          </span>
+                        </div>
+                      )}
+
+                      {voiceStatus === 'recording' && (
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex items-center gap-3">
+                            <span className="w-2.5 h-2.5 rounded-full bg-[#FF4820]" />
+                            <span className="text-sm font-semibold tabular-nums">
+                              Идёт запись · 0:{String(recordSeconds).padStart(2, '0')}
+                            </span>
+                            <div aria-hidden="true" className="flex items-end gap-1 h-5 ml-1">
+                              {pulseBars.map((bar, idx) => (
+                                <span
+                                  key={idx}
+                                  className={`w-1 bg-[#FF4820] rounded-full transition-all duration-150 ${getPulseBarHeightClass(
+                                    bar
+                                  )}`}
+                                />
+                              ))}
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            data-testid="drawer-voice-stop-btn"
+                            onClick={stopVoiceRecording}
+                            className="min-h-[40px] inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] text-xs font-semibold cursor-pointer"
+                          >
+                            <Square className="w-3 h-3 fill-current" aria-hidden="true" />
+                            <span>Готово</span>
+                          </button>
+                        </div>
+                      )}
+
+                      {voiceStatus === 'recorded' && (
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <button
+                              type="button"
+                              onClick={togglePlaybackRecordedVoice}
+                              className="min-h-[40px] inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#FF4820] hover:bg-[#E63C17] text-white text-xs font-semibold cursor-pointer shrink-0"
+                            >
+                              {isPlayingVoice ? (
+                                <>
+                                  <Pause className="w-3.5 h-3.5 fill-current" />
+                                  <span>Пауза</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Play className="w-3.5 h-3.5 fill-current" />
+                                  <span>Прослушать</span>
+                                </>
+                              )}
+                            </button>
+
+                            <span className="text-xs sm:text-sm font-medium tabular-nums">
+                              Голосовое ТЗ · 0:{String(Math.max(1, recordSeconds)).padStart(2, '0')}
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={deleteRecordedVoice}
+                            aria-label="Удалить голосовую запись"
+                            className="w-10 h-10 rounded-full flex items-center justify-center text-[#111111]/65 dark:text-[#F4F3EF]/65 hover:text-[#FF4820] transition-colors cursor-pointer shrink-0"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <textarea
+                      rows={3}
+                      aria-label="О чем ролик или какая акция?"
+                      value={draft.briefText}
+                      onChange={(e) => {
+                        orderDraftStore.updateDraft({ briefText: e.target.value });
+                        if (taskError) setTaskError(undefined);
+                      }}
+                      placeholder="О чем ролик, какая главная выгода для клиента и какой контакт оставить в финале?"
+                      className="w-full px-4 py-3.5 rounded-2xl bg-transparent border border-[#111111]/16 dark:border-[#F4F3EF]/16 text-sm sm:text-base text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none focus:border-[#FF4820]"
+                    />
+
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".doc,.docx,.pdf,.txt,.rtf,.xls,.xlsx,.jpg,.png"
+                        onChange={handleFileChange}
+                        className="hidden"
+                      />
+
+                      <button
+                        type="button"
+                        data-testid="drawer-attach-requisites-btn"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="min-h-[42px] max-w-full inline-flex items-center gap-2 px-4 py-2 rounded-full border border-[#111111]/16 dark:border-[#F4F3EF]/16 text-xs sm:text-sm font-medium text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:border-[#FF4820] transition-colors cursor-pointer leading-snug"
+                      >
+                        <Paperclip className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                        <span>
+                          {attachedFileName
+                            ? attachedFileName
+                            : 'Прикрепить карточку реквизитов или бриф (.pdf, .doc)'}
+                        </span>
+                      </button>
+
+                      {attachedFileName && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAttachedFileName(null);
+                            if (fileInputRef.current) fileInputRef.current.value = '';
+                          }}
+                          className="text-xs font-medium text-[#111111]/55 dark:text-[#F4F3EF]/55 hover:text-[#FF4820] cursor-pointer"
+                        >
+                          Убрать файл
+                        </button>
+                      )}
+                    </div>
+
+                    {taskError && (
+                      <p role="alert" className="text-xs font-semibold text-[#FF4820]">
+                        {taskError}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Шаг 4: Контакты и реквизиты для ЭДО */}
+                  <div className="space-y-3.5 pt-2 border-t border-[#111111]/10 dark:border-white/10">
+                    <p className="text-xs font-semibold text-[#111111]/60 dark:text-[#F4F3EF]/60">
+                      04. Куда прислать тайминг, сценарии и счёт
+                    </p>
+
+                    {isReturningFastTrack ? (
+                      <div className="rounded-2xl p-4 sm:p-5 bg-[#EFECE5] dark:bg-[#16161B] border border-[#111111]/10 dark:border-white/10 flex items-center justify-between gap-4">
+                        <div className="min-w-0">
+                          <p className="text-xs text-[#FF4820] font-semibold">
+                            Сохранённый профиль постоянного клиента · запуск в 2 клика
+                          </p>
+                          <p className="text-sm sm:text-base font-semibold mt-0.5">
+                            {savedVip.contactLine}
+                            {savedVip.company ? ` · ${savedVip.company}` : ''}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingVipContact(true)}
+                          className="text-xs font-semibold underline underline-offset-4 opacity-75 hover:opacity-100 cursor-pointer shrink-0"
+                        >
+                          Изменить
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <input
+                          type="text"
+                          data-testid="drawer-contact-input"
+                          aria-label="Имя и Телефон / @Telegram"
+                          value={draft.contactLine}
+                          onChange={(e) => {
+                            orderDraftStore.updateDraft({ contactLine: e.target.value });
+                            if (contactError) setContactError(undefined);
+                          }}
+                          placeholder="Имя и Телефон / @Telegram *"
+                          className="w-full min-h-[48px] px-4 py-3 rounded-2xl bg-transparent border border-[#111111]/16 dark:border-[#F4F3EF]/16 text-sm sm:text-base text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none focus:border-[#FF4820]"
+                        />
+
+                        <input
+                          type="text"
+                          data-testid="drawer-requisites-input"
+                          aria-label="Компания или ИНН для выставления счёта в ЭДО"
+                          value={draft.companyLine}
+                          onChange={(e) => {
+                            orderDraftStore.updateDraft({ companyLine: e.target.value });
+                            if (companyError) setCompanyError(undefined);
+                          }}
+                          placeholder="Компания или ИНН 10 / 12 цифр (для ЭДО)"
+                          className="w-full min-h-[48px] px-4 py-3 rounded-2xl bg-transparent border border-[#111111]/16 dark:border-[#F4F3EF]/16 text-sm sm:text-base text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none focus:border-[#FF4820]"
+                        />
+                      </div>
+                    )}
+
+                    {contactError && (
+                      <p
+                        role="alert"
+                        data-testid="drawer-contact-error"
+                        className="text-xs font-semibold text-[#FF4820]"
+                      >
+                        {contactError}
+                      </p>
+                    )}
+
+                    {companyError && (
+                      <p
+                        role="alert"
+                        data-testid="drawer-company-error"
+                        className="text-xs font-semibold text-[#FF4820]"
+                      >
+                        {companyError}
+                      </p>
+                    )}
+
+                    {rateLimitError && (
+                      <p
+                        role="alert"
+                        data-testid="drawer-rate-limit-error"
+                        className="text-xs font-semibold text-[#FF4820]"
+                      >
+                        {rateLimitError}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="pt-2 space-y-2.5">
+                    <button
+                      type="submit"
+                      disabled={isSubmittingLead}
+                      data-testid="drawer-submit-btn"
+                      className="w-full sm:w-auto min-w-[280px] min-h-[52px] py-4 px-8 rounded-full bg-[#FF4820] hover:bg-[#E63C17] disabled:opacity-65 active:scale-[0.99] text-white text-sm sm:text-base font-semibold transition-all cursor-pointer disabled:cursor-default text-center leading-snug"
+                    >
+                      {isSubmittingLead
+                        ? 'Проверка и фиксация заявки…'
+                        : rateLimitCountdownSec > 0
+                          ? `Повторная отправка через ${rateLimitCountdownSec} сек`
+                          : 'Запустить проект в работу'}
+                    </button>
+
+                    <p
+                      data-testid="order-antispam-caption"
+                      className="text-xs text-[#111111]/54 dark:text-[#F4F3EF]/54 flex flex-wrap items-center gap-1.5 tabular-nums"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
+                      <span>
+                        Антиспам-фильтр без капчи · Проверка ИНН ФНС · RateLimiter (доступно попыток:{' '}
+                        {remainingAttempts})
+                      </span>
+                    </p>
+                  </div>
                 </>
               )}
-
-              {isMediaBookingMode && (
-                <div className="rounded-2xl p-5 bg-[#EFECE5]/70 dark:bg-[#15151A] border border-[#111111]/10 dark:border-white/10 space-y-3">
-                  <p className="text-xs font-semibold text-[#111111]/62 dark:text-[#F4F3EF]/62">
-                    01. Формат производства ролика в составе эфирной брони
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {mediaProductionOptions.map((opt) => {
-                      const active =
-                        reservationTotals?.productionSelection === opt.id ||
-                        draft.reservationProdSelection === opt.id;
-                      return (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          data-testid={`drawer-prod-opt-${opt.id}`}
-                          onClick={() =>
-                            orderDraftStore.updateDraft({
-                              reservationProdSelection: opt.id,
-                            })
-                          }
-                          aria-pressed={active}
-                          className={`min-h-[42px] px-4 py-2 rounded-full text-xs sm:text-sm font-semibold transition-colors border cursor-pointer whitespace-nowrap ${
-                            active
-                              ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] border-transparent'
-                              : 'bg-transparent text-[#111111]/78 dark:text-[#F4F3EF]/78 border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820]'
-                          }`}
-                        >
-                          {opt.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Голосовая надиктовка задачи + текстовый бриф + прикрепление файла */}
-              <div className="space-y-3.5 pt-2 border-t border-[#111111]/10 dark:border-white/10">
-                <p className="text-xs font-semibold text-[#111111]/60 dark:text-[#F4F3EF]/60">
-                  {isMediaBookingMode
-                    ? '02. Задача для сценариста и прикрепление реквизитов'
-                    : '03. Передайте задачу голосом или текстом'}
-                </p>
-
-                <div className="rounded-2xl p-4 sm:p-5 bg-[#EFECE5] dark:bg-[#16161B] border border-[#111111]/10 dark:border-white/10">
-                  {voiceStatus === 'idle' && (
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <button
-                        type="button"
-                        data-testid="drawer-voice-record-btn"
-                        onClick={startVoiceRecording}
-                        className="min-h-[44px] inline-flex items-center gap-2.5 px-5 py-2.5 rounded-full bg-[#FF4820] hover:bg-[#E63C17] text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap"
-                      >
-                        <Mic className="w-4 h-4 shrink-0" aria-hidden="true" />
-                        <span>
-                          {isMediaBookingMode
-                            ? 'Надиктовать задачу для ролика голосом'
-                            : 'Надиктовать задачу голосом'}
-                        </span>
-                      </button>
-                      <span className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                        30 секунд своими словами вместо заполнения анкеты
-                      </span>
-                    </div>
-                  )}
-
-                  {voiceStatus === 'recording' && (
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex items-center gap-3">
-                        <span className="w-2.5 h-2.5 rounded-full bg-[#FF4820]" />
-                        <span className="text-sm font-semibold tabular-nums">
-                          Идёт запись · 0:{String(recordSeconds).padStart(2, '0')}
-                        </span>
-                        <div aria-hidden="true" className="flex items-end gap-1 h-5 ml-1">
-                          {pulseBars.map((bar, idx) => (
-                            <span
-                              key={idx}
-                              className={`w-1 bg-[#FF4820] rounded-full transition-all duration-150 ${getPulseBarHeightClass(
-                                bar
-                              )}`}
-                            />
-                          ))}
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        data-testid="drawer-voice-stop-btn"
-                        onClick={stopVoiceRecording}
-                        className="min-h-[40px] inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] text-xs font-semibold cursor-pointer"
-                      >
-                        <Square className="w-3 h-3 fill-current" aria-hidden="true" />
-                        <span>Готово</span>
-                      </button>
-                    </div>
-                  )}
-
-                  {voiceStatus === 'recorded' && (
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <button
-                          type="button"
-                          onClick={togglePlaybackRecordedVoice}
-                          className="min-h-[40px] inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#FF4820] hover:bg-[#E63C17] text-white text-xs font-semibold cursor-pointer shrink-0"
-                        >
-                          {isPlayingVoice ? (
-                            <>
-                              <Pause className="w-3.5 h-3.5 fill-current" />
-                              <span>Пауза</span>
-                            </>
-                          ) : (
-                            <>
-                              <Play className="w-3.5 h-3.5 fill-current" />
-                              <span>Прослушать</span>
-                            </>
-                          )}
-                        </button>
-
-                        <span className="text-xs sm:text-sm font-medium truncate tabular-nums">
-                          Голосовое ТЗ · 0:{String(Math.max(1, recordSeconds)).padStart(2, '0')}
-                        </span>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={deleteRecordedVoice}
-                        aria-label="Удалить голосовую запись"
-                        className="w-10 h-10 rounded-full flex items-center justify-center text-[#111111]/65 dark:text-[#F4F3EF]/65 hover:text-[#FF4820] transition-colors cursor-pointer shrink-0"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <textarea
-                  rows={3}
-                  aria-label="О чем ролик или какая акция?"
-                  value={draft.briefText}
-                  onChange={(e) => {
-                    orderDraftStore.updateDraft({ briefText: e.target.value });
-                    if (taskError) setTaskError(undefined);
-                  }}
-                  placeholder={
-                    isMediaBookingMode
-                      ? 'Кратко о продукте, оффере или пожеланиях к подаче (необязательно)'
-                      : 'О чем ролик, какая главная выгода для клиента и какой контакт оставить в финале?'
-                  }
-                  className="w-full px-4 py-3.5 rounded-2xl bg-transparent border border-[#111111]/16 dark:border-[#F4F3EF]/16 text-sm sm:text-base text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none focus:border-[#FF4820]"
-                />
-
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".doc,.docx,.pdf,.txt,.rtf,.xls,.xlsx,.jpg,.png"
-                    onChange={handleFileChange}
-                    className="hidden"
-                  />
-
-                  <button
-                    type="button"
-                    data-testid="drawer-attach-requisites-btn"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="min-h-[42px] inline-flex items-center gap-2 px-4 py-2 rounded-full border border-[#111111]/16 dark:border-[#F4F3EF]/16 text-xs sm:text-sm font-medium text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:border-[#FF4820] transition-colors cursor-pointer whitespace-nowrap"
-                  >
-                    <Paperclip className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                    <span className="truncate max-w-[300px]">
-                      {attachedFileName
-                        ? attachedFileName
-                        : 'Прикрепить карточку реквизитов или бриф (.pdf, .doc)'}
-                    </span>
-                  </button>
-
-                  {attachedFileName && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAttachedFileName(null);
-                        if (fileInputRef.current) fileInputRef.current.value = '';
-                      }}
-                      className="text-xs font-medium text-[#111111]/55 dark:text-[#F4F3EF]/55 hover:text-[#FF4820] cursor-pointer"
-                    >
-                      Убрать файл
-                    </button>
-                  )}
-                </div>
-
-                {taskError && (
-                  <p role="alert" className="text-xs font-semibold text-[#FF4820]">
-                    {taskError}
-                  </p>
-                )}
-              </div>
-
-              {/* Контакты и реквизиты для ЭДО */}
-              <div className="space-y-3.5 pt-2 border-t border-[#111111]/10 dark:border-white/10">
-                <p className="text-xs font-semibold text-[#111111]/60 dark:text-[#F4F3EF]/60">
-                  {isMediaBookingMode
-                    ? '03. Контакт и юрлицо / ИНН для выставления единого счёта в ЭДО'
-                    : '04. Куда прислать тайминг, сценарии и счёт'}
-                </p>
-
-                {isReturningFastTrack ? (
-                  <div className="rounded-2xl p-4 sm:p-5 bg-[#EFECE5] dark:bg-[#16161B] border border-[#111111]/10 dark:border-white/10 flex items-center justify-between gap-4">
-                    <div className="min-w-0">
-                      <p className="text-xs text-[#FF4820] font-semibold">
-                        Сохранённый профиль постоянного клиента · запуск в 2 клика
-                      </p>
-                      <p className="text-sm sm:text-base font-semibold truncate mt-0.5">
-                        {savedVip.contactLine}
-                        {savedVip.company ? ` · ${savedVip.company}` : ''}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsEditingVipContact(true)}
-                      className="text-xs font-semibold underline underline-offset-4 opacity-75 hover:opacity-100 cursor-pointer shrink-0"
-                    >
-                      Изменить
-                    </button>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <input
-                      type="text"
-                      data-testid="drawer-contact-input"
-                      aria-label="Имя и Телефон / @Telegram"
-                      value={draft.contactLine}
-                      onChange={(e) => {
-                        orderDraftStore.updateDraft({ contactLine: e.target.value });
-                        if (contactError) setContactError(undefined);
-                      }}
-                      placeholder="Имя и Телефон / @Telegram *"
-                      className="w-full min-h-[48px] px-4 py-3 rounded-2xl bg-transparent border border-[#111111]/16 dark:border-[#F4F3EF]/16 text-sm sm:text-base text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none focus:border-[#FF4820]"
-                    />
-
-                    <input
-                      type="text"
-                      data-testid="drawer-requisites-input"
-                      aria-label="Компания или ИНН для выставления счёта в ЭДО"
-                      value={draft.companyLine}
-                      onChange={(e) => {
-                        orderDraftStore.updateDraft({ companyLine: e.target.value });
-                        if (companyError) setCompanyError(undefined);
-                      }}
-                      placeholder="Компания или ИНН 10 / 12 цифр (для ЭДО)"
-                      className="w-full min-h-[48px] px-4 py-3 rounded-2xl bg-transparent border border-[#111111]/16 dark:border-[#F4F3EF]/16 text-sm sm:text-base text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none focus:border-[#FF4820]"
-                    />
-                  </div>
-                )}
-
-                {contactError && (
-                  <p
-                    role="alert"
-                    data-testid="drawer-contact-error"
-                    className="text-xs font-semibold text-[#FF4820]"
-                  >
-                    {contactError}
-                  </p>
-                )}
-
-                {companyError && (
-                  <p
-                    role="alert"
-                    data-testid="drawer-company-error"
-                    className="text-xs font-semibold text-[#FF4820]"
-                  >
-                    {companyError}
-                  </p>
-                )}
-
-                {rateLimitError && (
-                  <p
-                    role="alert"
-                    data-testid="drawer-rate-limit-error"
-                    className="text-xs font-semibold text-[#FF4820]"
-                  >
-                    {rateLimitError}
-                  </p>
-                )}
-              </div>
-
-              <div className="pt-2 space-y-2.5">
-                <button
-                  type="submit"
-                  disabled={isSubmittingLead}
-                  data-testid="drawer-submit-btn"
-                  className="w-full sm:w-auto min-w-[280px] min-h-[52px] py-4 px-8 rounded-full bg-[#FF4820] hover:bg-[#E63C17] disabled:opacity-65 active:scale-[0.99] text-white text-sm sm:text-base font-semibold transition-all cursor-pointer disabled:cursor-default whitespace-nowrap"
-                >
-                  {isSubmittingLead
-                    ? 'Проверка и фиксация квот…'
-                    : rateLimitCountdownSec > 0
-                      ? `Повторная отправка через ${rateLimitCountdownSec} сек`
-                      : isMediaBookingMode
-                        ? 'Поставить эфирную сетку на 4-часовой холд'
-                        : 'Запустить проект в работу'}
-                </button>
-
-                <p
-                  data-testid="order-antispam-caption"
-                  className="text-xs text-[#111111]/54 dark:text-[#F4F3EF]/54 flex flex-wrap items-center gap-1.5 tabular-nums"
-                >
-                  <ShieldCheck className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
-                  <span>
-                    Антиспам-фильтр без капчи · Проверка ИНН ФНС · RateLimiter (доступно попыток:{' '}
-                    {remainingAttempts})
-                  </span>
-                </p>
-              </div>
             </div>
 
             {/* ПРАВАЯ КОЛОНКА (5 колонок, липкая при скролле): Живая смета и спецификация под ЭДО */}
@@ -1515,7 +1893,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                   <div className="flex items-start justify-between gap-3 pb-3.5 border-b border-[#111111]/10 dark:border-white/10">
                     <div>
                       <p className="text-xs font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                        Спецификация эфирной брони
+                        Спецификация выбранного эфира
                       </p>
                       <h2 className="text-lg sm:text-xl font-bold tracking-tight mt-0.5">
                         {mediaReservation.nicheLabel}
@@ -1691,13 +2069,21 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
               )}
 
               <div className="px-2 flex items-center justify-between text-xs text-[#111111]/55 dark:text-[#F4F3EF]/55">
-                <span>Ответ продюсера — до 20–30 минут</span>
+                <span>Ответ продюсера — до 15–20 минут</span>
                 <span className="font-medium">Договор · Безнал · ЭДО</span>
               </div>
             </aside>
           </form>
         )}
       </div>
+
+      {/* Диалоговое модальное окно подтверждения брони с 3 шагами «Что дальше» */}
+      <ReservationConfirmedModal
+        isOpen={isConfirmedModalOpen}
+        confirmed={confirmedOrder}
+        onClose={() => setIsConfirmedModalOpen(false)}
+        onNavigateHotAir={() => onNavigate({ kind: 'hot-air' })}
+      />
     </section>
   );
 }

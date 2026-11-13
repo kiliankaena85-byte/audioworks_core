@@ -779,7 +779,7 @@ function scoreCandidateForStrategy(
   const unitSecCost = Math.max(120, quote.variation.hotRatePerSec);
   const contactsPerThousandRub =
     quote.variation.reachPerSpotOTS /
-    Math.max(1, (unitSecCost * quote.billedSeconds) / 1000);
+    Math.max(1, (unitSecCost * 15) / 1000);
 
   if (packageId === 'focus') {
     const focusIdx = portrait.focusStationIds.indexOf(quote.stationItem.stationId);
@@ -878,10 +878,11 @@ function buildStrategySelectionForAirBudget(params: {
     const unitExitCost = candidate.variation.hotRatePerSec * candidate.billedSeconds;
     if (unitExitCost <= 0) continue;
 
-    // Запрещаем бессмысленные 1–2 выхода: минимум 5 выходов (или от 3 на микро-тесте 40 000 ₽ с длинным роликом)
+    // Для роликов повышенного хронометража (22–60 сек), где каждый выход стоит в 1.5–4 раза дороже 15-секундного,
+    // адаптируем минимальный порог слота, чтобы ведущая станция портрета не выпадала из пакета при смене хронометража
     const effectiveMinSpots =
-      totalBudgetRub <= 60_000
-        ? Math.min(4, candidate.variation.minSpots)
+      totalBudgetRub <= 60_000 || candidate.billedSeconds >= 22
+        ? Math.min(3, candidate.variation.minSpots)
         : Math.max(6, candidate.variation.minSpots);
 
     const minPackCost = Math.round(unitExitCost * effectiveMinSpots);
@@ -1118,20 +1119,24 @@ export function buildThreeReadyPackages(params: {
     ? [...params.stationsCatalog]
     : buildUnified12StationCatalog();
 
-  const baseEval = computeFlexibleMediaPlanSummary({
+  // Пул допустимых слотов для 3 готовых пакетов фиксируется по базовому временному порогу (24ч),
+  // чтобы при переключении на «Есть свой ролик» радиостанции пакета НЕ подменялись случайными
+  // сверхсрочными утренними сбросами, но при этом честно пересчитывались выходы и охват OTS
+  // под реальный хронометраж ролика клиента (spotSeconds) и его бюджет.
+  const baselineEval = computeFlexibleMediaPlanSummary({
     niche: portrait.niche,
     audience: portrait.audience,
     productNote: params.productNote,
     totalBudgetRub: clampedBudget,
     spotSeconds,
-    spotReadiness,
+    spotReadiness: 'need_production_24h',
     selectedVariations: [],
     stationsCatalog: catalog,
     layaPersona: params.layaPersona,
     aiHint: params.aiHint,
   });
 
-  const eligibleQuotes = baseEval.allQuotedVariations.filter(
+  const eligibleQuotes = baselineEval.allQuotedVariations.filter(
     (q) => q.isEligibleForTimeGate && q.isEligibleForDuration
   );
 

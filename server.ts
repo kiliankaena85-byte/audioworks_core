@@ -9,6 +9,21 @@ import type { Request, Response, NextFunction } from 'express';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import type { StudioCmsSnapshot } from './src/data/studioCmsTypes.ts';
 import {
+  buildWebhookOrderEnvelope,
+  createSeedCrmOrders,
+  CRM_ORDER_STAGES,
+  formatTelegramOrderDispatchMessage,
+} from './src/data/orderCrmTypes.ts';
+import type {
+  CrmOrderRecord,
+  CrmOrderStage,
+  DispatchAttemptLog,
+  OrderComplianceChecklist,
+  OrderDispatchSettings,
+  OrderEntrySource,
+  OrderMediaPlanSnapshot,
+} from './src/data/orderCrmTypes.ts';
+import {
   computeLeadPayloadFingerprint,
   evaluateLeadSubmissionSecurity,
   inspectBriefForSpamSignals,
@@ -31,6 +46,7 @@ const CMS_DATA_DIR = path.join(__dirname, '.data');
 const CMS_SNAPSHOT_FILE = path.join(CMS_DATA_DIR, 'studio-cms.json');
 const CMS_BACKUP_FILE = path.join(CMS_DATA_DIR, 'studio-cms.last-reset.bak.json');
 const SECURITY_LEADS_FILE = path.join(CMS_DATA_DIR, 'studio-security-leads.json');
+const ORDERS_CRM_FILE = path.join(CMS_DATA_DIR, 'studio-orders-crm.json');
 
 const MAIN_PROMO_FILENAME = 'Audioworks_75c6023f.wav';
 const CANONICAL_RADIO_FILE = 'zerno_radio_15.wav';
@@ -427,6 +443,352 @@ function writeSecurityStore(store: PersistedSecurityStore): void {
   } catch {
     // В контейнере только для чтения сохраняем состояние в оперативной памяти процесса
   }
+}
+
+interface PersistedOrdersCrmStore {
+  orders: CrmOrderRecord[];
+  settings: OrderDispatchSettings;
+  dispatchLogs: DispatchAttemptLog[];
+}
+
+let cachedOrdersCrmStore: PersistedOrdersCrmStore | null = null;
+
+function createDefaultDispatchSettings(): OrderDispatchSettings {
+  const envTgToken = process.env.TELEGRAM_ORDERS_BOT_TOKEN?.trim() || '';
+  const envTgChat = process.env.TELEGRAM_ORDERS_CHAT_ID?.trim() || '';
+  const envWebhookUrl = process.env.ORDERS_WEBHOOK_URL?.trim() || '';
+  const envWebhookSecret = process.env.ORDERS_WEBHOOK_SECRET?.trim() || '';
+
+  return {
+    telegram: {
+      enabled: Boolean(envTgToken && envTgChat),
+      botToken: envTgToken,
+      chatId: envTgChat,
+      notifyOnNewOrder: true,
+      notifyOnStageChange: true,
+    },
+    webhook: {
+      enabled: Boolean(envWebhookUrl),
+      endpointUrl: envWebhookUrl,
+      hmacSecret: envWebhookSecret,
+      notifyOnNewOrder: true,
+      notifyOnStageChange: true,
+    },
+  };
+}
+
+function readOrdersCrmStore(): PersistedOrdersCrmStore {
+  if (cachedOrdersCrmStore) return cachedOrdersCrmStore;
+  try {
+    if (!fs.existsSync(ORDERS_CRM_FILE)) {
+      cachedOrdersCrmStore = {
+        orders: createSeedCrmOrders(),
+        settings: createDefaultDispatchSettings(),
+        dispatchLogs: [],
+      };
+      return cachedOrdersCrmStore;
+    }
+    const raw = JSON.parse(
+      fs.readFileSync(ORDERS_CRM_FILE, 'utf8')
+    ) as Partial<PersistedOrdersCrmStore>;
+    const defaults = createDefaultDispatchSettings();
+    cachedOrdersCrmStore = {
+      orders:
+        Array.isArray(raw.orders) && raw.orders.length > 0
+          ? raw.orders
+          : createSeedCrmOrders(),
+      settings: {
+        telegram: {
+          ...defaults.telegram,
+          ...(raw.settings?.telegram ?? {}),
+        },
+        webhook: {
+          ...defaults.webhook,
+          ...(raw.settings?.webhook ?? {}),
+        },
+      },
+      dispatchLogs: Array.isArray(raw.dispatchLogs) ? raw.dispatchLogs : [],
+    };
+    return cachedOrdersCrmStore;
+  } catch {
+    cachedOrdersCrmStore = {
+      orders: createSeedCrmOrders(),
+      settings: createDefaultDispatchSettings(),
+      dispatchLogs: [],
+    };
+    return cachedOrdersCrmStore;
+  }
+}
+
+function writeOrdersCrmStore(store: PersistedOrdersCrmStore): void {
+  cachedOrdersCrmStore = store;
+  try {
+    fs.mkdirSync(CMS_DATA_DIR, { recursive: true });
+    const tmp = path.join(
+      CMS_DATA_DIR,
+      `.orders-crm.${Date.now()}.${Math.random().toString(36).slice(2, 7)}.tmp`
+    );
+    fs.writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf8');
+    fs.renameSync(tmp, ORDERS_CRM_FILE);
+  } catch {
+    // В среде только для чтения сохраняем в оперативной памяти процесса
+  }
+}
+
+function maskSecretForAdmin(secret: string): string {
+  const trimmed = secret.trim();
+  if (!trimmed) return '';
+  if (trimmed.length <= 6) return '••••••';
+  return `••••••••${trimmed.slice(-4)}`;
+}
+
+async function dispatchOrderToExternalChannels(
+  orderId: string,
+  event: 'order.created' | 'order.stage_changed' | 'dispatch.test'
+): Promise<{
+  telegramResult: CrmOrderRecord['delivery']['telegram'];
+  webhookResult: CrmOrderRecord['delivery']['webhook'];
+}> {
+  const crmStore = readOrdersCrmStore();
+  const targetOrder =
+    crmStore.orders.find((o) => o.id === orderId) ?? crmStore.orders[0];
+  const nowIso = new Date().toISOString();
+
+  if (!targetOrder) {
+    const emptyStatus = {
+      state: 'not_configured' as const,
+      updatedAt: nowIso,
+      httpStatus: null,
+      detail: 'Нет заказа для отправки',
+    };
+    return { telegramResult: emptyStatus, webhookResult: emptyStatus };
+  }
+
+  const { telegram, webhook } = crmStore.settings;
+
+  // 1. Telegram Bot API Dispatch
+  const pushDispatchLog = (entry: DispatchAttemptLog) => {
+    crmStore.dispatchLogs = [entry, ...crmStore.dispatchLogs].slice(0, 35);
+  };
+
+  let telegramResult: CrmOrderRecord['delivery']['telegram'];
+  const shouldSendTg =
+    event === 'dispatch.test' ||
+    (telegram.enabled &&
+      ((event === 'order.created' && telegram.notifyOnNewOrder) ||
+        (event === 'order.stage_changed' && telegram.notifyOnStageChange)));
+
+  if (!shouldSendTg || !telegram.botToken.trim() || !telegram.chatId.trim()) {
+    telegramResult = {
+      state: 'not_configured',
+      updatedAt: nowIso,
+      httpStatus: null,
+      detail:
+        !telegram.botToken.trim() || !telegram.chatId.trim()
+          ? 'Укажите Bot Token и Chat ID продюсерского чата для прямой отправки'
+          : 'Автоотправка этого события отключена в настройках Telegram',
+    };
+    if (event === 'dispatch.test') {
+      pushDispatchLog({
+        id: `log-tg-${Date.now()}`,
+        timestamp: nowIso,
+        orderNumber: targetOrder.orderNumber,
+        channel: 'telegram',
+        event,
+        state: 'ready_simulated',
+        httpStatus: null,
+        latencyMs: 2,
+        summary:
+          'Локальная проверка шаблона Telegram успешна (для реальной доставки укажите Bot Token и Chat ID)',
+      });
+    }
+  } else {
+    const started = Date.now();
+    try {
+      const text = formatTelegramOrderDispatchMessage(targetOrder, event);
+      const tgUrl = `https://api.telegram.org/bot${telegram.botToken.trim()}/sendMessage`;
+      const tgRes = await fetch(tgUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: telegram.chatId.trim(),
+          text,
+        }),
+        signal: AbortSignal.timeout(5000),
+      });
+      const latencyMs = Date.now() - started;
+      if (tgRes.ok) {
+        telegramResult = {
+          state: 'delivered',
+          updatedAt: new Date().toISOString(),
+          httpStatus: tgRes.status,
+          detail: `Доставлено в Telegram за ${latencyMs} мс`,
+        };
+      } else {
+        telegramResult = {
+          state: 'failed',
+          updatedAt: new Date().toISOString(),
+          httpStatus: tgRes.status,
+          detail: `Ответ Telegram API: HTTP ${tgRes.status}`,
+        };
+      }
+      pushDispatchLog({
+        id: `log-tg-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        orderNumber: targetOrder.orderNumber,
+        channel: 'telegram',
+        event,
+        state: telegramResult.state,
+        httpStatus: tgRes.status,
+        latencyMs,
+        summary: telegramResult.detail,
+      });
+    } catch (err) {
+      const latencyMs = Date.now() - started;
+      telegramResult = {
+        state: 'failed',
+        updatedAt: new Date().toISOString(),
+        httpStatus: null,
+        detail:
+          err instanceof Error
+            ? `Сетевой сбой Telegram: ${err.message.slice(0, 90)}`
+            : 'Не удалось связаться с Telegram Bot API',
+      };
+      pushDispatchLog({
+        id: `log-tg-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        orderNumber: targetOrder.orderNumber,
+        channel: 'telegram',
+        event,
+        state: 'failed',
+        httpStatus: null,
+        latencyMs,
+        summary: telegramResult.detail,
+      });
+    }
+  }
+
+  // 2. Outbound Webhook Dispatch (HMAC-SHA256 signed JSON)
+  let webhookResult: CrmOrderRecord['delivery']['webhook'];
+  const shouldSendWh =
+    event === 'dispatch.test' ||
+    (webhook.enabled &&
+      ((event === 'order.created' && webhook.notifyOnNewOrder) ||
+        (event === 'order.stage_changed' && webhook.notifyOnStageChange)));
+
+  if (!shouldSendWh || !webhook.endpointUrl.trim()) {
+    webhookResult = {
+      state: 'not_configured',
+      updatedAt: nowIso,
+      httpStatus: null,
+      detail: !webhook.endpointUrl.trim()
+        ? 'Укажите Webhook URL (amoCRM / Bitrix24 / Make или локальный контур)'
+        : 'Отправка этого события отключена в настройках Webhook',
+    };
+    if (event === 'dispatch.test') {
+      pushDispatchLog({
+        id: `log-wh-${Date.now() + 1}`,
+        timestamp: nowIso,
+        orderNumber: targetOrder.orderNumber,
+        channel: 'webhook',
+        event,
+        state: 'ready_simulated',
+        httpStatus: null,
+        latencyMs: 1,
+        summary:
+          'JSON-конверт и подпись HMAC-SHA256 сформированы корректно (URL не задан)',
+      });
+    }
+  } else {
+    const started = Date.now();
+    try {
+      const envelope = buildWebhookOrderEnvelope(targetOrder, event);
+      const rawJson = JSON.stringify(envelope);
+      const signingSecret = webhook.hmacSecret.trim() || getSessionSecret();
+      const signatureHex = crypto
+        .createHmac('sha256', signingSecret)
+        .update(rawJson)
+        .digest('hex');
+
+      const whRes = await fetch(webhook.endpointUrl.trim(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-FMWorks-Event': event,
+          'X-FMWorks-Idempotency-Key': envelope.idempotencyKey,
+          'X-FMWorks-Signature': `sha256=${signatureHex}`,
+        },
+        body: rawJson,
+        signal: AbortSignal.timeout(5000),
+      });
+      const latencyMs = Date.now() - started;
+
+      if (whRes.ok) {
+        webhookResult = {
+          state: 'delivered',
+          updatedAt: new Date().toISOString(),
+          httpStatus: whRes.status,
+          detail: `Пакет принят внешней CRM (HTTP ${whRes.status} · ${latencyMs} мс)`,
+        };
+      } else {
+        webhookResult = {
+          state: 'failed',
+          updatedAt: new Date().toISOString(),
+          httpStatus: whRes.status,
+          detail: `Внешний сервер вернул HTTP ${whRes.status}`,
+        };
+      }
+
+      pushDispatchLog({
+        id: `log-wh-${Date.now() + 1}`,
+        timestamp: new Date().toISOString(),
+        orderNumber: targetOrder.orderNumber,
+        channel: 'webhook',
+        event,
+        state: webhookResult.state,
+        httpStatus: whRes.status,
+        latencyMs,
+        summary: webhookResult.detail,
+      });
+    } catch (err) {
+      const latencyMs = Date.now() - started;
+      webhookResult = {
+        state: 'failed',
+        updatedAt: new Date().toISOString(),
+        httpStatus: null,
+        detail:
+          err instanceof Error
+            ? `Ошибка доставки Webhook: ${err.message.slice(0, 90)}`
+            : 'Не удалось доставить Webhook',
+      };
+      pushDispatchLog({
+        id: `log-wh-${Date.now() + 1}`,
+        timestamp: new Date().toISOString(),
+        orderNumber: targetOrder.orderNumber,
+        channel: 'webhook',
+        event,
+        state: 'failed',
+        httpStatus: null,
+        latencyMs,
+        summary: webhookResult.detail,
+      });
+    }
+  }
+
+  crmStore.orders = crmStore.orders.map((o) =>
+    o.id === targetOrder.id
+      ? {
+          ...o,
+          delivery: {
+            crmRegistry: 'saved',
+            telegram: telegramResult,
+            webhook: webhookResult,
+          },
+        }
+      : o
+  );
+  writeOrdersCrmStore(crmStore);
+  return { telegramResult, webhookResult };
 }
 
 function resolveClientIp(req: Request): string {
@@ -888,7 +1250,7 @@ async function startServer() {
   app.post('/api/orders/submit', express.json({ limit: '64kb' }), (req, res) => {
     const clientIp = resolveClientIp(req);
     const body = (req.body ?? {}) as {
-      source?: 'order_page' | 'standalone_hold_modal' | 'quick_order_drawer';
+      source?: OrderEntrySource;
       checkoutMode?: 'air_plus_production' | 'production_only';
       orderNumberCandidate?: string;
       formatLabel?: string;
@@ -897,7 +1259,10 @@ async function startServer() {
       companyLine?: string;
       briefText?: string;
       hasVoiceRecording?: boolean;
+      voiceDurationSec?: number;
       hasAttachedFile?: boolean;
+      attachedFileName?: string | null;
+      mediaPlanSnapshot?: OrderMediaPlanSnapshot | null;
       isReturningFastTrack?: boolean;
       requireBriefOrVoice?: boolean;
       websiteTrap?: string;
@@ -1093,6 +1458,11 @@ async function startServer() {
     // Верифицированная заявка реального клиента
     recentLeadFingerprints.set(fingerprint, now + 10 * 60 * 1000);
     store.verifiedCount += 1;
+    const resolvedBudgetRub =
+      typeof body.totalBudgetRub === 'number' && Number.isFinite(body.totalBudgetRub)
+        ? Math.round(body.totalBudgetRub)
+        : body.mediaPlanSnapshot?.unifiedTotalRub ?? 25_000;
+
     const newVerifiedRecord: StoredVerifiedLeadRecord = {
       id: `lead-${now}-${crypto.randomBytes(3).toString('hex')}`,
       orderNumber,
@@ -1102,10 +1472,7 @@ async function startServer() {
         typeof body.formatLabel === 'string'
           ? body.formatLabel.slice(0, 120)
           : 'Студийный заказ',
-      totalBudgetRub:
-        typeof body.totalBudgetRub === 'number' && Number.isFinite(body.totalBudgetRub)
-          ? Math.round(body.totalBudgetRub)
-          : null,
+      totalBudgetRub: resolvedBudgetRub,
       contact: evaluation.normalizedContact,
       companyOrInn: evaluation.normalizedCompany,
       innVerified: evaluation.innVerified,
@@ -1117,6 +1484,84 @@ async function startServer() {
     store.verifiedLeads = [newVerifiedRecord, ...store.verifiedLeads].slice(0, 150);
     writeSecurityStore(store);
 
+    // Атомарная регистрация сделки в CRM-пульте продюсеров + асинхронный Outbox в Telegram и Webhook
+    const crmStore = readOrdersCrmStore();
+    const nowIso = new Date(now).toISOString();
+    const holdExpiresIso = new Date(now + 4 * 3600 * 1000).toISOString();
+    const validSources: readonly OrderEntrySource[] = [
+      'order_page',
+      'quick_order_drawer',
+      'standalone_hold_modal',
+    ];
+    const resolvedSource: OrderEntrySource = validSources.includes(
+      body.source as OrderEntrySource
+    )
+      ? (body.source as OrderEntrySource)
+      : 'order_page';
+
+    const sanitizedMediaSnap: OrderMediaPlanSnapshot | null =
+      body.mediaPlanSnapshot &&
+      typeof body.mediaPlanSnapshot === 'object' &&
+      Array.isArray(body.mediaPlanSnapshot.stations)
+        ? body.mediaPlanSnapshot
+        : null;
+
+    const newCrmOrder: CrmOrderRecord = {
+      id: `crm-${now}-${crypto.randomBytes(3).toString('hex')}`,
+      orderNumber,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      holdExpiresAt: holdExpiresIso,
+      source: resolvedSource,
+      checkoutMode,
+      stage: 'new_hold',
+      formatLabel: newVerifiedRecord.formatLabel,
+      totalBudgetRub: resolvedBudgetRub,
+      contact: evaluation.normalizedContact,
+      detectedChannel: evaluation.detectedChannel ?? 'phone',
+      companyOrInn: evaluation.normalizedCompany,
+      innVerified: evaluation.innVerified,
+      briefText: evaluation.sanitizedBrief.slice(0, 1500),
+      hasVoiceRecording: Boolean(body.hasVoiceRecording),
+      voiceDurationSec:
+        typeof body.voiceDurationSec === 'number' && Number.isFinite(body.voiceDurationSec)
+          ? Math.max(0, Math.min(300, Math.round(body.voiceDurationSec)))
+          : 0,
+      attachedFileName:
+        typeof body.attachedFileName === 'string' && body.attachedFileName.trim()
+          ? body.attachedFileName.trim().slice(0, 180)
+          : null,
+      producerNotes: '',
+      compliance: {
+        trafficConfirmed: false,
+        fz38Checked: false,
+        rightsPassportIssued: sanitizedMediaSnap?.spotReadiness === 'ready_with_passport',
+        edoAndOrdRegistered: false,
+      },
+      mediaPlanSnapshot: sanitizedMediaSnap,
+      delivery: {
+        crmRegistry: 'saved',
+        telegram: {
+          state: 'ready_simulated',
+          updatedAt: nowIso,
+          httpStatus: null,
+          detail: 'В очереди диспетчеризации Telegram…',
+        },
+        webhook: {
+          state: 'ready_simulated',
+          updatedAt: nowIso,
+          httpStatus: null,
+          detail: 'В очереди диспетчеризации Webhook…',
+        },
+      },
+    };
+
+    crmStore.orders = [newCrmOrder, ...crmStore.orders].slice(0, 200);
+    writeOrdersCrmStore(crmStore);
+
+    // Неблокирующий запуск внешней доставки (Telegram + Webhook)
+    void dispatchOrderToExternalChannels(newCrmOrder.id, 'order.created');
+
     const verifiedConversionSeal = crypto
       .createHmac('sha256', getSessionSecret())
       .update(`verified:${orderNumber}:${now}`)
@@ -1127,6 +1572,7 @@ async function startServer() {
       ok: true,
       verdict: 'verified_human',
       orderNumber,
+      crmOrderId: newCrmOrder.id,
       conversionAllowed: true,
       verifiedConversionSeal,
       innVerified: evaluation.innVerified,
@@ -1137,6 +1583,263 @@ async function startServer() {
         retryAfterSec: 0,
       },
       nextChallenge: issueLeadChallenge(),
+    });
+  });
+
+  // =========================================================================
+  // Studio CRM Orders Funnel & Outbox Dispatch Endpoints
+  // =========================================================================
+
+  // Встроенный локальный приёмник Webhook для быстрой проверки интеграции прямо в контейнере
+  app.post('/api/webhooks/loopback-crm-sink', express.json({ limit: '128kb' }), (req, res) => {
+    const sigHeader = req.headers['x-fmworks-signature'];
+    const eventHeader = req.headers['x-fmworks-event'] || 'unknown';
+    res.status(200).json({
+      ok: true,
+      receivedEvent: eventHeader,
+      signaturePresent: Boolean(sigHeader),
+      receivedAt: new Date().toISOString(),
+    });
+  });
+
+  app.get('/api/cms/orders', requireStudioAuth, (_req, res) => {
+    const crmStore = readOrdersCrmStore();
+    const { telegram, webhook } = crmStore.settings;
+
+    res.json({
+      ok: true,
+      orders: crmStore.orders,
+      dispatchLogs: crmStore.dispatchLogs.slice(0, 25),
+      settings: {
+        telegram: {
+          enabled: telegram.enabled,
+          hasBotToken: Boolean(telegram.botToken.trim()),
+          maskedBotToken: maskSecretForAdmin(telegram.botToken),
+          chatId: telegram.chatId,
+          notifyOnNewOrder: telegram.notifyOnNewOrder,
+          notifyOnStageChange: telegram.notifyOnStageChange,
+        },
+        webhook: {
+          enabled: webhook.enabled,
+          endpointUrl: webhook.endpointUrl,
+          hasHmacSecret: Boolean(webhook.hmacSecret.trim()),
+          maskedHmacSecret: maskSecretForAdmin(webhook.hmacSecret),
+          notifyOnNewOrder: webhook.notifyOnNewOrder,
+          notifyOnStageChange: webhook.notifyOnStageChange,
+        },
+      },
+    });
+  });
+
+  app.patch(
+    '/api/cms/orders/:orderId',
+    requireStudioAuth,
+    express.json({ limit: '64kb' }),
+    (req, res) => {
+      const { orderId } = req.params;
+      const body = (req.body ?? {}) as {
+        stage?: CrmOrderStage;
+        producerNotes?: string;
+        compliance?: Partial<OrderComplianceChecklist>;
+      };
+
+      const crmStore = readOrdersCrmStore();
+      const idx = crmStore.orders.findIndex((o) => o.id === orderId);
+      if (idx === -1) {
+        res.status(404).json({ ok: false, error: 'Заказ не найден в реестре CRM' });
+        return;
+      }
+
+      const existing = crmStore.orders[idx];
+      const validStageIds = new Set(CRM_ORDER_STAGES.map((s) => s.id));
+      const nextStage: CrmOrderStage =
+        body.stage && validStageIds.has(body.stage) ? body.stage : existing.stage;
+      const stageChanged = nextStage !== existing.stage;
+
+      const updatedOrder: CrmOrderRecord = {
+        ...existing,
+        stage: nextStage,
+        updatedAt: new Date().toISOString(),
+        producerNotes:
+          typeof body.producerNotes === 'string'
+            ? body.producerNotes.slice(0, 2000)
+            : existing.producerNotes,
+        compliance: body.compliance
+          ? {
+              trafficConfirmed:
+                typeof body.compliance.trafficConfirmed === 'boolean'
+                  ? body.compliance.trafficConfirmed
+                  : existing.compliance.trafficConfirmed,
+              fz38Checked:
+                typeof body.compliance.fz38Checked === 'boolean'
+                  ? body.compliance.fz38Checked
+                  : existing.compliance.fz38Checked,
+              rightsPassportIssued:
+                typeof body.compliance.rightsPassportIssued === 'boolean'
+                  ? body.compliance.rightsPassportIssued
+                  : existing.compliance.rightsPassportIssued,
+              edoAndOrdRegistered:
+                typeof body.compliance.edoAndOrdRegistered === 'boolean'
+                  ? body.compliance.edoAndOrdRegistered
+                  : existing.compliance.edoAndOrdRegistered,
+            }
+          : existing.compliance,
+      };
+
+      crmStore.orders[idx] = updatedOrder;
+      writeOrdersCrmStore(crmStore);
+
+      if (stageChanged) {
+        void dispatchOrderToExternalChannels(updatedOrder.id, 'order.stage_changed');
+      }
+
+      res.json({
+        ok: true,
+        order: updatedOrder,
+      });
+    }
+  );
+
+  app.post('/api/cms/orders/:orderId/redeliver', requireStudioAuth, async (req, res) => {
+    const { orderId } = req.params;
+    const crmStore = readOrdersCrmStore();
+    const found = crmStore.orders.find((o) => o.id === orderId);
+    if (!found) {
+      res.status(404).json({ ok: false, error: 'Заказ не найден' });
+      return;
+    }
+
+    const result = await dispatchOrderToExternalChannels(orderId, 'order.created');
+    const updatedStore = readOrdersCrmStore();
+    const updatedOrder = updatedStore.orders.find((o) => o.id === orderId) ?? found;
+
+    res.json({
+      ok: true,
+      order: updatedOrder,
+      dispatchLogs: updatedStore.dispatchLogs.slice(0, 25),
+      result,
+    });
+  });
+
+  app.put(
+    '/api/cms/orders-dispatch/settings',
+    requireStudioAuth,
+    express.json({ limit: '32kb' }),
+    (req, res) => {
+      const body = (req.body ?? {}) as {
+        telegram?: {
+          enabled?: boolean;
+          botToken?: string;
+          chatId?: string;
+          notifyOnNewOrder?: boolean;
+          notifyOnStageChange?: boolean;
+        };
+        webhook?: {
+          enabled?: boolean;
+          endpointUrl?: string;
+          hmacSecret?: string;
+          notifyOnNewOrder?: boolean;
+          notifyOnStageChange?: boolean;
+        };
+      };
+
+      const crmStore = readOrdersCrmStore();
+      const prevTg = crmStore.settings.telegram;
+      const prevWh = crmStore.settings.webhook;
+
+      const incomingTgToken = body.telegram?.botToken;
+      const nextBotToken =
+        incomingTgToken === undefined || incomingTgToken.startsWith('••••')
+          ? prevTg.botToken
+          : incomingTgToken.trim().slice(0, 180);
+
+      const incomingWhSecret = body.webhook?.hmacSecret;
+      const nextHmacSecret =
+        incomingWhSecret === undefined || incomingWhSecret.startsWith('••••')
+          ? prevWh.hmacSecret
+          : incomingWhSecret.trim().slice(0, 180);
+
+      crmStore.settings = {
+        telegram: {
+          enabled:
+            typeof body.telegram?.enabled === 'boolean'
+              ? body.telegram.enabled
+              : prevTg.enabled,
+          botToken: nextBotToken,
+          chatId:
+            typeof body.telegram?.chatId === 'string'
+              ? body.telegram.chatId.trim().slice(0, 90)
+              : prevTg.chatId,
+          notifyOnNewOrder:
+            typeof body.telegram?.notifyOnNewOrder === 'boolean'
+              ? body.telegram.notifyOnNewOrder
+              : prevTg.notifyOnNewOrder,
+          notifyOnStageChange:
+            typeof body.telegram?.notifyOnStageChange === 'boolean'
+              ? body.telegram.notifyOnStageChange
+              : prevTg.notifyOnStageChange,
+        },
+        webhook: {
+          enabled:
+            typeof body.webhook?.enabled === 'boolean'
+              ? body.webhook.enabled
+              : prevWh.enabled,
+          endpointUrl:
+            typeof body.webhook?.endpointUrl === 'string'
+              ? body.webhook.endpointUrl.trim().slice(0, 320)
+              : prevWh.endpointUrl,
+          hmacSecret: nextHmacSecret,
+          notifyOnNewOrder:
+            typeof body.webhook?.notifyOnNewOrder === 'boolean'
+              ? body.webhook.notifyOnNewOrder
+              : prevWh.notifyOnNewOrder,
+          notifyOnStageChange:
+            typeof body.webhook?.notifyOnStageChange === 'boolean'
+              ? body.webhook.notifyOnStageChange
+              : prevWh.notifyOnStageChange,
+        },
+      };
+
+      writeOrdersCrmStore(crmStore);
+
+      res.json({
+        ok: true,
+        settings: {
+          telegram: {
+            enabled: crmStore.settings.telegram.enabled,
+            hasBotToken: Boolean(crmStore.settings.telegram.botToken.trim()),
+            maskedBotToken: maskSecretForAdmin(crmStore.settings.telegram.botToken),
+            chatId: crmStore.settings.telegram.chatId,
+            notifyOnNewOrder: crmStore.settings.telegram.notifyOnNewOrder,
+            notifyOnStageChange: crmStore.settings.telegram.notifyOnStageChange,
+          },
+          webhook: {
+            enabled: crmStore.settings.webhook.enabled,
+            endpointUrl: crmStore.settings.webhook.endpointUrl,
+            hasHmacSecret: Boolean(crmStore.settings.webhook.hmacSecret.trim()),
+            maskedHmacSecret: maskSecretForAdmin(crmStore.settings.webhook.hmacSecret),
+            notifyOnNewOrder: crmStore.settings.webhook.notifyOnNewOrder,
+            notifyOnStageChange: crmStore.settings.webhook.notifyOnStageChange,
+          },
+        },
+      });
+    }
+  );
+
+  app.post('/api/cms/orders-dispatch/test', requireStudioAuth, async (_req, res) => {
+    const crmStore = readOrdersCrmStore();
+    const sampleOrder = crmStore.orders[0];
+    if (!sampleOrder) {
+      res.status(400).json({ ok: false, error: 'Нет заказов для контрольной проверки' });
+      return;
+    }
+
+    const result = await dispatchOrderToExternalChannels(sampleOrder.id, 'dispatch.test');
+    const updated = readOrdersCrmStore();
+    res.json({
+      ok: true,
+      result,
+      dispatchLogs: updated.dispatchLogs.slice(0, 25),
     });
   });
 

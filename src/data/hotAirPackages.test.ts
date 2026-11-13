@@ -255,3 +255,85 @@ test('Тексты портретов ЦА, научной памятки и г�
   const violations = BANNED_EDITORIAL_TERMS.filter((term) => serialized.includes(term));
   assert.deepEqual(violations, []);
 });
+
+test('Режим «Есть свой ролик»: станции пакета не прыгают, а охват OTS и число выходов честно пересчитываются от хронометража ролика клиента (10с / 15с / 20с / 30с)', () => {
+  const catalog = buildUnified12StationCatalog();
+
+  for (const portrait of HOT_AIR_AUDIENCE_PORTRAITS) {
+    const withProduction15s = buildThreeReadyPackages({
+      portraitId: portrait.id,
+      totalBudgetRub: 180_000,
+      spotSeconds: 15,
+      spotReadiness: 'need_production_24h',
+      stationsCatalog: catalog,
+    });
+
+    const readySpot10s = buildThreeReadyPackages({
+      portraitId: portrait.id,
+      totalBudgetRub: 180_000,
+      spotSeconds: 10,
+      spotReadiness: 'ready_with_passport',
+      stationsCatalog: catalog,
+    });
+
+    const readySpot15s = buildThreeReadyPackages({
+      portraitId: portrait.id,
+      totalBudgetRub: 180_000,
+      spotSeconds: 15,
+      spotReadiness: 'ready_with_passport',
+      stationsCatalog: catalog,
+    });
+
+    const readySpot30s = buildThreeReadyPackages({
+      portraitId: portrait.id,
+      totalBudgetRub: 180_000,
+      spotSeconds: 30,
+      spotReadiness: 'ready_with_passport',
+      stationsCatalog: catalog,
+    });
+
+    for (let i = 0; i < 3; i += 1) {
+      const pkgProd15 = withProduction15s[i];
+      const pkgReady10 = readySpot10s[i];
+      const pkgReady15 = readySpot15s[i];
+      const pkgReady30 = readySpot30s[i];
+
+      // 1. Радиостанции в пакете остаются закреплёнными за портретом ЦА (не подменяются случайными сбросами)
+      assert.deepEqual(
+        pkgReady15.stationBreakdown.map((s) => s.stationId),
+        pkgProd15.stationBreakdown.map((s) => s.stationId),
+        `Радиостанции пакета ${pkgProd15.id} для ${portrait.id} не должны меняться при переключении на свой ролик`
+      );
+      assert.deepEqual(
+        pkgReady30.stationBreakdown.map((s) => s.stationId),
+        pkgReady15.stationBreakdown.map((s) => s.stationId),
+        `Радиостанции пакета ${pkgProd15.id} для ${portrait.id} должны сохраняться при смене хронометража 15с -> 30с`
+      );
+
+      // 2. В режиме «Есть свой ролик» продакшн всегда 0 ₽, весь бюджет идёт в эфир и не превышает потолок
+      assert.equal(pkgReady10.plan.production.effectivePriceRub, 0);
+      assert.equal(pkgReady15.plan.production.effectivePriceRub, 0);
+      assert.equal(pkgReady30.plan.production.effectivePriceRub, 0);
+      assert.ok(pkgReady10.plan.totalClientCostRub <= 180_000);
+      assert.ok(pkgReady15.plan.totalClientCostRub <= 180_000);
+      assert.ok(
+        pkgReady30.plan.totalClientCostRub <= 180_000,
+        `Пакет ${pkgReady30.id} (30с) для ${portrait.id} превысил бюджет 180 000 ₽: ${pkgReady30.plan.totalClientCostRub}`
+      );
+
+      // 3. От хронометража готового ролика закономерно меняются выходы и охват OTS в рамках бюджета:
+      // 10 сек (дешевле выход) -> больше выходов и больше OTS, чем 15 сек -> больше выходов и больше OTS, чем 30 сек
+      assert.ok(
+        pkgReady10.plan.totalSpots >= pkgReady15.plan.totalSpots &&
+          pkgReady15.plan.totalSpots > pkgReady30.plan.totalSpots,
+        `Ожидалось убывание числа выходов с ростом хронометража (10с: ${pkgReady10.plan.totalSpots}, 15с: ${pkgReady15.plan.totalSpots}, 30с: ${pkgReady30.plan.totalSpots})`
+      );
+      assert.ok(
+        pkgReady10.plan.totalReachOTS >= pkgReady15.plan.totalReachOTS &&
+          pkgReady15.plan.totalReachOTS > pkgReady30.plan.totalReachOTS,
+        `Ожидалось изменение охвата OTS от хронометража ролика (10с: ${pkgReady10.plan.totalReachOTS}, 15с: ${pkgReady15.plan.totalReachOTS}, 30с: ${pkgReady30.plan.totalReachOTS})`
+      );
+    }
+  }
+});
+

@@ -16,13 +16,18 @@ import { HotAirPage } from './components/pages/HotAirPage';
 import { OrderPage } from './components/pages/OrderPage';
 import { PricingPage } from './components/pages/PricingPage';
 import { RadioInventoryAdmin } from './components/RadioInventoryAdmin';
+import { ReservationConfirmedModal } from './components/ReservationConfirmedModal';
 import { BrandDomainVariant } from './data/brandKitData';
 import {
   INDUSTRY_SOLUTIONS,
   RADIO_MISTAKE_ARTICLES,
   STATION_EDITORIAL_SEEDS,
 } from './data/multiPageContentData';
-import { OrderDraftSnapshot, orderDraftStore } from './data/orderDraftStore';
+import {
+  OrderDraftSnapshot,
+  orderDraftStore,
+  resolveReservationLifecycleStatus,
+} from './data/orderDraftStore';
 import {
   applyRouteSeoToDocument,
   buildPlatformPath,
@@ -67,6 +72,8 @@ function FmworksExperience() {
 
   const [isBrandKitOpen, setIsBrandKitOpen] = useState(false);
   const [isRadioAdminOpen, setIsRadioAdminOpen] = useState(false);
+  const [isHeaderConfirmedModalOpen, setIsHeaderConfirmedModalOpen] =
+    useState(false);
   const [brandVariant, setBrandVariant] =
     useState<BrandDomainVariant>('fmworks_reg');
   const [caseSnap, setCaseSnap] = useState<CasePlayerSnapshot>(() =>
@@ -180,7 +187,7 @@ function FmworksExperience() {
         (nextRoute.kind === 'home' && Boolean(nextRoute.scrollAnchor)) ||
         (nextRoute.kind === 'pricing' && Boolean(nextRoute.scrollAnchor));
       if (!hasScrollAnchor) {
-        window.scrollTo({ top: 0, behavior: 'auto' });
+        window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
       }
     }
     setRoute(nextRoute);
@@ -239,8 +246,11 @@ function FmworksExperience() {
     navigateTo({ kind: 'order' });
   };
 
+  const reservationStatus = resolveReservationLifecycleStatus(orderDraft);
   const hasActiveHold = orderDraft.mediaReservation !== null;
   const holdStationsCount = orderDraft.mediaReservation?.stations.length ?? 0;
+  const confirmedOrderNumber =
+    orderDraft.confirmedReservation?.orderNumber ?? null;
 
   return (
     <div className="min-h-screen bg-[#F7F6F2] text-[#111111] dark:bg-[#0D0D0F] dark:text-[#F4F3EF] transition-colors duration-200 flex flex-col">
@@ -250,8 +260,11 @@ function FmworksExperience() {
         activeRoute={route}
         hasActiveHold={hasActiveHold}
         holdStationsCount={holdStationsCount}
+        reservationStatus={reservationStatus}
+        confirmedOrderNumber={confirmedOrderNumber}
         onNavigate={navigateTo}
         onOpenOrder={handleHeaderOrderClick}
+        onOpenConfirmedModal={() => setIsHeaderConfirmedModalOpen(true)}
         brandVariant={brandVariant}
         onOpenBrandKit={() => setIsBrandKitOpen(true)}
       />
@@ -353,6 +366,13 @@ function FmworksExperience() {
       <RadioInventoryAdmin
         isOpen={isRadioAdminOpen}
         onClose={() => setIsRadioAdminOpen(false)}
+      />
+
+      <ReservationConfirmedModal
+        isOpen={isHeaderConfirmedModalOpen && orderDraft.confirmedReservation !== null}
+        confirmed={orderDraft.confirmedReservation}
+        onClose={() => setIsHeaderConfirmedModalOpen(false)}
+        onNavigateHotAir={() => navigateTo({ kind: 'hot-air' })}
       />
     </div>
   );

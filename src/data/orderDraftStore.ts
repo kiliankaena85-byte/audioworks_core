@@ -1,11 +1,44 @@
 import { IndustryVerticalSlug, isValidIndustrySlug } from './platformRouter';
 import { OrderFormatId } from './pricingData';
 import {
+  ComputedReservationTotals,
   MediaGridReservationPayload,
   ReservationProductionSelection,
 } from './radioInventory';
 
 export type OrderCheckoutMode = 'production_only' | 'air_plus_production';
+
+export type ReservationLifecycleStatus =
+  | 'none'
+  | 'draft_selected'
+  | 'confirmed_hold';
+
+export interface ConfirmedReservationSummary {
+  orderNumber: string;
+  confirmedAtMs: number;
+  holdExpiresAtMs: number;
+  checkoutMode: OrderCheckoutMode;
+  contactLine: string;
+  companyLine: string;
+  formatLabel: string;
+  spotDurationSec: number;
+  industryLabel: string | null;
+  briefNote: string;
+  hasVoice: boolean;
+  voiceSec: number;
+  fileName: string | null;
+  conversionAllowed: boolean;
+  innVerified: boolean;
+  lockedMediaReservation: MediaGridReservationPayload | null;
+  lockedTotals: ComputedReservationTotals | null;
+}
+
+export interface ClientNextStepItem {
+  stepNumber: string;
+  timingLabel: string;
+  title: string;
+  description: string;
+}
 
 export interface OrderDraftSnapshot {
   mode: OrderCheckoutMode;
@@ -18,6 +51,7 @@ export interface OrderDraftSnapshot {
   mediaReservation: MediaGridReservationPayload | null;
   holdExpiresAtMs: number | null;
   reservationProdSelection: ReservationProductionSelection;
+  confirmedReservation: ConfirmedReservationSummary | null;
   returnPath: string;
 }
 
@@ -39,6 +73,80 @@ const VALID_PROD_SELECTIONS: readonly ReservationProductionSelection[] = [
   'ready_spot',
 ];
 
+export function resolveReservationLifecycleStatus(
+  snapshot: Pick<OrderDraftSnapshot, 'mediaReservation' | 'confirmedReservation'>
+): ReservationLifecycleStatus {
+  if (snapshot.confirmedReservation !== null) {
+    return 'confirmed_hold';
+  }
+  if (
+    snapshot.mediaReservation !== null &&
+    Array.isArray(snapshot.mediaReservation.stations) &&
+    snapshot.mediaReservation.stations.length > 0
+  ) {
+    return 'draft_selected';
+  }
+  return 'none';
+}
+
+export function buildClientNextStepsTimeline(
+  checkoutMode: OrderCheckoutMode,
+  stationsCount = 0
+): readonly ClientNextStepItem[] {
+  if (checkoutMode === 'air_plus_production') {
+    const stationsPhrase =
+      stationsCount === 1
+        ? 'выбранной радиостанции'
+        : `выбранных радиостанциях (${stationsCount} ст.)`;
+    return [
+      {
+        stepNumber: '01',
+        timingLabel: 'Сейчас · 0–15 минут',
+        title: 'Блокировка эфирных окон в трафик-службе',
+        description: `Сейлз-продюсер сверяет сетку на ${stationsPhrase} и ставит слоты на закрытый 4-часовой резерв, чтобы квота со скидкой не ушла в открытую продажу.`,
+      },
+      {
+        stepNumber: '02',
+        timingLabel: 'Через 15–20 минут',
+        title: 'Звонок или сообщение продюсера в Telegram',
+        description:
+          'Персональный продюсер свяжется по вашему контакту, подтвердит точное расписание выходов и при необходимости примет задачу для сценариста устно.',
+      },
+      {
+        stepNumber: '03',
+        timingLabel: 'В течение 4 часов',
+        title: 'Единый договор-счёт в ЭДО и старт ролика',
+        description:
+          'Вы получите единую спецификацию и счёт в ЭДО без предоплаты за воздух. Если в пакете заказан ролик — студия подготовит 3 концепции сценария и кастинг дикторов.',
+      },
+    ];
+  }
+
+  return [
+    {
+      stepNumber: '01',
+      timingLabel: 'Сейчас · 0–15 минут',
+      title: 'Разбор задачи и юридический пре-чек ФЗ-38',
+      description:
+        'Исполнительный продюсер фиксирует ваш бриф или голосовое ТЗ, проверяет отраслевые требования радиостанций и подбирает голоса из базы федеральных дикторов.',
+    },
+    {
+      stepNumber: '02',
+      timingLabel: 'Через 15–30 минут',
+      title: 'Связь продюсера, тайминг и счёт в ЭДО',
+      description:
+        'Свяжемся по указанному контакту, согласуем точный хронометраж ролика и направим договор-счёт в ЭДО.',
+    },
+    {
+      stepNumber: '03',
+      timingLabel: 'За 24–48 часов',
+      title: '3 концепции сценария, запись и паспорт прав',
+      description:
+        'Пришлём 3 варианта сценария на выбор, запишем утверждённый ролик со сведением по ГОСТ радиоэфира и выдадим полный паспорт прав РАО/ВОИС.',
+    },
+  ];
+}
+
 export function createDefaultOrderDraft(): OrderDraftSnapshot {
   return {
     mode: 'production_only',
@@ -51,6 +159,7 @@ export function createDefaultOrderDraft(): OrderDraftSnapshot {
     mediaReservation: null,
     holdExpiresAtMs: null,
     reservationProdSelection: 'turnkey',
+    confirmedReservation: null,
     returnPath: '/',
   };
 }
@@ -64,6 +173,58 @@ export function computeRemainingHoldSeconds(
   }
   const diffSec = Math.floor((holdExpiresAtMs - nowMs) / 1000);
   return Math.max(0, Math.min(4 * 3600, diffSec));
+}
+
+function sanitizeConfirmedReservation(
+  raw: unknown
+): ConfirmedReservationSummary | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Partial<ConfirmedReservationSummary>;
+  if (
+    typeof obj.orderNumber !== 'string' ||
+    !obj.orderNumber.trim() ||
+    typeof obj.contactLine !== 'string' ||
+    !obj.contactLine.trim()
+  ) {
+    return null;
+  }
+  const nowMs = Date.now();
+  return {
+    orderNumber: obj.orderNumber.slice(0, 64),
+    confirmedAtMs:
+      typeof obj.confirmedAtMs === 'number' && Number.isFinite(obj.confirmedAtMs)
+        ? obj.confirmedAtMs
+        : nowMs,
+    holdExpiresAtMs:
+      typeof obj.holdExpiresAtMs === 'number' && Number.isFinite(obj.holdExpiresAtMs)
+        ? obj.holdExpiresAtMs
+        : nowMs + DEFAULT_HOLD_WINDOW_SECONDS * 1000,
+    checkoutMode:
+      obj.checkoutMode === 'air_plus_production'
+        ? 'air_plus_production'
+        : 'production_only',
+    contactLine: obj.contactLine.slice(0, 240),
+    companyLine: typeof obj.companyLine === 'string' ? obj.companyLine.slice(0, 240) : '',
+    formatLabel:
+      typeof obj.formatLabel === 'string' ? obj.formatLabel.slice(0, 240) : 'Под ключ',
+    spotDurationSec:
+      typeof obj.spotDurationSec === 'number' && Number.isFinite(obj.spotDurationSec)
+        ? Math.max(5, Math.min(60, Math.round(obj.spotDurationSec)))
+        : 20,
+    industryLabel:
+      typeof obj.industryLabel === 'string' ? obj.industryLabel.slice(0, 160) : null,
+    briefNote: typeof obj.briefNote === 'string' ? obj.briefNote.slice(0, 2000) : '',
+    hasVoice: Boolean(obj.hasVoice),
+    voiceSec:
+      typeof obj.voiceSec === 'number' && Number.isFinite(obj.voiceSec)
+        ? Math.max(0, Math.min(180, Math.round(obj.voiceSec)))
+        : 0,
+    fileName: typeof obj.fileName === 'string' ? obj.fileName.slice(0, 240) : null,
+    conversionAllowed: obj.conversionAllowed !== false,
+    innVerified: Boolean(obj.innVerified),
+    lockedMediaReservation: obj.lockedMediaReservation ?? null,
+    lockedTotals: obj.lockedTotals ?? null,
+  };
 }
 
 function sanitizeDraftFromStorage(raw: unknown): OrderDraftSnapshot {
@@ -116,6 +277,8 @@ function sanitizeDraftFromStorage(raw: unknown): OrderDraftSnapshot {
         ? Date.now() + DEFAULT_HOLD_WINDOW_SECONDS * 1000
         : null;
 
+  const confirmedReservation = sanitizeConfirmedReservation(obj.confirmedReservation);
+
   return {
     mode: mediaReservation ? mode : 'production_only',
     selectedFormat,
@@ -127,6 +290,7 @@ function sanitizeDraftFromStorage(raw: unknown): OrderDraftSnapshot {
     mediaReservation,
     holdExpiresAtMs,
     reservationProdSelection,
+    confirmedReservation,
     returnPath:
       typeof obj.returnPath === 'string' && obj.returnPath.startsWith('/')
         ? obj.returnPath
@@ -197,9 +361,10 @@ export function createOrderDraftStore(customStorage?: StorageAdapter) {
     } = {}): OrderDraftSnapshot {
       const next: OrderDraftSnapshot = {
         ...state,
-        mode: state.mediaReservation && !params.formatId && !params.industryPreset
-          ? state.mode
-          : 'production_only',
+        mode:
+          state.mediaReservation && !params.formatId && !params.industryPreset
+            ? state.mode
+            : 'production_only',
         selectedFormat: params.formatId ?? state.selectedFormat,
         industryPreset:
           params.industryPreset !== undefined ? params.industryPreset : state.industryPreset,
@@ -246,7 +411,29 @@ export function createOrderDraftStore(customStorage?: StorageAdapter) {
         mediaReservation: payload,
         holdExpiresAtMs: nowMs + countdownSec * 1000,
         reservationProdSelection: payload.initialProductionSelection,
+        confirmedReservation: null,
         returnPath: options.returnPath ?? '/hot-air',
+      };
+      persistAndNotify(next);
+      return next;
+    },
+
+    confirmReservationOrder(
+      summary: ConfirmedReservationSummary
+    ): OrderDraftSnapshot {
+      const next: OrderDraftSnapshot = {
+        ...state,
+        confirmedReservation: summary,
+        holdExpiresAtMs: summary.holdExpiresAtMs,
+      };
+      persistAndNotify(next);
+      return next;
+    },
+
+    clearConfirmedReservation(): OrderDraftSnapshot {
+      const next: OrderDraftSnapshot = {
+        ...state,
+        confirmedReservation: null,
       };
       persistAndNotify(next);
       return next;
@@ -279,6 +466,7 @@ export function createOrderDraftStore(customStorage?: StorageAdapter) {
         mode: 'production_only',
         mediaReservation: null,
         holdExpiresAtMs: null,
+        confirmedReservation: null,
       };
       persistAndNotify(next);
       return next;

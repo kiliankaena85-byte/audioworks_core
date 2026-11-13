@@ -12,8 +12,10 @@ import {
   STATION_EDITORIAL_SEEDS,
 } from './multiPageContentData';
 import {
+  buildClientNextStepsTimeline,
   computeRemainingHoldSeconds,
   createOrderDraftStore,
+  resolveReservationLifecycleStatus,
 } from './orderDraftStore';
 import {
   buildPlatformPath,
@@ -119,7 +121,7 @@ test('resolveRouteSeoMeta формирует осмысленные SEO-заго
   );
 });
 
-test('OrderDraftStore сохраняет бронь эфирной сетки и рассчитывает остаток 4-часового таймера', () => {
+test('OrderDraftStore разделяет черновик (draft_selected) и подтверждённую бронь (confirmed_hold) + формирует 3 шага маршрута клиента', () => {
   const memory = new Map<string, string>();
   const adapter = {
     getItem: (k: string) => memory.get(k) ?? null,
@@ -130,6 +132,7 @@ test('OrderDraftStore сохраняет бронь эфирной сетки и
 
   const store = createOrderDraftStore(adapter);
   assert.equal(store.getSnapshot().mode, 'production_only');
+  assert.equal(resolveReservationLifecycleStatus(store.getSnapshot()), 'none');
 
   const baseNow = 1_700_000_000_000;
   store.prepareMediaReservationOrder(
@@ -173,19 +176,59 @@ test('OrderDraftStore сохраняет бронь эфирной сетки и
     { nowMs: baseNow, returnPath: '/hot-air' }
   );
 
-  // Повторная гидратация из storage сохраняет бронь и таймер при перезагрузке страницы
+  // До отправки контакта статус = draft_selected (а не confirmed_hold)
   const rehydrated = createOrderDraftStore(adapter);
   const snap = rehydrated.getSnapshot();
   assert.equal(snap.mode, 'air_plus_production');
   assert.equal(snap.spotDurationSec, 21);
   assert.equal(snap.industryPreset, 'real-estate');
   assert.equal(snap.mediaReservation?.stations.length, 1);
+  assert.equal(resolveReservationLifecycleStatus(snap), 'draft_selected');
 
   const remainingAfter10Min = computeRemainingHoldSeconds(
     snap.holdExpiresAtMs,
     baseNow + 600 * 1000
   );
   assert.equal(remainingAfter10Min, 4 * 3600 - 1 - 600);
+
+  // После подтверждения брони по контакту статус = confirmed_hold
+  rehydrated.confirmReservationOrder({
+    orderNumber: 'FM-HOLD-2826',
+    confirmedAtMs: baseNow + 30_000,
+    holdExpiresAtMs: snap.holdExpiresAtMs!,
+    checkoutMode: 'air_plus_production',
+    contactLine: 'Алексей +7 999 123-45-67',
+    companyLine: 'ООО СтройИнвест',
+    formatLabel: 'Ролик «Под ключ» (+25 000 ₽)',
+    spotDurationSec: 21,
+    industryLabel: 'Недвижимость и ЖК',
+    briefNote: 'Старт продаж видовых квартир',
+    hasVoice: false,
+    voiceSec: 0,
+    fileName: null,
+    conversionAllowed: true,
+    innVerified: false,
+    lockedMediaReservation: snap.mediaReservation,
+    lockedTotals: null,
+  });
+
+  const confirmedRehydrated = createOrderDraftStore(adapter);
+  assert.equal(
+    resolveReservationLifecycleStatus(confirmedRehydrated.getSnapshot()),
+    'confirmed_hold'
+  );
+  assert.equal(
+    confirmedRehydrated.getSnapshot().confirmedReservation?.orderNumber,
+    'FM-HOLD-2826'
+  );
+
+  // Проверяем 3 шага маршрута клиента после отправки
+  const steps = buildClientNextStepsTimeline('air_plus_production', 2);
+  assert.equal(steps.length, 3);
+  assert.equal(steps[0].stepNumber, '01');
+  assert.equal(steps[1].stepNumber, '02');
+  assert.equal(steps[2].stepNumber, '03');
+  assert.ok(steps[0].description.includes('2 ст.'));
 });
 
 test('Каталог радиостанций и разборы кейсов корректно агрегируются и не содержат запрещённых слов', () => {

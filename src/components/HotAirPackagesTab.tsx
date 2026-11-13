@@ -1,4 +1,4 @@
-import { ArrowUpRight, Check, SlidersHorizontal } from 'lucide-react';
+import { ArrowUpRight, Check, Minus, Plus, SlidersHorizontal } from 'lucide-react';
 import {
   CAMPAIGN_GOAL_OPTIONS,
   CampaignGoalId,
@@ -20,6 +20,11 @@ import {
   TestLaunchBudgetValidationResult,
   validateMinTestLaunchBudget,
 } from '../data/radioInventory';
+import {
+  MAX_CUSTOM_SPOT_SECONDS,
+  MIN_CUSTOM_SPOT_SECONDS,
+  STANDARD_SPOT_DURATIONS,
+} from '../data/scriptChronometer';
 
 interface HotAirPackagesTabProps {
   campaignGoal: CampaignGoalId;
@@ -33,6 +38,10 @@ interface HotAirPackagesTabProps {
   spotReadiness: SpotReadinessMode;
   onChangeSpotReadiness: (mode: SpotReadinessMode) => void;
   spotSeconds: number;
+  secondsInputDraft?: string;
+  onSelectSpotSeconds?: (seconds: number) => void;
+  onManualSecondsInputChange?: (rawValue: string) => void;
+  onManualSecondsBlur?: () => void;
   packages: readonly HotAirReadyPackage[];
   selectedPackageId: HotAirPackageId;
   onSelectPackage: (id: HotAirPackageId) => void;
@@ -54,6 +63,10 @@ export function HotAirPackagesTab({
   spotReadiness,
   onChangeSpotReadiness,
   spotSeconds,
+  secondsInputDraft,
+  onSelectSpotSeconds,
+  onManualSecondsInputChange,
+  onManualSecondsBlur,
   packages,
   selectedPackageId,
   onSelectPackage,
@@ -88,7 +101,7 @@ export function HotAirPackagesTab({
             role="radiogroup"
             aria-label="Бизнес-задача рекламной кампании"
             data-testid="campaign-goal-selector"
-            className="grid grid-cols-1 md:grid-cols-2 gap-2"
+            className="grid grid-cols-1 md:grid-cols-2 gap-2.5"
           >
             {CAMPAIGN_GOAL_OPTIONS.map((goal) => {
               const active = goal.id === campaignGoal;
@@ -100,26 +113,26 @@ export function HotAirPackagesTab({
                   aria-checked={active}
                   data-testid={`campaign-goal-${goal.id}`}
                   onClick={() => onSelectCampaignGoal(goal.id)}
-                  className={`min-h-[50px] px-3.5 py-2 rounded-2xl text-left border transition-colors cursor-pointer flex items-center justify-between gap-3 ${
+                  className={`min-h-[64px] px-4 py-3 rounded-2xl text-left border transition-colors cursor-pointer flex items-start justify-between gap-3 ${
                     active
                       ? 'bg-[#111111] text-[#F7F6F2] border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:border-[#F4F3EF]'
                       : 'bg-[#F7F6F2] text-[#111111] border-[#111111]/10 hover:border-[#111111]/30 dark:bg-[#0E0E12] dark:text-[#F4F3EF] dark:border-white/10 dark:hover:border-white/30'
                   }`}
                 >
-                  <div className="min-w-0 space-y-0.5">
+                  <div className="min-w-0 space-y-1">
                     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                      <span className="text-xs sm:text-[13px] font-bold whitespace-nowrap">
+                      <span className="text-xs sm:text-[13.5px] font-bold">
                         {goal.label}
                       </span>
-                      <span className="text-xs font-semibold whitespace-nowrap text-[#FF4820]">
+                      <span className="text-xs font-semibold text-[#FF4820]">
                         · {goal.horizonLabel}
                       </span>
                     </div>
                     <p
-                      className={`text-[11.5px] leading-snug line-clamp-2 sm:truncate ${
+                      className={`text-xs leading-relaxed ${
                         active
-                          ? 'text-[#F7F6F2]/74 dark:text-[#0D0D0F]/72'
-                          : 'text-[#111111]/60 dark:text-[#F4F3EF]/60'
+                          ? 'text-[#F7F6F2]/76 dark:text-[#0D0D0F]/76'
+                          : 'text-[#111111]/64 dark:text-[#F4F3EF]/64'
                       }`}
                     >
                       {goal.shortHint}
@@ -128,7 +141,7 @@ export function HotAirPackagesTab({
 
                   {active && (
                     <Check
-                      className="w-4 h-4 text-[#FF4820] shrink-0"
+                      className="w-4 h-4 text-[#FF4820] shrink-0 mt-0.5"
                       aria-hidden="true"
                     />
                   )}
@@ -202,7 +215,7 @@ export function HotAirPackagesTab({
                   type="button"
                   data-testid="apply-min-budget-btn"
                   onClick={() => onSliderBudgetChange(MIN_TEST_LAUNCH_BUDGET_RUB)}
-                  className="min-h-[28px] px-2.5 py-1 rounded-lg bg-[#FF4820] text-white font-semibold cursor-pointer whitespace-nowrap shrink-0"
+                  className="min-h-[30px] px-3 py-1 rounded-lg bg-[#FF4820] text-white font-semibold cursor-pointer shrink-0"
                 >
                   Выставить {formatRubCompact(MIN_TEST_LAUNCH_BUDGET_RUB)}
                 </button>
@@ -257,15 +270,15 @@ export function HotAirPackagesTab({
             </div>
           </div>
 
-          {/* Тумблер готовности ролика */}
-          <div className="lg:col-span-4 space-y-2">
+          {/* Тумблер готовности ролика + уточнение хронометража своего ролика */}
+          <div className="lg:col-span-4 space-y-2.5">
             <div className="flex items-center justify-between gap-2 text-xs">
               <span className="font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
                 Аудиоролик ({spotSeconds} сек)
               </span>
               <span className="text-[#111111]/52 dark:text-[#F4F3EF]/52 tabular-nums">
                 {spotReadiness === 'ready_with_passport'
-                  ? 'Проверка прав 0 ₽'
+                  ? 'Свой файл · 0 ₽'
                   : isBonusBudgetZone
                     ? 'Бонус квоты 0 ₽'
                     : 'Под ключ за 24ч'}
@@ -282,7 +295,7 @@ export function HotAirPackagesTab({
                 data-testid="readiness-need-production"
                 onClick={() => onChangeSpotReadiness('need_production_24h')}
                 aria-pressed={spotReadiness === 'need_production_24h'}
-                className={`min-h-[40px] px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap truncate ${
+                className={`min-h-[40px] px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer text-center leading-snug ${
                   spotReadiness === 'need_production_24h'
                     ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
                     : 'text-[#111111]/68 dark:text-[#F4F3EF]/68 hover:text-[#111111] dark:hover:text-white'
@@ -295,7 +308,7 @@ export function HotAirPackagesTab({
                 data-testid="readiness-ready-spot"
                 onClick={() => onChangeSpotReadiness('ready_with_passport')}
                 aria-pressed={spotReadiness === 'ready_with_passport'}
-                className={`min-h-[40px] px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap truncate ${
+                className={`min-h-[40px] px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer text-center leading-snug ${
                   spotReadiness === 'ready_with_passport'
                     ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
                     : 'text-[#111111]/68 dark:text-[#F4F3EF]/68 hover:text-[#111111] dark:hover:text-white'
@@ -304,6 +317,98 @@ export function HotAirPackagesTab({
                 Есть свой ролик
               </button>
             </div>
+
+            {spotReadiness === 'ready_with_passport' && (
+              <div
+                data-testid="ready-spot-duration-picker"
+                className="rounded-2xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 p-2.5 space-y-2"
+              >
+                <div className="flex items-center justify-between gap-2 text-[11px]">
+                  <span className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
+                    Хронометраж вашего ролика:
+                  </span>
+                  <span className="font-medium text-[#FF4820] tabular-nums">
+                    {spotSeconds} сек
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-1.5">
+                  <div
+                    role="group"
+                    aria-label="Быстрый выбор хронометража готового ролика"
+                    className="flex flex-wrap items-center gap-1"
+                  >
+                    {STANDARD_SPOT_DURATIONS.map((sec) => {
+                      const active = spotSeconds === sec;
+                      return (
+                        <button
+                          key={sec}
+                          type="button"
+                          data-testid={`ready-spot-preset-${sec}`}
+                          onClick={() => onSelectSpotSeconds?.(sec)}
+                          aria-pressed={active}
+                          className={`min-h-[32px] px-2.5 py-1 rounded-lg text-xs font-semibold tabular-nums transition-colors cursor-pointer border ${
+                            active
+                              ? 'bg-[#FF4820] text-white border-[#FF4820]'
+                              : 'bg-white dark:bg-[#15151A] text-[#111111]/78 dark:text-[#F4F3EF]/78 border-[#111111]/12 dark:border-white/12 hover:border-[#FF4820]/60'
+                          }`}
+                        >
+                          {sec}с
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Точный ввод нестандартного хронометража (5..60 сек) */}
+                  <div className="inline-flex items-center h-8 rounded-lg bg-white dark:bg-[#15151A] border border-[#111111]/14 dark:border-white/14 px-1 tabular-nums">
+                    <button
+                      type="button"
+                      data-testid="ready-spot-seconds-minus"
+                      onClick={() => onSelectSpotSeconds?.(spotSeconds - 1)}
+                      disabled={spotSeconds <= MIN_CUSTOM_SPOT_SECONDS}
+                      aria-label="Уменьшить хронометраж ролика на 1 секунду"
+                      className="w-6 h-6 rounded inline-flex items-center justify-center hover:bg-[#111111]/8 dark:hover:bg-white/10 disabled:opacity-35 cursor-pointer"
+                    >
+                      <Minus className="w-3 h-3" aria-hidden="true" />
+                    </button>
+
+                    <label htmlFor="ready-spot-seconds-input" className="sr-only">
+                      Точный хронометраж вашего ролика в секундах
+                    </label>
+                    <input
+                      id="ready-spot-seconds-input"
+                      data-testid="ready-spot-seconds-input"
+                      type="text"
+                      inputMode="numeric"
+                      value={secondsInputDraft ?? String(spotSeconds)}
+                      onChange={(e) => onManualSecondsInputChange?.(e.target.value)}
+                      onBlur={() => onManualSecondsBlur?.()}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          onManualSecondsBlur?.();
+                        }
+                      }}
+                      className="w-8 text-center text-xs font-bold bg-transparent text-[#111111] dark:text-[#F4F3EF] focus:outline-none"
+                    />
+                    <span className="pr-1 text-[10px] font-semibold text-[#111111]/56 dark:text-[#F4F3EF]/56">
+                      сек
+                    </span>
+
+                    <button
+                      type="button"
+                      data-testid="ready-spot-seconds-plus"
+                      onClick={() => onSelectSpotSeconds?.(spotSeconds + 1)}
+                      disabled={spotSeconds >= MAX_CUSTOM_SPOT_SECONDS}
+                      aria-label="Увеличить хронометраж ролика на 1 секунду"
+                      className="w-6 h-6 rounded inline-flex items-center justify-center hover:bg-[#111111]/8 dark:hover:bg-white/10 disabled:opacity-35 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -413,7 +518,7 @@ export function HotAirPackagesTab({
                   </p>
                 </div>
 
-                {/* Прозрачный состав радиостанций внутри пакета */}
+                {/* Прозрачный состав радиостанций внутри пакета (без обрезания названий станций) */}
                 <div className="space-y-2.5">
                   <p className="text-xs font-semibold text-[#111111]/58 dark:text-[#F4F3EF]/58">
                     Радиостанции в пакете ({stationBreakdown.length}):
@@ -426,7 +531,7 @@ export function HotAirPackagesTab({
                         className="py-2.5 first:pt-0 last:pb-0 flex items-start justify-between gap-3"
                       >
                         <div className="min-w-0 space-y-0.5">
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
                             {onNavigateStation ? (
                               <button
                                 type="button"
@@ -436,16 +541,16 @@ export function HotAirPackagesTab({
                                   onNavigateStation(st.stationSlug);
                                 }}
                                 aria-label={`Открыть портрет радиостанции ${st.stationName}`}
-                                className="text-sm font-bold text-[#111111] dark:text-[#F4F3EF] hover:text-[#FF4820] dark:hover:text-[#FF4820] inline-flex items-center gap-1 transition-colors cursor-pointer text-left truncate"
+                                className="text-sm font-bold text-[#111111] dark:text-[#F4F3EF] hover:text-[#FF4820] dark:hover:text-[#FF4820] inline-flex items-center gap-1 transition-colors cursor-pointer text-left leading-snug"
                               >
-                                <span className="truncate">{st.stationName}</span>
+                                <span>{st.stationName}</span>
                                 <ArrowUpRight
                                   className="w-3.5 h-3.5 text-[#111111]/42 dark:text-[#F4F3EF]/42 shrink-0"
                                   aria-hidden="true"
                                 />
                               </button>
                             ) : (
-                              <span className="text-sm font-bold text-[#111111] dark:text-[#F4F3EF] truncate">
+                              <span className="text-sm font-bold text-[#111111] dark:text-[#F4F3EF] leading-snug">
                                 {st.stationName}
                               </span>
                             )}
@@ -453,7 +558,7 @@ export function HotAirPackagesTab({
                               {st.frequencyFm}
                             </span>
                           </div>
-                          <p className="text-[11px] text-[#111111]/60 dark:text-[#F4F3EF]/60 truncate">
+                          <p className="text-[11px] text-[#111111]/60 dark:text-[#F4F3EF]/60 leading-snug">
                             {st.windowsSummary}
                           </p>
                         </div>
@@ -472,10 +577,10 @@ export function HotAirPackagesTab({
                 </div>
               </div>
 
-              {/* Нижняя зона: статус ролика + 3-мес прогноз (при системной цели) + цена + кнопка бронирования */}
+              {/* Нижняя зона: статус ролика + 3-мес прогноз + цена + кнопки без обрезки */}
               <div className="pt-4 border-t border-[#111111]/10 dark:border-white/10 space-y-3.5 tabular-nums">
                 <div className="flex items-center justify-between gap-2 text-xs">
-                  <span className="text-[#111111]/64 dark:text-[#F4F3EF]/64 truncate">
+                  <span className="text-[#111111]/64 dark:text-[#F4F3EF]/64 leading-snug">
                     {plan.production.isBonusUnlocked
                       ? `Ролик ${spotSeconds} сек по квоте`
                       : spotReadiness === 'ready_with_passport'
@@ -485,8 +590,8 @@ export function HotAirPackagesTab({
                   <span
                     className={
                       plan.production.isBonusUnlocked
-                        ? 'font-bold text-[#FF4820] whitespace-nowrap'
-                        : 'font-semibold text-[#111111] dark:text-[#F4F3EF] whitespace-nowrap'
+                        ? 'font-bold text-[#FF4820] whitespace-nowrap shrink-0'
+                        : 'font-semibold text-[#111111] dark:text-[#F4F3EF] whitespace-nowrap shrink-0'
                     }
                   >
                     {plan.production.isBonusUnlocked
@@ -543,7 +648,7 @@ export function HotAirPackagesTab({
                       onSelectPackage(pkg.id);
                       onReservePackage(pkg);
                     }}
-                    className={`w-full min-h-[46px] px-5 py-2.5 rounded-full text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap inline-flex items-center justify-center ${
+                    className={`w-full max-w-full min-h-[46px] px-4 sm:px-5 py-2.5 rounded-full text-xs sm:text-sm font-semibold transition-colors cursor-pointer text-center leading-snug inline-flex items-center justify-center ${
                       isSelected
                         ? 'bg-[#FF4820] hover:bg-[#E63C17] text-white'
                         : 'bg-[#111111] hover:bg-[#FF4820] text-[#F7F6F2] hover:text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white'
@@ -561,7 +666,7 @@ export function HotAirPackagesTab({
                       e.stopPropagation();
                       onCustomizePackageInManualTab(pkg);
                     }}
-                    className="w-full min-h-[36px] px-3 py-1.5 text-xs font-medium text-[#111111]/64 dark:text-[#F4F3EF]/64 hover:text-[#111111] dark:hover:text-white inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+                    className="w-full max-w-full min-h-[40px] px-3.5 py-2 rounded-full border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:text-[#111111] dark:hover:text-white inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-center leading-snug"
                   >
                     <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                     <span>Изменить станции или секунды вручную</span>
