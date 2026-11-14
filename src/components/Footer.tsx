@@ -8,10 +8,7 @@ import {
   PlatformRoute,
 } from '../data/platformRouter';
 import { BrandLogo } from './BrandLogo';
-import {
-  PersonalData152FzModal,
-  PersonalData152FzTab,
-} from './legal/PersonalData152FzModal';
+import { PersonalData152FzModal } from './legal/PersonalData152FzModal';
 
 const STUDIO_EMAIL = 'hello@fmworks.ru';
 
@@ -91,7 +88,6 @@ export function Footer({
   const [studioTime, setStudioTime] = useState<string>(() => readStudioTimeHHMM());
   const [isEmailCopied, setIsEmailCopied] = useState<boolean>(false);
   const [isPdnModalOpen, setIsPdnModalOpen] = useState<boolean>(false);
-  const [pdnModalTab, setPdnModalTab] = useState<PersonalData152FzTab>('policy');
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -138,8 +134,12 @@ export function Footer({
           <div className="space-y-4 sm:space-y-5 max-w-xl">
             <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs sm:text-sm font-medium text-[#111111]/65 dark:text-[#F4F3EF]/65 tabular-nums">
               <span className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
-                Принимаем проекты онлайн
+                г. Тверь · Работаем по всей РФ
               </span>
+              <span aria-hidden="true" className="opacity-40">
+                ·
+              </span>
+              <span>Пн–Пт 09:00–19:00 (МСК)</span>
               <span aria-hidden="true" className="opacity-40">
                 ·
               </span>
@@ -190,6 +190,19 @@ export function Footer({
                 )}
               </span>
             </button>
+
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:text-sm text-[#111111]/64 dark:text-[#F4F3EF]/64 tabular-nums">
+              <a
+                href="tel:+74822750420"
+                className="font-semibold text-[#111111]/82 dark:text-[#F4F3EF]/82 hover:text-[#FF4820] transition-colors"
+              >
+                +7 (4822) 75-04-20
+              </a>
+              <span aria-hidden="true" className="opacity-35">
+                ·
+              </span>
+              <span>г. Тверь, ул. Советская, д. 45, оф. 308</span>
+            </div>
           </div>
         </div>
 
@@ -339,27 +352,10 @@ export function Footer({
             <button
               type="button"
               data-testid="footer-pdn-policy-btn"
-              onClick={() => {
-                setPdnModalTab('policy');
-                setIsPdnModalOpen(true);
-              }}
+              onClick={() => setIsPdnModalOpen(true)}
               className="min-h-[44px] inline-flex items-center text-left text-[#111111]/62 dark:text-[#F4F3EF]/62 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap"
             >
               Политика ПДн (152-ФЗ)
-            </button>
-            <span aria-hidden="true" className="opacity-25">
-              ·
-            </span>
-            <button
-              type="button"
-              data-testid="footer-rf-security-btn"
-              onClick={() => {
-                setPdnModalTab('rf_security');
-                setIsPdnModalOpen(true);
-              }}
-              className="min-h-[44px] inline-flex items-center text-left text-[#111111]/62 dark:text-[#F4F3EF]/62 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap"
-            >
-              Комплаенс РФ (без Google)
             </button>
             <span aria-hidden="true" className="opacity-25">
               ·
@@ -391,7 +387,6 @@ export function Footer({
 
       <PersonalData152FzModal
         isOpen={isPdnModalOpen}
-        initialTab={pdnModalTab}
         onClose={() => setIsPdnModalOpen(false)}
       />
     </footer>

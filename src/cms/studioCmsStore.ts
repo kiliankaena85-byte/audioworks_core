@@ -26,8 +26,9 @@ export interface StudioCmsState {
 
 type StudioCmsListener = (state: StudioCmsState) => void;
 
-const TOKEN_STORAGE_KEY = 'audioworks_cms_session_token_v1';
+const LEGACY_TOKEN_STORAGE_KEY = 'audioworks_cms_session_token_v1';
 const LOCAL_CMS_DRAFT_KEY = 'fmworks_cms_local_state_v2';
+let inMemorySessionToken: string | null = null;
 
 function stripTimestamp(
   snap: StudioCmsSnapshot
@@ -40,31 +41,23 @@ function areSnapshotsEqual(a: StudioCmsSnapshot, b: StudioCmsSnapshot): boolean 
   return JSON.stringify(stripTimestamp(a)) === JSON.stringify(stripTimestamp(b));
 }
 
-function readStoredToken(): string | null {
-  if (typeof window === 'undefined') return null;
+function clearLegacyWebStorageTokens(): void {
+  if (typeof window === 'undefined') return;
   try {
-    return (
-      window.sessionStorage.getItem(TOKEN_STORAGE_KEY) ||
-      window.localStorage.getItem(TOKEN_STORAGE_KEY)
-    );
+    window.sessionStorage.removeItem(LEGACY_TOKEN_STORAGE_KEY);
+    window.localStorage.removeItem(LEGACY_TOKEN_STORAGE_KEY);
   } catch {
-    return null;
+    // Ignore storage access errors
   }
 }
 
+function readStoredToken(): string | null {
+  return inMemorySessionToken;
+}
+
 function writeStoredToken(token: string | null): void {
-  if (typeof window === 'undefined') return;
-  try {
-    if (token) {
-      window.sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
-      window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
-    } else {
-      window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
-      window.localStorage.removeItem(TOKEN_STORAGE_KEY);
-    }
-  } catch {
-    // Ignore storage quota errors
-  }
+  inMemorySessionToken = token;
+  clearLegacyWebStorageTokens();
 }
 
 function sanitizeCaseForSessionStorage(
@@ -315,19 +308,28 @@ class StudioCmsStore {
     }
   }
 
+  public getAuthHeaders(): Record<string, string> {
+    const token = readStoredToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  public isStudioSessionActive(): boolean {
+    return this.state.isAuthenticated || Boolean(readStoredToken());
+  }
+
   public async verifySession(): Promise<boolean> {
     if (typeof window === 'undefined') return false;
+    clearLegacyWebStorageTokens();
     const token = readStoredToken();
-    if (!token) {
-      this.emit({ isAuthenticated: false, isAuthChecking: false });
-      return false;
-    }
 
     try {
       const resp = await fetch('/api/cms/auth/session', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        credentials: 'same-origin',
+        headers: token
+          ? {
+              Authorization: `Bearer ${token}`,
+            }
+          : {},
       });
       if (!resp.ok) {
         writeStoredToken(null);
@@ -353,6 +355,7 @@ class StudioCmsStore {
     try {
       const resp = await fetch('/api/cms/auth/login', {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
       });
@@ -362,14 +365,14 @@ class StudioCmsStore {
         error?: string;
       };
 
-      if (!resp.ok || !data.ok || !data.token) {
+      if (!resp.ok || !data.ok) {
         return {
           ok: false,
           error: data.error || 'Неверный пароль студии',
         };
       }
 
-      writeStoredToken(data.token);
+      writeStoredToken(data.token ?? null);
       this.emit({ isAuthenticated: true, isAuthChecking: false });
       return { ok: true };
     } catch {
@@ -384,15 +387,14 @@ class StudioCmsStore {
     const token = readStoredToken();
     writeStoredToken(null);
     this.emit({ isAuthenticated: false, isAuthChecking: false });
-    if (token) {
-      try {
-        await fetch('/api/cms/auth/logout', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        });
-      } catch {
-        // Ignore network errors
-      }
+    try {
+      await fetch('/api/cms/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+    } catch {
+      // Ignore network errors
     }
   }
 
@@ -407,8 +409,7 @@ class StudioCmsStore {
       return { ok: false, error: validated.error };
     }
 
-    const token = readStoredToken();
-    if (!token) {
+    if (!this.isStudioSessionActive()) {
       this.emit({ isAuthenticated: false, isSaving: false });
       return { ok: false, error: 'Сессия истекла. Пожалуйста, войдите снова.' };
     }
@@ -417,9 +418,10 @@ class StudioCmsStore {
     try {
       const resp = await fetch('/api/cms/content', {
         method: 'PUT',
+        credentials: 'same-origin',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          ...this.getAuthHeaders(),
         },
         body: JSON.stringify({ snapshot: validated.data }),
       });
@@ -432,7 +434,7 @@ class StudioCmsStore {
       };
 
       if (resp.status === 401) {
-        this.emit({ isSaving: false });
+        this.emit({ isAuthenticated: false, isSaving: false });
         return {
           ok: false,
           error:
@@ -472,15 +474,13 @@ class StudioCmsStore {
     { ok: true; snapshot: StudioCmsSnapshot } | { ok: false; error: string }
   > {
     const freshDefaults = createDefaultStudioCmsSnapshot();
-    const token = readStoredToken();
 
-    if (token) {
+    if (this.isStudioSessionActive()) {
       try {
         await fetch('/api/cms/reset', {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+          credentials: 'same-origin',
+          headers: this.getAuthHeaders(),
         });
       } catch {
         // Proceed with local reset even if offline
@@ -535,13 +535,13 @@ class StudioCmsStore {
       (localObjectUrl ? await probeBrowserAudioDuration(localObjectUrl) : null) ??
       15;
 
-    const token = readStoredToken();
-    if (token) {
+    if (this.isStudioSessionActive()) {
       try {
         const resp = await fetch('/api/cms/upload-audio', {
           method: 'POST',
+          credentials: 'same-origin',
           headers: {
-            Authorization: `Bearer ${token}`,
+            ...this.getAuthHeaders(),
             'Content-Type':
               file.type || (check.format === 'MP3' ? 'audio/mpeg' : 'audio/wav'),
             'X-File-Name': encodeURIComponent(file.name),
@@ -598,14 +598,14 @@ class StudioCmsStore {
       return { ok: false, error: 'Выбран пустой файл изображения' };
     }
 
-    const token = readStoredToken();
-    if (token) {
+    if (this.isStudioSessionActive()) {
       try {
         const buffer = await file.arrayBuffer();
         const resp = await fetch('/api/cms/upload-image', {
           method: 'POST',
+          credentials: 'same-origin',
           headers: {
-            Authorization: `Bearer ${token}`,
+            ...this.getAuthHeaders(),
             'Content-Type': file.type || 'image/jpeg',
             'X-File-Name': encodeURIComponent(file.name),
           },

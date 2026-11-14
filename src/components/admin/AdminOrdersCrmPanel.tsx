@@ -40,9 +40,8 @@ import {
 } from '../../data/studioDocumentsCore';
 import { BrandedDocumentSuiteModal } from '../documents/BrandedDocumentSuiteModal';
 import { evaluateWebhookEndpointRfSafety } from '../../security/rfLegalCompliance';
+import { studioCmsStore } from '../../cms/studioCmsStore';
 import { AdminScientificPlanView } from './AdminScientificPlanView';
-
-const ADMIN_TOKEN_STORAGE_KEY = 'audioworks_cms_session_token_v1';
 
 export type OrdersCrmSubView = 'funnel' | 'channels' | 'science' | 'legal';
 
@@ -68,18 +67,6 @@ interface AdminDispatchSettingsResponse {
     notifyOnNewOrder: boolean;
     notifyOnStageChange: boolean;
   };
-}
-
-function readAdminToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    return (
-      window.sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) ||
-      window.localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY)
-    );
-  } catch {
-    return null;
-  }
 }
 
 function formatDateTimeShort(iso: string): string {
@@ -223,9 +210,9 @@ export function AdminOrdersCrmPanel({
     async (silent = false) => {
       if (!silent) setIsRefreshing(true);
       try {
-        const token = readAdminToken();
         const res = await fetch('/api/cms/orders', {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          credentials: 'same-origin',
+          headers: studioCmsStore.getAuthHeaders(),
         });
         if (!res.ok) {
           throw new Error('Не удалось загрузить реестр заказов CRM');
@@ -358,12 +345,12 @@ export function AdminOrdersCrmPanel({
     setIsUpdatingOrder(true);
     setFeedbackBanner(null);
     try {
-      const token = readAdminToken();
       const res = await fetch(`/api/cms/orders/${encodeURIComponent(orderId)}`, {
         method: 'PATCH',
+        credentials: 'same-origin',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...studioCmsStore.getAuthHeaders(),
         },
         body: JSON.stringify(payload),
       });
@@ -396,12 +383,12 @@ export function AdminOrdersCrmPanel({
     setIsSavingLegal(true);
     setFeedbackBanner(null);
     try {
-      const token = readAdminToken();
       const res = await fetch('/api/cms/legal-profiles', {
         method: 'PUT',
+        credentials: 'same-origin',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...studioCmsStore.getAuthHeaders(),
         },
         body: JSON.stringify(legalDraft),
       });
@@ -453,12 +440,12 @@ export function AdminOrdersCrmPanel({
     setIsRedelivering(true);
     setFeedbackBanner(null);
     try {
-      const token = readAdminToken();
       const res = await fetch(
         `/api/cms/orders/${encodeURIComponent(orderId)}/redeliver`,
         {
           method: 'POST',
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          credentials: 'same-origin',
+          headers: studioCmsStore.getAuthHeaders(),
         }
       );
       const json = (await res.json()) as {
@@ -496,12 +483,12 @@ export function AdminOrdersCrmPanel({
     setIsSavingSettings(true);
     setFeedbackBanner(null);
     try {
-      const token = readAdminToken();
       const res = await fetch('/api/cms/orders-dispatch/settings', {
         method: 'PUT',
+        credentials: 'same-origin',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...studioCmsStore.getAuthHeaders(),
         },
         body: JSON.stringify({
           telegram: {
@@ -551,10 +538,10 @@ export function AdminOrdersCrmPanel({
     setIsUpdatingOrder(true);
     setFeedbackBanner(null);
     try {
-      const token = readAdminToken();
       const res = await fetch(`/api/cms/orders/${order.id}/anonymize-pdn`, {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'same-origin',
+        headers: studioCmsStore.getAuthHeaders(),
       });
       const json = (await res.json()) as {
         ok: boolean;
@@ -584,13 +571,13 @@ export function AdminOrdersCrmPanel({
     setIsTestingDispatch(true);
     setFeedbackBanner(null);
     try {
-      const token = readAdminToken();
       // Сначала сохраняем текущие поля формы, чтобы тест шёл по актуальному URL / токену
       await fetch('/api/cms/orders-dispatch/settings', {
         method: 'PUT',
+        credentials: 'same-origin',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...studioCmsStore.getAuthHeaders(),
         },
         body: JSON.stringify({
           telegram: {
@@ -613,7 +600,8 @@ export function AdminOrdersCrmPanel({
 
       const res = await fetch('/api/cms/orders-dispatch/test', {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'same-origin',
+        headers: studioCmsStore.getAuthHeaders(),
       });
       const json = (await res.json()) as {
         ok: boolean;

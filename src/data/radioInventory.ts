@@ -1,4 +1,4 @@
-import { LayaDecision, LayaPersona, RecommendedTier } from '../engine/layaTypes';
+import type { LayaDecision, LayaPersona, RecommendedTier } from '../engine/layaTypes.ts';
 
 export type AudienceTag =
   | 'b2b'

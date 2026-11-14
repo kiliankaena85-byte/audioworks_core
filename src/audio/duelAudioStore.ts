@@ -1,3 +1,5 @@
+import { studioCmsStore } from '../cms/studioCmsStore';
+
 export type DuelTrackKind = 'radio' | 'audioworks';
 
 export interface DuelCustomTrackMeta {
@@ -294,13 +296,16 @@ class DuelAudioStore {
 
   private async uploadBlobToServer(kind: DuelTrackKind, blob: Blob): Promise<void> {
     if (typeof window === 'undefined') return;
+    if (!studioCmsStore.isStudioSessionActive()) return;
     this.isUploadingToServer = true;
     this.emit();
     try {
       const buf = await blob.arrayBuffer();
       const resp = await fetch(`/api/duel-tracks/${kind}`, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: {
+          ...studioCmsStore.getAuthHeaders(),
           'Content-Type': blob.type || 'audio/wav',
         },
         body: buf,

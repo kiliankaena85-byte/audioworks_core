@@ -1,5 +1,5 @@
 import { ArrowRight, ArrowUpRight } from 'lucide-react';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import {
   buildFaqPageJsonLd,
   HOME_PROCESS_FAQ_ITEMS,
@@ -15,6 +15,13 @@ interface FaqPageProps {
 }
 
 export function FaqPage({ onNavigate, onStartOrder }: FaqPageProps) {
+  useEffect(() => {
+    const ssrScript = document.head.querySelector('#fmworks-faqpage-jsonld');
+    if (ssrScript) {
+      ssrScript.remove();
+    }
+  }, []);
+
   const faqJsonLdMarkup = useMemo(() => {
     const pageUrl =
       typeof window !== 'undefined' && window.location.origin

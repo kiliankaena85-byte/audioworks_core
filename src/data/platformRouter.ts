@@ -469,7 +469,7 @@ export function resolveRouteSeoMeta(
 }
 
 /**
- * Формирует расширенный граф Schema.org JSON-LD (`ProfessionalService` + сущность страницы + `BreadcrumbList`).
+ * Формирует расширенный граф Schema.org JSON-LD (`ProfessionalService` + `OfferCatalog` с ценами в RUB + сущность страницы + `BreadcrumbList`).
  */
 export function buildRouteSchemaGraph(
   meta: RouteSeoMetadata,
@@ -479,36 +479,91 @@ export function buildRouteSchemaGraph(
   const fullUrl = `${cleanOrigin}${meta.canonicalPath}`;
   const ogImageUrl = `${cleanOrigin}${DEFAULT_OG_IMAGE_PATH}`;
 
-  const graphNodes: Record<string, unknown>[] = [
-    {
-      '@type': 'ProfessionalService',
+  const organizationNode: Record<string, unknown> = {
+    '@type': 'ProfessionalService',
+    '@id': `${cleanOrigin}/#organization`,
+    name: 'FMWorks',
+    alternateName: 'Аудиопродакшн-студия FMWorks®',
+    url: cleanOrigin,
+    email: 'hello@fmworks.ru',
+    telephone: '+7 (4822) 75-04-20',
+    image: ogImageUrl,
+    priceRange: '15 000 – 35 000 ₽',
+    currenciesAccepted: 'RUB',
+    paymentAccepted: 'Безналичный расчёт (ЭДО), банковская карта (54-ФЗ), СБП',
+    address: {
+      '@type': 'PostalAddress',
+      streetAddress: 'ул. Советская, д. 45, оф. 308',
+      postalCode: '170100',
+      addressLocality: 'Тверь',
+      addressRegion: 'Тверская область',
+      addressCountry: 'RU',
+    },
+    openingHoursSpecification: [
+      {
+        '@type': 'OpeningHoursSpecification',
+        dayOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+        opens: '09:00',
+        closes: '19:00',
+      },
+    ],
+    areaServed: {
+      '@type': 'Country',
+      name: 'Россия',
+    },
+    hasOfferCatalog: {
+      '@type': 'OfferCatalog',
+      name: 'Тарифы на производство рекламных аудиороликов FMWorks',
+      itemListElement: [
+        {
+          '@type': 'Offer',
+          name: 'Голос и стиль (по готовому тексту, 24–48 ч)',
+          url: `${cleanOrigin}/pricing`,
+          price: '15000',
+          priceCurrency: 'RUB',
+          availability: 'https://schema.org/InStock',
+        },
+        {
+          '@type': 'Offer',
+          name: 'Продакшн под ключ (3 сценария с нуля, 3–4 дня)',
+          url: `${cleanOrigin}/pricing`,
+          price: '25000',
+          priceCurrency: 'RUB',
+          availability: 'https://schema.org/InStock',
+        },
+        {
+          '@type': 'Offer',
+          name: 'Игровой ролик / Мини-кино (2–3 актёра, 4–5 дней)',
+          url: `${cleanOrigin}/pricing`,
+          price: '35000',
+          priceCurrency: 'RUB',
+          availability: 'https://schema.org/InStock',
+        },
+      ],
+    },
+  };
+
+  const pageNode: Record<string, unknown> = {
+    '@type': meta.schemaType,
+    '@id': `${fullUrl}#webpage`,
+    name: meta.title,
+    description: meta.description,
+    url: fullUrl,
+    inLanguage: 'ru-RU',
+    primaryImageOfPage: ogImageUrl,
+    provider: {
       '@id': `${cleanOrigin}/#organization`,
-      name: 'FMWorks',
-      url: cleanOrigin,
-      email: 'hello@fmworks.ru',
-      telephone: '+7 (4822) 75-04-20',
-      image: ogImageUrl,
-      address: {
-        '@type': 'PostalAddress',
-        addressLocality: 'Тверь',
-        addressRegion: 'Тверская область',
-        addressCountry: 'RU',
-      },
-      areaServed: 'RU',
     },
-    {
-      '@type': meta.schemaType,
-      '@id': `${fullUrl}#webpage`,
-      name: meta.title,
-      description: meta.description,
-      url: fullUrl,
-      inLanguage: 'ru-RU',
-      primaryImageOfPage: ogImageUrl,
-      provider: {
-        '@id': `${cleanOrigin}/#organization`,
-      },
-    },
-  ];
+  };
+
+  if (meta.schemaType === 'Article') {
+    pageNode.headline = meta.title;
+    pageNode.author = { '@id': `${cleanOrigin}/#organization` };
+    pageNode.publisher = { '@id': `${cleanOrigin}/#organization` };
+    pageNode.mainEntityOfPage = fullUrl;
+  }
+
+  const graphNodes: Record<string, unknown>[] = [organizationNode, pageNode];
 
   if (meta.breadcrumbs && meta.breadcrumbs.length > 0) {
     graphNodes.push({
@@ -529,7 +584,7 @@ export function buildRouteSchemaGraph(
 }
 
 /**
- * Применяет SEO-метаданные, OpenGraph, Twitter-карточки, директивы robots, canonical и JSON-LD к текущему документу.
+ * Применяет SEO-метаданные, OpenGraph, геотеги Яндекса, директивы robots, canonical и JSON-LD к текущему документу.
  */
 export function applyRouteSeoToDocument(meta: RouteSeoMetadata): void {
   if (typeof document === 'undefined') return;
@@ -558,6 +613,14 @@ export function applyRouteSeoToDocument(meta: RouteSeoMetadata): void {
     'name',
     'robots',
     meta.noindex ? 'noindex, nofollow' : 'index, follow'
+  );
+  upsertMeta('name', 'geo.region', 'RU-TVE');
+  upsertMeta('name', 'geo.placename', 'Тверь, Россия');
+  upsertMeta('property', 'og:locale', 'ru_RU');
+  upsertMeta(
+    'property',
+    'og:type',
+    meta.schemaType === 'Article' ? 'article' : 'website'
   );
   upsertMeta('property', 'og:title', meta.title);
   upsertMeta('property', 'og:description', meta.description);

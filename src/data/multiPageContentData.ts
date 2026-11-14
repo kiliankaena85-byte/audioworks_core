@@ -1,15 +1,15 @@
-import { OrderFormatId } from './pricingData';
-import { IndustryVerticalSlug } from './platformRouter';
+import type { OrderFormatId } from './pricingData.ts';
+import type { IndustryVerticalSlug } from './platformRouter.ts';
 import {
-  AudienceTag,
+  type AudienceTag,
   createSecondBasedPricingFromSlot,
   DEFAULT_RADIO_INVENTORY_SLOTS,
-  MediaClientNiche,
-  RadioInventorySlot,
+  type MediaClientNiche,
+  type RadioInventorySlot,
   resolveSlotHotPrice,
   resolveSlotOfficialPrice,
-} from './radioInventory';
-import { PortfolioCaseRecord } from './studioCmsTypes';
+} from './radioInventory.ts';
+import type { PortfolioCaseRecord } from './studioCmsTypes.ts';
 
 export const LOCAL_EDITORIAL_IMAGES = {
   studioHero: '/src/assets/images/hero_studio_editorial_1794399404984.jpg',

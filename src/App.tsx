@@ -8,7 +8,7 @@ import { AppErrorBoundary } from './components/AppErrorBoundary';
 import { CompactHeaderNav } from './components/CompactHeaderNav';
 import { FloatingCasePlayer } from './components/FloatingCasePlayer';
 import { Footer } from './components/Footer';
-import { RfStorageNoticeBanner } from './components/legal/RfStorageNoticeBanner';
+import { PerformanceMonitor } from './components/PerformanceMonitor';
 import { HomePage } from './components/pages/HomePage';
 import { BrandDomainVariant } from './data/brandKitData';
 
@@ -75,10 +75,10 @@ function RouteLoadingFallback() {
   );
 }
 import {
-  INDUSTRY_SOLUTIONS,
-  RADIO_MISTAKE_ARTICLES,
-  STATION_EDITORIAL_SEEDS,
-} from './data/multiPageContentData';
+  SEO_ARTICLE_TITLE_BY_SLUG,
+  SEO_INDUSTRY_TITLE_BY_SLUG,
+  SEO_STATION_TITLE_BY_SLUG,
+} from './data/seoRouteLabels';
 import {
   OrderDraftSnapshot,
   orderDraftStore,
@@ -208,8 +208,7 @@ function FmworksExperience() {
     const allCases = [snapshot.flagshipReel, ...snapshot.portfolioCases];
     const stationName =
       route.kind === 'station-detail'
-        ? STATION_EDITORIAL_SEEDS.find((s) => s.slug === route.stationSlug)
-            ?.stationName
+        ? SEO_STATION_TITLE_BY_SLUG[route.stationSlug]
         : undefined;
     const caseClientName =
       route.kind === 'case-detail'
@@ -217,11 +216,11 @@ function FmworksExperience() {
         : undefined;
     const industryTitle =
       route.kind === 'industry-detail'
-        ? INDUSTRY_SOLUTIONS[route.industrySlug]?.shortTitle
+        ? SEO_INDUSTRY_TITLE_BY_SLUG[route.industrySlug]
         : undefined;
     const articleTitle =
       route.kind === 'mistake-detail'
-        ? RADIO_MISTAKE_ARTICLES.find((a) => a.slug === route.articleSlug)?.title
+        ? SEO_ARTICLE_TITLE_BY_SLUG[route.articleSlug]
         : undefined;
 
     const seoMeta = resolveRouteSeoMeta(route, {
@@ -266,26 +265,31 @@ function FmworksExperience() {
     setRoute(effectiveRoute);
   };
 
+  const currentRoutePath = buildPlatformPath(route);
+
   if (route.kind === 'admin') {
     return (
-      <Suspense fallback={<RouteLoadingFallback />}>
-        <AdminWorkspace
-          brandVariant={brandVariant}
-          onSelectBrandVariant={setBrandVariant}
-          onOpenBrandKit={() => setIsBrandKitOpen(true)}
-          isDark={isDark}
-          onToggleTheme={() => setIsDark((prev) => !prev)}
-          onNavigateHome={() => navigateTo({ kind: 'home' })}
-        />
-        {isBrandKitOpen && (
-          <BrandKitModal
-            isOpen={isBrandKitOpen}
-            onClose={() => setIsBrandKitOpen(false)}
-            activeSiteVariant={brandVariant}
-            onSelectSiteVariant={setBrandVariant}
+      <>
+        <PerformanceMonitor routeKey={currentRoutePath} />
+        <Suspense fallback={<RouteLoadingFallback />}>
+          <AdminWorkspace
+            brandVariant={brandVariant}
+            onSelectBrandVariant={setBrandVariant}
+            onOpenBrandKit={() => setIsBrandKitOpen(true)}
+            isDark={isDark}
+            onToggleTheme={() => setIsDark((prev) => !prev)}
+            onNavigateHome={() => navigateTo({ kind: 'home' })}
           />
-        )}
-      </Suspense>
+          {isBrandKitOpen && (
+            <BrandKitModal
+              isOpen={isBrandKitOpen}
+              onClose={() => setIsBrandKitOpen(false)}
+              activeSiteVariant={brandVariant}
+              onSelectSiteVariant={setBrandVariant}
+            />
+          )}
+        </Suspense>
+      </>
     );
   }
 
@@ -337,6 +341,13 @@ function FmworksExperience() {
 
   return (
     <div className="min-h-screen bg-[#F7F6F2] text-[#111111] dark:bg-[#0D0D0F] dark:text-[#F4F3EF] transition-colors duration-200 flex flex-col">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[100] focus:px-4 focus:py-2.5 focus:rounded-xl focus:bg-[#FF4820] focus:text-white focus:text-sm focus:font-semibold focus:shadow-lg"
+      >
+        Перейти к основному контенту
+      </a>
+      <PerformanceMonitor routeKey={currentRoutePath} />
       <CompactHeaderNav
         isDark={isDark}
         onToggleTheme={() => setIsDark((prev) => !prev)}
@@ -356,7 +367,7 @@ function FmworksExperience() {
           : {})}
       />
 
-      <main className="flex-1">
+      <main id="main-content" tabIndex={-1} className="flex-1 outline-none">
         <Suspense fallback={<RouteLoadingFallback />}>
           {route.kind === 'home' && (
             <HomePage
@@ -445,8 +456,7 @@ function FmworksExperience() {
         onStop={() => casePlayerEngine.stop()}
         onNext={() => casePlayerEngine.playNextCase(playlistWithReel)}
       />
-
-      <RfStorageNoticeBanner liftForFloatingPlayer={isCasePlayerVisible} />
+    
 
       {AIRTIME_SALES_ENABLED && isRadioAdminOpen && (
         <Suspense fallback={null}>

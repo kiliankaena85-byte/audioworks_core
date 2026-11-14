@@ -65,7 +65,7 @@ export function PersonalData152FzModal({
               id="pdn-152fz-modal-title"
               className="text-base sm:text-xl font-bold tracking-tight leading-snug"
             >
-              Защита ПДн, отказ от сервисов Google и требования права РФ
+              Политика обработки и защиты персональных данных (152-ФЗ)
             </h2>
           </div>
 
@@ -126,7 +126,7 @@ export function PersonalData152FzModal({
                 : 'bg-[#EFECE5] dark:bg-[#1C1C22] text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:text-[#111111] dark:hover:text-white'
             }`}
           >
-            Отказ от Google и контур РФ
+            Локализация и защита данных в РФ
           </button>
         </div>
 
@@ -151,20 +151,18 @@ export function PersonalData152FzModal({
 
               <section className="space-y-1.5">
                 <h3 className="font-bold text-sm sm:text-base">
-                  1. Правовые основания и отказ от зарубежных трекеров
+                  1. Правовые основания обработки персональных данных
                 </h3>
                 <p className="text-[#111111]/80 dark:text-[#F4F3EF]/80">
                   Настоящая Политика разработана в соответствии со ст. 18.1 Федерального закона от
-                  27.07.2006 № 152-ФЗ «О персональных данных», № 149-ФЗ «Об информации», ч. 1 ст. 18
-                  № 38-ФЗ «О рекламе» и № 41-ФЗ. На сайте полностью исключено использование Google
-                  Analytics, Google Tag Manager, Google Fonts, Google reCAPTCHA и иных зарубежных
-                  аналитических или рекламных скриптов.
+                  27.07.2006 № 152-ФЗ «О персональных данных», № 149-ФЗ «Об информации» и ч. 1 ст.
+                  18 № 38-ФЗ «О рекламе».
                 </p>
               </section>
 
               <section className="space-y-1.5">
                 <h3 className="font-bold text-sm sm:text-base">
-                  2. Перечень обрабатываемых данных и технические записи браузера
+                  2. Перечень и цели обрабатываемых данных
                 </h3>
                 <p className="text-[#111111]/80 dark:text-[#F4F3EF]/80">
                   Оператор обрабатывает исключительно минимально необходимые данные, которые Заказчик
@@ -172,15 +170,6 @@ export function PersonalData152FzModal({
                   сведения об организации / ИП (наименование, ИНН для ЭДО), а также текст или
                   голосовое описание брифа. Специальные и биометрические категории ПДн (ст. 10–11
                   152-ФЗ) не собираются.
-                </p>
-                <p className="text-[#111111]/80 dark:text-[#F4F3EF]/80">
-                  В браузере используется только локальное техническое хранилище{' '}
-                  <code className="text-xs px-1 py-0.5 rounded bg-[#111111]/8 dark:bg-white/10">
-                    localStorage
-                  </code>{' '}
-                  (выбор светлой/тёмной темы, черновик формы заказа и факт закрытия данного
-                  уведомления). Сторонние рекламные cookie-файлы и межсайтовое отслеживание
-                  отсутствуют.
                 </p>
               </section>
 
@@ -260,11 +249,11 @@ export function PersonalData152FzModal({
                 />
                 <div className="space-y-1 text-xs">
                   <p className="font-bold text-[#111111] dark:text-[#F4F3EF]">
-                    Технический паспорт комплаенса РФ (режим без сервисов Google)
+                    Технический регламент защиты персональных данных в РФ
                   </p>
                   <p className="text-[#111111]/78 dark:text-[#F4F3EF]/78">
-                    Реестр проверенных мер информационной и правовой безопасности сайта fmworks.ru и
-                    CRM-контура студии для юристов и службы безопасности Заказчика.
+                    Сведения о мерах локализации и информационной безопасности персональных данных на
+                    сайте fmworks.ru для юристов и службы безопасности Заказчика.
                   </p>
                 </div>
               </div>
@@ -300,7 +289,7 @@ export function PersonalData152FzModal({
         <div className="px-4 sm:px-6 py-3.5 border-t border-[#111111]/10 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
           <div className="flex items-center gap-1.5 text-xs text-[#111111]/62 dark:text-[#F4F3EF]/62">
             <ShieldCheck className="w-4 h-4 text-[#FF4820] shrink-0" aria-hidden="true" />
-            <span>Локализация в РФ · Ноль запросов к Google · БЕЗ сторонних трекеров</span>
+            <span>Локализация и обработка данных на территории РФ · 152-ФЗ</span>
           </div>
 
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">

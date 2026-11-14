@@ -85,6 +85,11 @@
       scroll-behavior: auto;
     }
   }
+
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid #ff4820;
+    outline-offset: 2px;
+  }
 }
 
 .font-display-brand {

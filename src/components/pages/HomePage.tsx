@@ -1,18 +1,47 @@
 import { ArrowRight, Mic, Radio } from 'lucide-react';
-import { useLayoutEffect, useRef } from 'react';
+import { lazy, Suspense, useLayoutEffect, useRef } from 'react';
 import { CasePlayerSnapshot } from '../../audio/casePlayerEngine';
 import { BrandDomainVariant } from '../../data/brandKitData';
 import { BrandCasePoster, CaseId } from '../../data/casesData';
 import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
 import { parsePlatformRoute, PlatformRoute } from '../../data/platformRouter';
 import { OrderFormatId } from '../../data/pricingData';
-import { ApproachSection } from '../ApproachSection';
-import { CasesGallery } from '../CasesGallery';
-import { FifteenSecDuel } from '../FifteenSecDuel';
 import { HeroKotoLens } from '../HeroKotoLens';
-import { PricingSection } from '../PricingSection';
-import { RealRadioBroadcastBench } from '../RealRadioBroadcastBench';
-import { TestimonialsSection } from '../TestimonialsSection';
+
+const RealRadioBroadcastBench = lazy(() =>
+  import('../RealRadioBroadcastBench').then((m) => ({
+    default: m.RealRadioBroadcastBench,
+  }))
+);
+const CasesGallery = lazy(() =>
+  import('../CasesGallery').then((m) => ({
+    default: m.CasesGallery,
+  }))
+);
+const FifteenSecDuel = lazy(() =>
+  import('../FifteenSecDuel').then((m) => ({
+    default: m.FifteenSecDuel,
+  }))
+);
+const ApproachSection = lazy(() =>
+  import('../ApproachSection').then((m) => ({
+    default: m.ApproachSection,
+  }))
+);
+const TestimonialsSection = lazy(() =>
+  import('../TestimonialsSection').then((m) => ({
+    default: m.TestimonialsSection,
+  }))
+);
+const PricingSection = lazy(() =>
+  import('../PricingSection').then((m) => ({
+    default: m.PricingSection,
+  }))
+);
+
+function SectionPlaceholder() {
+  return <div className="min-h-[280px] w-full" aria-hidden="true" />;
+}
 
 interface HomePageProps {
   scrollAnchor?: string;
@@ -70,18 +99,22 @@ export function HomePage({
       <HeroKotoLens brandVariant={brandVariant} onOpenBrandKit={onOpenBrandKit} />
 
       {/* 1.5. Интерактивный стенд реального регионального радиоэфира (ролик не первым в блоке + проверка своего ролика) */}
-      <RealRadioBroadcastBench onStartStudioOrder={onStartStudioOrder} />
+      <Suspense fallback={<SectionPlaceholder />}>
+        <RealRadioBroadcastBench onStartStudioOrder={onStartStudioOrder} />
+      </Suspense>
 
       {/* 2. Избранные студийные работы с мгновенным аудио-превью и мостом в отраслевой архив */}
-      <CasesGallery
-        playerSnap={playerSnap}
-        onToggleCase={onToggleCase}
-        onStartPreview={onStartPreview}
-        onStopPreview={onStopPreview}
-        onOpenCaseDetail={(caseId) =>
-          onNavigate({ kind: 'case-detail', caseSlug: caseId })
-        }
-      />
+      <Suspense fallback={<SectionPlaceholder />}>
+        <CasesGallery
+          playerSnap={playerSnap}
+          onToggleCase={onToggleCase}
+          onStartPreview={onStartPreview}
+          onStopPreview={onStopPreview}
+          onOpenCaseDetail={(caseId) =>
+            onNavigate({ kind: 'case-detail', caseSlug: caseId })
+          }
+        />
+      </Suspense>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 -mt-10 pb-20 sm:pb-24">
         <div className="pt-6 border-t border-[#111111]/10 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -102,10 +135,14 @@ export function HomePage({
       </div>
 
       {/* 3. Слепое сравнение 15 секунд: потоковый шаблон против режиссуры FMWorks */}
-      <FifteenSecDuel />
+      <Suspense fallback={<SectionPlaceholder />}>
+        <FifteenSecDuel />
+      </Suspense>
 
       {/* 4. Подход студии, нейроисследования внимания и переход к разбору 5 ошибок */}
-      <ApproachSection />
+      <Suspense fallback={<SectionPlaceholder />}>
+        <ApproachSection />
+      </Suspense>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 -mt-10 pb-20 sm:pb-24">
         <div className="pt-6 border-t border-[#111111]/10 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -126,12 +163,14 @@ export function HomePage({
       </div>
 
       {/* 5. Отзывы заказчиков и линейка тарифов с переходом к регламенту и FAQ */}
-      <TestimonialsSection
-        onOpenQuickOrder={() => onStartStudioOrder(null)}
-        onNavigateRelated={handleRelatedTestimonialNavigate}
-      />
+      <Suspense fallback={<SectionPlaceholder />}>
+        <TestimonialsSection
+          onOpenQuickOrder={() => onStartStudioOrder(null)}
+          onNavigateRelated={handleRelatedTestimonialNavigate}
+        />
 
-      <PricingSection onSelectFormat={(formatId) => onStartStudioOrder(formatId)} />
+        <PricingSection onSelectFormat={(formatId) => onStartStudioOrder(formatId)} />
+      </Suspense>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 -mt-10 pb-20 sm:pb-24">
         <div className="pt-6 border-t border-[#111111]/10 dark:border-white/10 flex flex-col lg:flex-row lg:items-center justify-between gap-4">

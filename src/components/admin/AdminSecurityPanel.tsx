@@ -6,13 +6,13 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
+import { studioCmsStore } from '../../cms/studioCmsStore';
 import { formatRubCompact } from '../../data/radioInventory';
 import {
   SECURITY_DEFENSE_LAYERS,
   SecurityDefenseLayerSpec,
 } from '../../security/leadShield';
-
-const ADMIN_TOKEN_STORAGE_KEY = 'audioworks_cms_session_token_v1';
+import type { SecurityAuditEvent } from '../../security/serverSecurity';
 
 interface VerifiedLeadRow {
   id: string;
@@ -51,18 +51,7 @@ interface SecurityOverviewPayload {
   };
   verifiedLeads: VerifiedLeadRow[];
   quarantinedLeads: QuarantinedBotRow[];
-}
-
-function readAdminToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    return (
-      window.sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) ||
-      window.localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY)
-    );
-  } catch {
-    return null;
-  }
+  auditEvents: SecurityAuditEvent[];
 }
 
 function formatDateTimeShort(iso: string): string {
@@ -109,6 +98,7 @@ export function AdminSecurityPanel() {
     },
     verifiedLeads: [],
     quarantinedLeads: [],
+    auditEvents: [],
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isClearing, setIsClearing] = useState(false);
@@ -116,9 +106,9 @@ export function AdminSecurityPanel() {
   const fetchOverview = useCallback(async () => {
     setIsLoading(true);
     try {
-      const token = readAdminToken();
       const res = await fetch('/api/cms/security/overview', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'same-origin',
+        headers: studioCmsStore.getAuthHeaders(),
       });
       if (!res.ok) return;
       const data = (await res.json()) as Partial<SecurityOverviewPayload> & { ok?: boolean };
@@ -128,6 +118,7 @@ export function AdminSecurityPanel() {
           stats: data.stats,
           verifiedLeads: Array.isArray(data.verifiedLeads) ? data.verifiedLeads : [],
           quarantinedLeads: Array.isArray(data.quarantinedLeads) ? data.quarantinedLeads : [],
+          auditEvents: Array.isArray(data.auditEvents) ? data.auditEvents : [],
         });
       }
     } catch {
@@ -145,10 +136,10 @@ export function AdminSecurityPanel() {
     if (isClearing) return;
     setIsClearing(true);
     try {
-      const token = readAdminToken();
       const res = await fetch('/api/cms/security/clear-quarantine', {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'same-origin',
+        headers: studioCmsStore.getAuthHeaders(),
       });
       if (res.ok) {
         setOverview((prev) => ({
@@ -395,6 +386,51 @@ export function AdminSecurityPanel() {
             </div>
           ))}
         </div>
+      </section>
+
+      {/* Журнал аудита безопасности (OWASP A09) */}
+      <section
+        aria-labelledby="security-audit-log-heading"
+        className="rounded-2xl p-5 sm:p-6 bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 space-y-4"
+      >
+        <div className="flex items-center justify-between gap-3 pb-3 border-b border-[#111111]/10 dark:border-white/10">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-[#FF4820] shrink-0" aria-hidden="true" />
+            <h2 id="security-audit-log-heading" className="text-base font-bold">
+              Журнал аудита безопасности ({overview.auditEvents.length})
+            </h2>
+          </div>
+          <span className="text-xs text-[#111111]/55 dark:text-[#F4F3EF]/55">
+            События входа, SSRF, загрузок и ПДн
+          </span>
+        </div>
+
+        {overview.auditEvents.length === 0 ? (
+          <p className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58 py-3">
+            Событий аудита пока нет. Входы, изменения CMS, отклонения файлов и блокировки SSRF фиксируются автоматически.
+          </p>
+        ) : (
+          <div
+            data-testid="security-audit-events-list"
+            className="divide-y divide-[#111111]/8 dark:divide-white/8 text-xs tabular-nums"
+          >
+            {overview.auditEvents.slice(0, 20).map((ev) => (
+              <div key={ev.id} className="py-2.5 flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0 space-y-0.5">
+                  <span className="font-mono font-semibold text-[#111111] dark:text-[#F4F3EF]">
+                    {ev.kind}
+                  </span>
+                  <p className="text-[#111111]/68 dark:text-[#F4F3EF]/68 break-words">
+                    {ev.detail}
+                  </p>
+                </div>
+                <span className="text-[#111111]/50 dark:text-[#F4F3EF]/50 shrink-0">
+                  {formatDateTimeShort(ev.timestamp)} · IP #{ev.ipHash}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );

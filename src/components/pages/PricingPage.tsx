@@ -8,7 +8,12 @@ import {
 } from '../../data/multiPageContentData';
 import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
 import { PlatformRoute } from '../../data/platformRouter';
-import { OrderFormatId } from '../../data/pricingData';
+import {
+  CUSTOM_CONSULT_PRICING_ROW,
+  EDITORIAL_PRICING_ROWS,
+  OrderFormatId,
+} from '../../data/pricingData';
+import { BROADCAST_TECH_STANDARD_ROWS } from '../../data/studioDocumentsCore';
 import { PricingSection } from '../PricingSection';
 
 interface PricingPageProps {
@@ -104,6 +109,113 @@ export function PricingPage({
 
       {/* Линейка студийных тарифов */}
       <PricingSection onSelectFormat={onSelectFormat} />
+
+      {/* Сводная сравнительная таблица тарифов и вещательных стандартов (для коммерческих факторов и ИИ-поиска) */}
+      <section
+        id="pricing-comparison"
+        aria-labelledby="pricing-comparison-heading"
+        className="py-16 sm:py-24 border-t border-[#111111]/8 dark:border-[#F4F3EF]/10 px-4 sm:px-6 lg:px-12"
+      >
+        <div className="max-w-7xl mx-auto space-y-12">
+          <div className="space-y-3 max-w-3xl">
+            <p className="text-sm font-medium text-[#111111]/55 dark:text-[#F4F3EF]/55">
+              Сравнение форматов и технических норм
+            </p>
+            <h2
+              id="pricing-comparison-heading"
+              className="text-2xl sm:text-4xl font-bold tracking-tight leading-[1.1] text-[#111111] dark:text-[#F4F3EF] editorial-balance"
+            >
+              Сводная таблица стоимости, сроков и требований эфира
+            </h2>
+          </div>
+
+          <div className="overflow-x-auto rounded-3xl border border-[#111111]/12 dark:border-white/12 bg-[#EFECE5]/50 dark:bg-[#15151A]">
+            <table
+              data-testid="pricing-comparison-table"
+              className="w-full min-w-[640px] text-left border-collapse text-sm"
+            >
+              <thead>
+                <tr className="border-b border-[#111111]/12 dark:border-white/12 text-xs font-semibold text-[#111111]/62 dark:text-[#F4F3EF]/62">
+                  <th scope="col" className="py-4 px-5 sm:px-6">
+                    Формат работы
+                  </th>
+                  <th scope="col" className="py-4 px-4">
+                    Что входит в пакет
+                  </th>
+                  <th scope="col" className="py-4 px-4 whitespace-nowrap">
+                    Срок сдачи
+                  </th>
+                  <th scope="col" className="py-4 px-5 sm:px-6 text-right whitespace-nowrap">
+                    Стоимость
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#111111]/10 dark:divide-white/10">
+                {EDITORIAL_PRICING_ROWS.map((row) => (
+                  <tr key={row.id} className="align-top">
+                    <td className="py-4 px-5 sm:px-6 font-bold text-[#111111] dark:text-[#F4F3EF] whitespace-nowrap">
+                      {row.title}
+                    </td>
+                    <td className="py-4 px-4 text-[#111111]/75 dark:text-[#F4F3EF]/75 leading-relaxed">
+                      {row.description}
+                    </td>
+                    <td className="py-4 px-4 tabular-nums font-medium text-[#111111]/82 dark:text-[#F4F3EF]/82 whitespace-nowrap">
+                      {row.turnaround}
+                    </td>
+                    <td className="py-4 px-5 sm:px-6 text-right tabular-nums font-bold text-[#FF4820] whitespace-nowrap">
+                      {row.priceFormatted}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="align-top">
+                  <td className="py-4 px-5 sm:px-6 font-bold text-[#111111] dark:text-[#F4F3EF] whitespace-nowrap">
+                    {CUSTOM_CONSULT_PRICING_ROW.title}
+                  </td>
+                  <td className="py-4 px-4 text-[#111111]/75 dark:text-[#F4F3EF]/75 leading-relaxed">
+                    {CUSTOM_CONSULT_PRICING_ROW.description}
+                  </td>
+                  <td className="py-4 px-4 tabular-nums font-medium text-[#111111]/82 dark:text-[#F4F3EF]/82 whitespace-nowrap">
+                    {CUSTOM_CONSULT_PRICING_ROW.turnaround}
+                  </td>
+                  <td className="py-4 px-5 sm:px-6 text-right tabular-nums font-bold text-[#111111] dark:text-[#F4F3EF] whitespace-nowrap">
+                    {CUSTOM_CONSULT_PRICING_ROW.priceFormatted}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="overflow-x-auto rounded-3xl border border-[#111111]/12 dark:border-white/12 bg-[#EFECE5]/40 dark:bg-[#141418]">
+            <table
+              data-testid="broadcast-tech-standard-table"
+              className="w-full min-w-[600px] text-left border-collapse text-sm"
+            >
+              <thead>
+                <tr className="border-b border-[#111111]/12 dark:border-white/12 text-xs font-semibold text-[#111111]/62 dark:text-[#F4F3EF]/62">
+                  <th scope="col" className="py-4 px-5 sm:px-6 w-1/3">
+                    Единый технический стандарт по договору (ст. 721 ГК РФ)
+                  </th>
+                  <th scope="col" className="py-4 px-5 sm:px-6">
+                    Норматив сдачи для радиостанций РФ
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#111111]/10 dark:divide-white/10">
+                {BROADCAST_TECH_STANDARD_ROWS.map((row) => (
+                  <tr key={row.parameter} className="align-top">
+                    <td className="py-4 px-5 sm:px-6 font-semibold text-[#111111] dark:text-[#F4F3EF]">
+                      {row.parameter}
+                    </td>
+                    <td className="py-4 px-5 sm:px-6 text-[#111111]/75 dark:text-[#F4F3EF]/75 leading-relaxed">
+                      {row.specification}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
 
       {/* Почасовой регламент продакшна за 24–48 часов */}
       <section

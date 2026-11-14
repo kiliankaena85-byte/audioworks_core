@@ -1,23 +1,63 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 import {
   buildRouteSchemaGraph,
   resolveRouteSeoMeta,
 } from './platformRouter.ts';
 import {
+  buildLlmsTxt,
   buildRobotsTxt,
   buildSitemapXml,
   injectRouteSeoIntoHtml,
+  resolveServerRouteLookup,
 } from './seoServerTemplates.ts';
 
-test('buildRobotsTxt закрывает /admin, /order и /api/ и указывает Sitemap', () => {
-  const robots = buildRobotsTxt('https://fmworks.ru/');
-  assert.ok(robots.includes('User-agent: *'));
+test('buildRobotsTxt оптимизирован для Яндекса, YandexAdditionalBot и Google и совпадает с public/robots.txt', () => {
+  const robots = buildRobotsTxt('https://fmworks.ru/', {
+    airtimeEnabled: false,
+  });
   assert.ok(robots.includes('User-agent: Yandex'));
+  assert.ok(robots.includes('User-agent: YandexAdditionalBot'));
+  assert.ok(robots.includes('User-agent: Googlebot'));
+  assert.ok(robots.includes('User-agent: *'));
+  assert.ok(robots.includes('Allow: /cases'));
+  assert.ok(robots.includes('Allow: /pricing'));
+  assert.ok(robots.includes('Allow: /approach'));
+  assert.ok(robots.includes('Allow: /faq'));
+  assert.ok(robots.includes('Allow: /llms.txt'));
   assert.ok(robots.includes('Disallow: /admin'));
   assert.ok(robots.includes('Disallow: /order'));
   assert.ok(robots.includes('Disallow: /api/'));
+  assert.ok(robots.includes('Disallow: /hot-air'));
+  assert.ok(robots.includes('Clean-param:'));
   assert.ok(robots.includes('Sitemap: https://fmworks.ru/sitemap.xml'));
+
+  const publicRobotsPath = path.resolve(process.cwd(), 'public', 'robots.txt');
+  assert.equal(fs.existsSync(publicRobotsPath), true);
+  assert.equal(fs.readFileSync(publicRobotsPath, 'utf8'), robots);
+
+  const robotsAirtimeActive = buildRobotsTxt('https://fmworks.ru', {
+    airtimeEnabled: true,
+  });
+  assert.ok(robotsAirtimeActive.includes('Allow: /hot-air'));
+  assert.equal(robotsAirtimeActive.includes('Disallow: /hot-air'), false);
+});
+
+test('buildLlmsTxt формирует структурированный AI-паспорт и совпадает с public/llms.txt', () => {
+  const llms = buildLlmsTxt('https://fmworks.ru/');
+  assert.ok(llms.includes('# FMWorks'));
+  assert.ok(llms.includes('15 000 ₽'));
+  assert.ok(llms.includes('25 000 ₽'));
+  assert.ok(llms.includes('35 000 ₽'));
+  assert.ok(llms.includes('-14 … -11 LUFS'));
+  assert.ok(llms.includes('https://fmworks.ru/pricing'));
+  assert.ok(llms.includes('https://fmworks.ru/faq'));
+
+  const publicLlmsPath = path.resolve(process.cwd(), 'public', 'llms.txt');
+  assert.equal(fs.existsSync(publicLlmsPath), true);
+  assert.equal(fs.readFileSync(publicLlmsPath, 'utf8'), llms);
 });
 
 test('buildSitemapXml включает публичные маршруты и исключает /admin, /order и отключённый /hot-air', () => {
@@ -43,7 +83,21 @@ test('buildSitemapXml включает публичные маршруты и и
   assert.ok(airtimeSitemap.includes('<loc>https://fmworks.ru/hot-air</loc>'));
 });
 
-test('injectRouteSeoIntoHtml подставляет метаданные, canonical, noindex и Schema.org @graph под маршрут', () => {
+test('resolveServerRouteLookup находит точные заголовки кейсов, отраслей и статей', () => {
+  assert.deepEqual(resolveServerRouteLookup('/cases/dmitrogorsky'), {
+    caseClientName: 'Дмитрогорский продукт',
+  });
+  assert.deepEqual(resolveServerRouteLookup('/cases/industry/medicine'), {
+    industryTitle: 'Аудиореклама для клиник, стоматологии и диагностики',
+  });
+  assert.ok(
+    resolveServerRouteLookup('/approach/phonebook-syndrome').articleTitle?.includes(
+      'Синдром телефонного справочника'
+    )
+  );
+});
+
+test('injectRouteSeoIntoHtml подставляет метаданные, гео-теги, SSR-таблицы и FAQPage JSON-LD', () => {
   const baseHtml = `<!doctype html><html><head>
     <title>Base</title>
     <meta name="description" content="Base desc" />
@@ -57,20 +111,35 @@ test('injectRouteSeoIntoHtml подставляет метаданные, canoni
   assert.ok(faqHtml.includes('<title>Частые вопросы (FAQ) по договору, оплате и срокам — FMWorks</title>'));
   assert.ok(faqHtml.includes('<link rel="canonical" href="https://fmworks.ru/faq" />'));
   assert.ok(faqHtml.includes('<meta name="robots" content="index, follow" />'));
+  assert.ok(faqHtml.includes('<meta name="geo.region" content="RU-TVE" />'));
+  assert.ok(faqHtml.includes('<meta property="og:locale" content="ru_RU" />'));
   assert.ok(faqHtml.includes('id="fmworks-route-jsonld"'));
+  assert.ok(faqHtml.includes('id="fmworks-faqpage-jsonld"'));
+  assert.ok(faqHtml.includes('FAQPage'));
   assert.ok(faqHtml.includes('ProfessionalService'));
+  assert.ok(faqHtml.includes('OfferCatalog'));
   assert.ok(faqHtml.includes('BreadcrumbList'));
-  assert.ok(faqHtml.includes('property="og:title"'));
+  assert.ok(faqHtml.includes('<div id="root"></div>'));
+  assert.ok(faqHtml.includes('<noscript data-ssr-seo="true">'));
+  assert.ok(faqHtml.includes('</noscript>'));
   assert.equal(faqHtml.includes('twitter:'), false);
+
+  const pricingHtml = injectRouteSeoIntoHtml(baseHtml, '/pricing', 'https://fmworks.ru');
+  assert.ok(pricingHtml.includes('<div id="root"></div>'));
+  assert.ok(pricingHtml.includes('<table>'));
+  assert.ok(pricingHtml.includes('25 000 ₽'));
+  assert.ok(pricingHtml.includes('-14 … -11 LUFS'));
 
   const adminHtml = injectRouteSeoIntoHtml(baseHtml, '/admin', 'https://fmworks.ru');
   assert.ok(adminHtml.includes('<meta name="robots" content="noindex, nofollow" />'));
+  assert.equal(adminHtml.includes('data-ssr-seo'), false);
 
   const orderHtml = injectRouteSeoIntoHtml(baseHtml, '/order', 'https://fmworks.ru');
   assert.ok(orderHtml.includes('<meta name="robots" content="noindex, nofollow" />'));
+  assert.equal(orderHtml.includes('data-ssr-seo'), false);
 });
 
-test('buildRouteSchemaGraph формирует валидные узлы ProfessionalService (Тверь) и BreadcrumbList', () => {
+test('buildRouteSchemaGraph формирует коммерческие Offer в RUB и BreadcrumbList', () => {
   const meta = resolveRouteSeoMeta({ kind: 'pricing' });
   const graph = buildRouteSchemaGraph(meta, 'https://fmworks.ru') as {
     '@context': string;
@@ -79,6 +148,8 @@ test('buildRouteSchemaGraph формирует валидные узлы Profess
   assert.equal(graph['@context'], 'https://schema.org');
   assert.equal(graph['@graph'].length, 3);
   assert.equal(graph['@graph'][0]['@type'], 'ProfessionalService');
+  assert.equal(graph['@graph'][0]['currenciesAccepted'], 'RUB');
+  assert.ok(graph['@graph'][0]['hasOfferCatalog']);
   assert.equal(graph['@graph'][1]['@type'], 'Service');
   assert.equal(graph['@graph'][2]['@type'], 'BreadcrumbList');
 });

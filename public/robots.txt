@@ -1,0 +1,82 @@
+# FMWorks — Правила индексации для Яндекса, Поиска с Алисой (Нейро), Google и других поисковых систем
+
+User-agent: Yandex
+Allow: /
+Allow: /cases
+Allow: /pricing
+Allow: /approach
+Allow: /faq
+Allow: /llms.txt
+Allow: /turbo.xml
+Allow: /turbo-pages.xml
+Allow: /assets/
+Allow: /fonts/
+Disallow: /admin
+Disallow: /admin/
+Disallow: /order
+Disallow: /booking
+Disallow: /checkout
+Disallow: /api/
+Disallow: /hot-air
+Disallow: /hot-air/
+Clean-param: utm_source&utm_medium&utm_campaign&utm_content&utm_term&persona&yclid&ref /
+
+User-agent: YandexAdditionalBot
+Allow: /
+Allow: /cases
+Allow: /pricing
+Allow: /approach
+Allow: /faq
+Allow: /llms.txt
+Allow: /turbo.xml
+Allow: /turbo-pages.xml
+Disallow: /admin
+Disallow: /admin/
+Disallow: /order
+Disallow: /booking
+Disallow: /checkout
+Disallow: /api/
+Disallow: /hot-air
+Disallow: /hot-air/
+
+User-agent: Googlebot
+Allow: /
+Allow: /cases
+Allow: /pricing
+Allow: /approach
+Allow: /faq
+Allow: /llms.txt
+Allow: /turbo.xml
+Allow: /turbo-pages.xml
+Allow: /assets/
+Allow: /fonts/
+Disallow: /admin
+Disallow: /admin/
+Disallow: /order
+Disallow: /booking
+Disallow: /checkout
+Disallow: /api/
+Disallow: /hot-air
+Disallow: /hot-air/
+
+User-agent: *
+Allow: /
+Allow: /cases
+Allow: /pricing
+Allow: /approach
+Allow: /faq
+Allow: /llms.txt
+Allow: /turbo.xml
+Allow: /turbo-pages.xml
+Allow: /assets/
+Allow: /fonts/
+Disallow: /admin
+Disallow: /admin/
+Disallow: /order
+Disallow: /booking
+Disallow: /checkout
+Disallow: /api/
+Disallow: /hot-air
+Disallow: /hot-air/
+
+Sitemap: https://fmworks.ru/sitemap.xml

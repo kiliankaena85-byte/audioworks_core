@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
+import dns from 'node:dns/promises';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,10 +12,13 @@ import type { Request, Response, NextFunction } from 'express';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { AIRTIME_SALES_ENABLED } from './src/data/platformFeatures.ts';
 import {
+  buildLlmsTxt,
   buildRobotsTxt,
   buildSitemapXml,
   injectRouteSeoIntoHtml,
+  resolveServerRouteLookup,
 } from './src/data/seoServerTemplates.ts';
+import { buildTurboPagesXml } from './src/data/turboFeed.ts';
 import {
   validateAndNormalizeCmsSnapshot,
   type StudioCmsSnapshot,
@@ -67,6 +71,24 @@ import {
   containsDirectPersonalData,
   evaluateWebhookEndpointRfSafety,
 } from './src/security/rfLegalCompliance.ts';
+import {
+  appendSecurityAuditEvent,
+  buildContentSecurityPolicy,
+  buildSessionClearCookieHeader,
+  buildSessionSetCookieHeader,
+  createSessionRevocationRegistry,
+  detectVerifiedImageType,
+  hasValidAudioMagicBytes as verifyAudioMagicBytes,
+  isCrossOriginBrowserRequest,
+  isPrivateOrReservedIp,
+  parseCookieHeader,
+  resolveSafePublicOrigin,
+  resolveTrustedClientIp,
+  type SecurityAuditEvent,
+  type SecurityAuditEventKind,
+  STUDIO_SESSION_COOKIE_NAME,
+  validateOutboundWebhookTarget,
+} from './src/security/serverSecurity.ts';
 import { VERIFIED_LIVE_REGIONAL_STATIONS } from './src/data/broadcastAircheckData.ts';
 import {
   createDefaultStudioLegalProfiles,
@@ -141,10 +163,59 @@ interface ResolvedTrackInfo {
 const durationCache = new Map<string, { mtimeMs: number; durationSec: number }>();
 let cachedCmsSnapshot: StudioCmsSnapshot | null | undefined = undefined;
 
+const SESSION_SECRET_FILE = path.join(CMS_DATA_DIR, '.cms-session-secret');
+const REVOKED_SESSIONS_FILE = path.join(CMS_DATA_DIR, '.revoked-sessions.json');
+const sessionRevocationRegistry = createSessionRevocationRegistry();
+let cachedRandomSessionSecret: string | null = null;
+let cachedDevAutoPassword: string | null = null;
+
+function hydratePersistedRevocations(): void {
+  try {
+    if (!fs.existsSync(REVOKED_SESSIONS_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(REVOKED_SESSIONS_FILE, 'utf8'));
+    if (Array.isArray(raw)) {
+      sessionRevocationRegistry.hydrate(raw as [string, number][]);
+    }
+  } catch {
+    // Ignore malformed revocation store
+  }
+}
+
+function persistRevocations(): void {
+  try {
+    fs.mkdirSync(CMS_DATA_DIR, { recursive: true });
+    fs.writeFileSync(
+      REVOKED_SESSIONS_FILE,
+      JSON.stringify(sessionRevocationRegistry.exportEntries()),
+      { encoding: 'utf8', mode: 0o600 }
+    );
+  } catch {
+    // Ignore read-only fs errors
+  }
+}
+
+hydratePersistedRevocations();
+
+function isStrictProductionDeployment(): boolean {
+  return (
+    process.env.NODE_ENV === 'production' ||
+    process.env.npm_lifecycle_event === 'start'
+  );
+}
+
 function getStudioAdminPassword(): string {
   const fromEnv = process.env.STUDIO_ADMIN_PASSWORD?.trim();
   if (fromEnv && fromEnv !== 'CHANGE_ME_STUDIO_PASSWORD') {
     return fromEnv;
+  }
+  if (isStrictProductionDeployment()) {
+    if (!cachedDevAutoPassword) {
+      cachedDevAutoPassword = crypto.randomBytes(24).toString('base64url');
+      console.warn(
+        '[SECURITY] STUDIO_ADMIN_PASSWORD is not set in production! Default password is disabled.'
+      );
+    }
+    return cachedDevAutoPassword;
   }
   return 'audioworks';
 }
@@ -154,7 +225,29 @@ function getSessionSecret(): string {
   if (fromEnv && fromEnv !== 'CHANGE_ME_RANDOM_SESSION_SECRET') {
     return fromEnv;
   }
-  return `audioworks-cms-hmac-${getStudioAdminPassword()}-v1`;
+  if (cachedRandomSessionSecret) {
+    return cachedRandomSessionSecret;
+  }
+  try {
+    if (fs.existsSync(SESSION_SECRET_FILE)) {
+      const existing = fs.readFileSync(SESSION_SECRET_FILE, 'utf8').trim();
+      if (existing.length >= 32) {
+        cachedRandomSessionSecret = existing;
+        return cachedRandomSessionSecret;
+      }
+    }
+    fs.mkdirSync(CMS_DATA_DIR, { recursive: true });
+    const generated = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(SESSION_SECRET_FILE, `${generated}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    cachedRandomSessionSecret = generated;
+    return cachedRandomSessionSecret;
+  } catch {
+    cachedRandomSessionSecret = crypto.randomBytes(32).toString('hex');
+    return cachedRandomSessionSecret;
+  }
 }
 
 function safeCompareStrings(a: string, b: string): boolean {
@@ -165,7 +258,7 @@ function safeCompareStrings(a: string, b: string): boolean {
 
 function issueAdminToken(): { token: string; expiresAt: number } {
   const expiresAt = Date.now() + SESSION_TTL_MS;
-  const nonce = crypto.randomBytes(12).toString('hex');
+  const nonce = crypto.randomBytes(16).toString('hex');
   const payload = Buffer.from(
     JSON.stringify({ role: 'studio_admin', exp: expiresAt, nonce }),
     'utf8'
@@ -180,12 +273,14 @@ function issueAdminToken(): { token: string; expiresAt: number } {
   };
 }
 
-function verifyAdminToken(rawToken: string | undefined): boolean {
-  if (!rawToken || typeof rawToken !== 'string') return false;
+function parseVerifiedAdminToken(
+  rawToken: string | undefined
+): { role: string; exp: number; nonce: string } | null {
+  if (!rawToken || typeof rawToken !== 'string') return null;
   const parts = rawToken.trim().split('.');
-  if (parts.length !== 2) return false;
+  if (parts.length !== 2) return null;
   const [payload, providedSig] = parts;
-  if (!payload || !providedSig) return false;
+  if (!payload || !providedSig) return null;
 
   const expectedSig = crypto
     .createHmac('sha256', getSessionSecret())
@@ -193,35 +288,78 @@ function verifyAdminToken(rawToken: string | undefined): boolean {
     .digest('base64url');
 
   if (!safeCompareStrings(providedSig, expectedSig)) {
-    return false;
+    return null;
   }
 
   try {
     const parsed = JSON.parse(
       Buffer.from(payload, 'base64url').toString('utf8')
-    ) as { role?: string; exp?: number };
-    if (parsed.role !== 'studio_admin') return false;
-    if (typeof parsed.exp !== 'number' || parsed.exp < Date.now()) return false;
-    return true;
+    ) as { role?: string; exp?: number; nonce?: string };
+    if (parsed.role !== 'studio_admin') return null;
+    if (typeof parsed.exp !== 'number' || parsed.exp < Date.now()) return null;
+    const nonce = typeof parsed.nonce === 'string' ? parsed.nonce : '';
+    if (nonce && sessionRevocationRegistry.isRevoked(nonce)) return null;
+    return {
+      role: parsed.role,
+      exp: parsed.exp,
+      nonce,
+    };
   } catch {
-    return false;
+    return null;
   }
 }
 
-function extractBearerToken(req: Request): string | undefined {
+function verifyAdminToken(rawToken: string | undefined): boolean {
+  return parseVerifiedAdminToken(rawToken) !== null;
+}
+
+function extractStudioToken(req: Request): string | undefined {
   const authHeader = req.headers.authorization;
-  if (!authHeader || typeof authHeader !== 'string') return undefined;
-  if (authHeader.toLowerCase().startsWith('bearer ')) {
-    return authHeader.slice(7).trim();
+  if (authHeader && typeof authHeader === 'string') {
+    if (authHeader.toLowerCase().startsWith('bearer ')) {
+      const bearer = authHeader.slice(7).trim();
+      if (bearer) return bearer;
+    }
   }
-  return undefined;
+  const cookies = parseCookieHeader(req.headers.cookie);
+  const fromCookie = cookies[STUDIO_SESSION_COOKIE_NAME];
+  return fromCookie && fromCookie.trim() ? fromCookie.trim() : undefined;
+}
+
+function isHttpsRequest(req: Request): boolean {
+  if (req.secure) return true;
+  const rawProto = req.headers['x-forwarded-proto'];
+  if (typeof rawProto === 'string') {
+    return rawProto.split(',')[0].trim().toLowerCase() === 'https';
+  }
+  return false;
 }
 
 function requireStudioAuth(req: Request, res: Response, next: NextFunction): void {
-  const token = extractBearerToken(req);
+  const token = extractStudioToken(req);
   if (!verifyAdminToken(token)) {
+    recordSecurityAudit('auth_unauthorized_access', req, `Отклонён доступ без сессии: ${req.method} ${req.path}`);
     res.status(401).json({
       error: 'Требуется авторизация в кабинете студии',
+    });
+    return;
+  }
+  // OWASP WSTG-SESS-05: дополнительная CSRF-проверка Origin/Referer для изменяющих cookie-запросов
+  const isMutating = !['GET', 'HEAD', 'OPTIONS'].includes(req.method.toUpperCase());
+  if (
+    isMutating &&
+    !req.headers.authorization &&
+    isCrossOriginBrowserRequest({
+      originHeader: req.headers.origin,
+      refererHeader: req.headers.referer,
+      hostHeader:
+        (process.env.TRUST_PROXY === 'true' ? req.headers['x-forwarded-host'] : undefined) ||
+        req.headers.host,
+    })
+  ) {
+    recordSecurityAudit('auth_unauthorized_access', req, `CSRF-блокировка кросс-доменного запроса: ${req.method} ${req.path}`);
+    res.status(403).json({
+      error: 'Кросс-доменный изменяющий запрос отклонён политикой безопасности',
     });
     return;
   }
@@ -452,6 +590,7 @@ interface PersistedSecurityStore {
   aiQuotaShieldBlocks: number;
   verifiedLeads: StoredVerifiedLeadRecord[];
   quarantinedLeads: StoredQuarantinedBotRecord[];
+  auditEvents: SecurityAuditEvent[];
 }
 
 let cachedSecurityStore: PersistedSecurityStore | null = null;
@@ -467,6 +606,7 @@ function createEmptySecurityStore(): PersistedSecurityStore {
     aiQuotaShieldBlocks: 0,
     verifiedLeads: [],
     quarantinedLeads: [],
+    auditEvents: [],
   };
 }
 
@@ -490,6 +630,7 @@ function readSecurityStore(): PersistedSecurityStore {
         typeof raw.aiQuotaShieldBlocks === 'number' ? raw.aiQuotaShieldBlocks : 0,
       verifiedLeads: Array.isArray(raw.verifiedLeads) ? raw.verifiedLeads : [],
       quarantinedLeads: Array.isArray(raw.quarantinedLeads) ? raw.quarantinedLeads : [],
+      auditEvents: Array.isArray(raw.auditEvents) ? raw.auditEvents : [],
     };
     return cachedSecurityStore;
   } catch {
@@ -506,11 +647,34 @@ function writeSecurityStore(store: PersistedSecurityStore): void {
       CMS_DATA_DIR,
       `.security.${Date.now()}.${Math.random().toString(36).slice(2, 7)}.tmp`
     );
-    fs.writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf8');
+    fs.writeFileSync(tmp, JSON.stringify(store, null, 2), {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
     fs.renameSync(tmp, SECURITY_LEADS_FILE);
   } catch {
     // В контейнере только для чтения сохраняем состояние в оперативной памяти процесса
   }
+}
+
+function recordSecurityAudit(
+  kind: SecurityAuditEventKind,
+  reqOrIp: Request | string | null,
+  detail: string
+): void {
+  const ip =
+    reqOrIp && typeof reqOrIp === 'object'
+      ? resolveClientIp(reqOrIp)
+      : typeof reqOrIp === 'string'
+        ? reqOrIp
+        : 'system';
+  const store = readSecurityStore();
+  store.auditEvents = appendSecurityAuditEvent(store.auditEvents, {
+    kind,
+    ipHash: ip === 'system' ? 'system' : hashIpForAudit(ip),
+    detail,
+  });
+  writeSecurityStore(store);
 }
 
 interface PersistedOrdersCrmStore {
@@ -814,6 +978,26 @@ async function dispatchOrderToExternalChannels(
   } else {
     const started = Date.now();
     try {
+      const targetUrlRaw = webhook.endpointUrl.trim();
+      const targetCheck = validateOutboundWebhookTarget(targetUrlRaw, {
+        allowInternalLoopbackSink: true,
+        localPort: PORT,
+      });
+      if (!targetCheck.ok || !targetCheck.url) {
+        const reason = targetCheck.reason ?? 'Небезопасный адрес исходящего вебхука (SSRF).';
+        recordSecurityAudit('ssrf_target_blocked', 'system', reason);
+        throw new Error(reason);
+      }
+
+      if (!targetCheck.isInternalLoopbackSink) {
+        const resolvedAddrs = await dns.lookup(targetCheck.url.hostname, { all: true });
+        if (!resolvedAddrs.length || resolvedAddrs.some((a) => isPrivateOrReservedIp(a.address))) {
+          const reason = `SSRF-блокировка DNS: хост «${targetCheck.url.hostname}» разрешается во внутренний или зарезервированный IP.`;
+          recordSecurityAudit('ssrf_target_blocked', 'system', reason);
+          throw new Error(reason);
+        }
+      }
+
       const envelope = buildWebhookOrderEnvelope(targetOrder, event);
       const rawJson = JSON.stringify(envelope);
       const signingSecret = webhook.hmacSecret.trim() || getSessionSecret();
@@ -822,8 +1006,9 @@ async function dispatchOrderToExternalChannels(
         .update(rawJson)
         .digest('hex');
 
-      const whRes = await fetch(webhook.endpointUrl.trim(), {
+      const whRes = await fetch(targetCheck.url.toString(), {
         method: 'POST',
+        redirect: 'error',
         headers: {
           'Content-Type': 'application/json',
           'X-FMWorks-Event': event,
@@ -904,11 +1089,11 @@ async function dispatchOrderToExternalChannels(
 }
 
 function resolveClientIp(req: Request): string {
-  const xff = req.headers['x-forwarded-for'];
-  if (typeof xff === 'string' && xff.trim()) {
-    return xff.split(',')[0].trim();
-  }
-  return req.socket.remoteAddress || '127.0.0.1';
+  return resolveTrustedClientIp(
+    req.socket.remoteAddress,
+    req.headers['x-forwarded-for'],
+    process.env.TRUST_PROXY === 'true'
+  );
 }
 
 function hashIpForAudit(ip: string): string {
@@ -1119,25 +1304,45 @@ function verifyLeadChallengeToken(rawToken: string): {
 }
 
 function hasValidAudioMagicBytes(buf: Buffer): boolean {
-  if (buf.length < 16) return false;
-  const head4 = buf.subarray(0, 4).toString('latin1');
-  if (head4 === 'RIFF' || head4 === 'OggS' || head4 === 'fLaC') return true;
-  if (buf.subarray(0, 3).toString('latin1') === 'ID3') return true;
-  if (buf.subarray(4, 8).toString('latin1') === 'ftyp') return true;
-  // MPEG ADTS sync word
-  if (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) return true;
-  return false;
+  return verifyAudioMagicBytes(buf);
 }
 
 async function startServer() {
   const app = express();
   app.disable('x-powered-by');
+  if (process.env.TRUST_PROXY === 'true') {
+    app.set('trust proxy', 1);
+  }
 
-  // Безопасные HTTP-заголовки (совместимые с превью в iframe и записью голосового ТЗ)
-  app.use((_req, res, next) => {
+  const useProdDist =
+    process.env.NODE_ENV === 'production' ||
+    process.env.npm_lifecycle_event === 'start' ||
+    Boolean(process.env.K_SERVICE);
+
+  const isPreviewFrameContainer = Boolean(process.env.K_SERVICE);
+
+  // Безопасные HTTP-заголовки (с защитой от clickjacking frame-ancestors и совместимостью с превью AI Studio)
+  app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    if (!isPreviewFrameContainer) {
+      res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    }
+    res.setHeader(
+      'Content-Security-Policy',
+      buildContentSecurityPolicy({
+        allowDevInlineScripts: !useProdDist,
+        allowPreviewFrames: isPreviewFrameContainer,
+      })
+    );
+    if (isHttpsRequest(req)) {
+      res.setHeader(
+        'Strict-Transport-Security',
+        'max-age=31536000; includeSubDomains'
+      );
+    }
     res.setHeader(
       'Permissions-Policy',
       'camera=(), geolocation=(), payment=(), usb=(), microphone=(self)'
@@ -1163,7 +1368,7 @@ async function startServer() {
   // =========================================================================
 
   app.get('/api/cms/auth/session', (req, res) => {
-    const token = extractBearerToken(req);
+    const token = extractStudioToken(req);
     res.json({
       authenticated: verifyAdminToken(token),
     });
@@ -1186,6 +1391,11 @@ async function startServer() {
       const store = readSecurityStore();
       store.authBruteForceBlocks += 1;
       writeSecurityStore(store);
+      recordSecurityAudit(
+        'auth_rate_limited',
+        req,
+        `Превышен лимит попыток входа (${rateCheck.retryAfterSec} сек)`
+      );
       res.setHeader('Retry-After', String(rateCheck.retryAfterSec));
       res.status(429).json({
         error: `Слишком много попыток входа. Повторите через ${rateCheck.retryAfterSec} сек.`,
@@ -1194,12 +1404,19 @@ async function startServer() {
     }
 
     if (!safeCompareStrings(rawPassword, getStudioAdminPassword())) {
+      recordSecurityAudit('auth_login_failure', req, 'Неверный пароль кабинета студии');
       res.status(401).json({ error: 'Неверный пароль студии. Проверьте раскладку и попробуйте снова.' });
       return;
     }
 
     loginFailureLimiter.resetKey(clientIp);
     const session = issueAdminToken();
+    const maxAgeSec = Math.floor(SESSION_TTL_MS / 1000);
+    res.setHeader(
+      'Set-Cookie',
+      buildSessionSetCookieHeader(session.token, maxAgeSec, isHttpsRequest(req))
+    );
+    recordSecurityAudit('auth_login_success', req, 'Успешный вход в кабинет студии');
     res.json({
       ok: true,
       token: session.token,
@@ -1207,7 +1424,28 @@ async function startServer() {
     });
   });
 
-  app.post('/api/cms/auth/logout', (_req, res) => {
+  app.post('/api/cms/auth/logout', (req, res) => {
+    if (
+      !req.headers.authorization &&
+      isCrossOriginBrowserRequest({
+        originHeader: req.headers.origin,
+        refererHeader: req.headers.referer,
+        hostHeader:
+          (process.env.TRUST_PROXY === 'true' ? req.headers['x-forwarded-host'] : undefined) ||
+          req.headers.host,
+      })
+    ) {
+      res.status(403).json({ error: 'Кросс-доменный запрос выхода отклонён' });
+      return;
+    }
+    const token = extractStudioToken(req);
+    const parsed = parseVerifiedAdminToken(token);
+    if (parsed?.nonce) {
+      sessionRevocationRegistry.revoke(parsed.nonce, parsed.exp);
+      persistRevocations();
+    }
+    res.setHeader('Set-Cookie', buildSessionClearCookieHeader(isHttpsRequest(req)));
+    recordSecurityAudit('auth_logout', req, 'Выход из кабинета студии и отзыв токена');
     res.json({ ok: true });
   });
 
@@ -1262,6 +1500,7 @@ async function startServer() {
       try {
         writePersistedCmsSnapshot(stamped);
         const editorialWarnings = scanEditorialWarnings(stamped);
+        recordSecurityAudit('cms_content_saved', req, `Снимок CMS обновлён (${stamped.portfolioCases.length} кейсов)`);
         res.json({
           ok: true,
           customized: true,
@@ -1279,9 +1518,10 @@ async function startServer() {
     }
   );
 
-  app.post('/api/cms/reset', requireStudioAuth, (_req, res) => {
+  app.post('/api/cms/reset', requireStudioAuth, (req, res) => {
     try {
       resetPersistedCmsSnapshot();
+      recordSecurityAudit('cms_content_reset', req, 'Сброс контента CMS к эталонным значениям');
       res.json({
         ok: true,
         customized: false,
@@ -1304,6 +1544,18 @@ async function startServer() {
       const bodyBuffer = req.body as Buffer;
       if (!Buffer.isBuffer(bodyBuffer) || bodyBuffer.length < 128) {
         res.status(400).json({ error: 'Пустой или повреждённый аудиофайл' });
+        return;
+      }
+
+      if (!hasValidAudioMagicBytes(bodyBuffer)) {
+        recordSecurityAudit(
+          'upload_rejected_magic_bytes',
+          req,
+          'Отклонён аудиофайл без валидной сигнатуры (magic bytes)'
+        );
+        res.status(400).json({
+          error: 'Некорректная сигнатура аудиофайла (поддерживаются WAV, MP3, OGG, FLAC, M4A)',
+        });
         return;
       }
 
@@ -1337,12 +1589,8 @@ async function startServer() {
         if (extLower === '.mp3' || extLower === '.wav') {
           fs.renameSync(tempAbs, targetAbs);
         } else {
-          try {
-            await execFileAsync('ffmpeg', ['-y', '-i', tempAbs, targetAbs]);
-            fs.unlinkSync(tempAbs);
-          } catch {
-            fs.renameSync(tempAbs, targetAbs);
-          }
+          await execFileAsync('ffmpeg', ['-y', '-i', tempAbs, targetAbs]);
+          fs.unlinkSync(tempAbs);
         }
 
         const measuredSec = await probeDurationSec(targetAbs, 15);
@@ -1385,6 +1633,19 @@ async function startServer() {
         return;
       }
 
+      const verifiedImage = detectVerifiedImageType(bodyBuffer);
+      if (!verifiedImage) {
+        recordSecurityAudit(
+          'upload_rejected_magic_bytes',
+          req,
+          'Отклонён файл изображения без валидной сигнатуры JPEG/PNG/WebP/AVIF'
+        );
+        res.status(400).json({
+          error: 'Неподдерживаемая или поддельная сигнатура изображения (разрешены JPEG, PNG, WebP, AVIF)',
+        });
+        return;
+      }
+
       const rawHeaderName = req.headers['x-file-name'];
       const decodedName =
         typeof rawHeaderName === 'string'
@@ -1395,13 +1656,10 @@ async function startServer() {
                 return rawHeaderName;
               }
             })()
-          : 'cover.jpg';
+          : `cover${verifiedImage.ext}`;
 
-      const extLower = path.extname(decodedName).toLowerCase();
-      const allowedExts = new Set(['.jpg', '.jpeg', '.png', '.webp', '.avif']);
-      const targetExt = allowedExts.has(extLower) ? extLower : '.jpg';
       const stem = sanitizeSafeFileStem(decodedName, 'case-cover');
-      const finalFileName = `${stem}-${Date.now()}${targetExt}`;
+      const finalFileName = `${stem}-${Date.now()}${verifiedImage.ext}`;
 
       fs.mkdirSync(PUBLIC_CMS_MEDIA_DIR, { recursive: true });
       const targetAbs = path.join(PUBLIC_CMS_MEDIA_DIR, finalFileName);
@@ -2069,17 +2327,45 @@ async function startServer() {
   // Studio CRM Orders Funnel & Outbox Dispatch Endpoints
   // =========================================================================
 
-  // Встроенный локальный приёмник Webhook для быстрой проверки интеграции прямо в контейнере
-  app.post('/api/webhooks/loopback-crm-sink', express.json({ limit: '128kb' }), (req, res) => {
-    const sigHeader = req.headers['x-fmworks-signature'];
-    const eventHeader = req.headers['x-fmworks-event'] || 'unknown';
-    res.status(200).json({
-      ok: true,
-      receivedEvent: eventHeader,
-      signaturePresent: Boolean(sigHeader),
-      receivedAt: new Date().toISOString(),
-    });
-  });
+  // Встроенный локальный приёмник Webhook с обязательной проверкой HMAC-SHA256 подписи
+  app.post(
+    '/api/webhooks/loopback-crm-sink',
+    express.raw({ type: 'application/json', limit: '128kb' }),
+    (req, res) => {
+      const sigHeader = req.headers['x-fmworks-signature'];
+      const eventHeader = req.headers['x-fmworks-event'] || 'unknown';
+      const rawBody = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '';
+      if (typeof sigHeader !== 'string' || !sigHeader.startsWith('sha256=')) {
+        res.status(401).json({
+          ok: false,
+          error: 'Отсутствует или некорректна HMAC-подпись X-FMWorks-Signature',
+        });
+        return;
+      }
+
+      const crmStore = readOrdersCrmStore();
+      const signingSecret = crmStore.settings.webhook.hmacSecret.trim() || getSessionSecret();
+      const expectedHex = crypto
+        .createHmac('sha256', signingSecret)
+        .update(rawBody)
+        .digest('hex');
+
+      if (!safeCompareStrings(sigHeader.trim(), `sha256=${expectedHex}`)) {
+        res.status(401).json({
+          ok: false,
+          error: 'Недействительная HMAC-подпись вебхука',
+        });
+        return;
+      }
+
+      res.status(200).json({
+        ok: true,
+        receivedEvent: eventHeader,
+        signatureVerified: true,
+        receivedAt: new Date().toISOString(),
+      });
+    }
+  );
 
   app.get('/api/cms/orders', requireStudioAuth, (_req, res) => {
     runSlaEscalationSweep();
@@ -2331,6 +2617,12 @@ async function startServer() {
       writeSecurityStore(secStore);
     }
 
+    recordSecurityAudit(
+      'order_pdn_anonymized',
+      req,
+      `Обезличены ПДн сделки #${anonymized.orderNumber} (ст. 21 152-ФЗ)`
+    );
+
     res.json({
       ok: true,
       order: anonymized,
@@ -2341,7 +2633,7 @@ async function startServer() {
     '/api/cms/orders-dispatch/settings',
     requireStudioAuth,
     express.json({ limit: '32kb' }),
-    (req, res) => {
+    async (req, res) => {
       const body = (req.body ?? {}) as {
         telegram?: {
           enabled?: boolean;
@@ -2366,6 +2658,41 @@ async function startServer() {
           ? body.webhook.endpointUrl.trim().slice(0, 320)
           : '';
       if (incomingWebhookUrl) {
+        const ssrfCheck = validateOutboundWebhookTarget(incomingWebhookUrl, {
+          allowInternalLoopbackSink: true,
+          localPort: PORT,
+        });
+        if (!ssrfCheck.ok || !ssrfCheck.url) {
+          recordSecurityAudit(
+            'ssrf_target_blocked',
+            req,
+            `Заблокирован небезопасный Webhook URL: ${incomingWebhookUrl.slice(0, 80)}`
+          );
+          res.status(400).json({
+            ok: false,
+            error: ssrfCheck.reason ?? 'Указанный URL вебхука заблокирован политикой SSRF.',
+          });
+          return;
+        }
+        if (!ssrfCheck.isInternalLoopbackSink) {
+          try {
+            const addrs = await dns.lookup(ssrfCheck.url.hostname, { all: true });
+            if (!addrs.length || addrs.some((a) => isPrivateOrReservedIp(a.address))) {
+              recordSecurityAudit(
+                'ssrf_target_blocked',
+                req,
+                `DNS Webhook разрешился во внутренний IP: ${ssrfCheck.url.hostname}`
+              );
+              res.status(400).json({
+                ok: false,
+                error: 'SSRF-блокировка: домен приёмника разрешается в приватный или loopback IP-адрес.',
+              });
+              return;
+            }
+          } catch {
+            // Допускаем временную недоступность DNS на этапе сохранения настроек
+          }
+        }
         const whSafety = evaluateWebhookEndpointRfSafety(incomingWebhookUrl);
         if (whSafety.isBannedForeignService) {
           res.status(400).json({
@@ -2509,6 +2836,7 @@ async function startServer() {
       },
       verifiedLeads: store.verifiedLeads.slice(0, 40),
       quarantinedLeads: store.quarantinedLeads.slice(0, 40),
+      auditEvents: store.auditEvents.slice(0, 40),
     });
   });
 
@@ -2868,6 +3196,7 @@ async function startServer() {
 
   app.post(
     '/api/duel-tracks/:kind',
+    requireStudioAuth,
     express.raw({ type: () => true, limit: '80mb' }),
     async (req, res) => {
       const uploadRate = duelUploadLimiter.consume(resolveClientIp(req));
@@ -2889,6 +3218,11 @@ async function startServer() {
         bodyBuffer.length < 128 ||
         !hasValidAudioMagicBytes(bodyBuffer)
       ) {
+        recordSecurityAudit(
+          'upload_rejected_magic_bytes',
+          req,
+          `Отклонена загрузка дуэльного трека (${kind}): некорректные magic bytes`
+        );
         res.status(400).json({ error: 'Empty or invalid audio payload' });
         return;
       }
@@ -2933,6 +3267,7 @@ async function startServer() {
         }
 
         const updated = await resolveDuelTracksOnDisk();
+        recordSecurityAudit('duel_track_uploaded', req, `Обновлён эталонный трек дуэли (${kind})`);
         res.json(updated);
       } catch (err) {
         if (fs.existsSync(tempAbs)) {
@@ -2962,19 +3297,16 @@ async function startServer() {
     app.use('/assets', express.static(publicAssetsRoot, { maxAge: '1d' }));
   }
 
-  const resolveRequestPublicOrigin = (req: Request): string => {
-    const rawProto = req.headers['x-forwarded-proto'];
-    const proto =
-      typeof rawProto === 'string' && rawProto.trim()
-        ? rawProto.split(',')[0].trim()
-        : req.protocol || 'https';
-    const rawHost = req.headers['x-forwarded-host'] || req.headers.host;
-    const host =
-      typeof rawHost === 'string' && rawHost.trim()
-        ? rawHost.split(',')[0].trim()
-        : '';
-    return host ? `${proto}://${host}` : 'https://fmworks.ru';
-  };
+  const resolveRequestPublicOrigin = (req: Request): string =>
+    resolveSafePublicOrigin({
+      configuredOrigin: process.env.PUBLIC_ORIGIN,
+      hostHeader: req.headers.host,
+      forwardedHost: req.headers['x-forwarded-host'],
+      protocol: req.protocol,
+      forwardedProto: req.headers['x-forwarded-proto'],
+      trustProxy: process.env.TRUST_PROXY === 'true',
+      fallbackOrigin: 'https://fmworks.ru',
+    });
 
   const sendCompressibleText = (
     req: Request,
@@ -3005,7 +3337,19 @@ async function startServer() {
       req,
       res,
       'text/plain; charset=utf-8',
-      buildRobotsTxt(resolveRequestPublicOrigin(req)),
+      buildRobotsTxt(resolveRequestPublicOrigin(req), {
+        airtimeEnabled: AIRTIME_SALES_ENABLED,
+      }),
+      'public, max-age=3600'
+    );
+  });
+
+  app.get('/llms.txt', (req, res) => {
+    sendCompressibleText(
+      req,
+      res,
+      'text/plain; charset=utf-8',
+      buildLlmsTxt(resolveRequestPublicOrigin(req)),
       'public, max-age=3600'
     );
   });
@@ -3027,10 +3371,41 @@ async function startServer() {
     );
   });
 
+  app.get(['/turbo-pages.xml', '/turbo.xml'], (req, res) => {
+    const cms = readPersistedCmsSnapshot();
+    sendCompressibleText(
+      req,
+      res,
+      'application/rss+xml; charset=utf-8',
+      buildTurboPagesXml(resolveRequestPublicOrigin(req), {
+        cmsCases: cms?.portfolioCases,
+      }),
+      'public, max-age=3600'
+    );
+  });
+
+  // OWASP WSTG-ERRH-01: все неизвестные /api/* маршруты возвращают 404 JSON, не доходя до SPA fallback
+  app.all('/api/*', (_req, res) => {
+    res.status(404).json({ ok: false, error: 'Запрошенный API-метод не найден' });
+  });
+
   const isProd =
     process.env.NODE_ENV === 'production' ||
     process.env.npm_lifecycle_event === 'start' ||
     Boolean(process.env.K_SERVICE);
+
+  const isNonHtmlAssetPath = (reqPath: string): boolean => {
+    if (
+      reqPath.startsWith('/api/') ||
+      reqPath.startsWith('/assets/') ||
+      reqPath.startsWith('/fonts/') ||
+      reqPath.startsWith('/src/') ||
+      reqPath.startsWith('/@')
+    ) {
+      return true;
+    }
+    return path.extname(reqPath) !== '';
+  };
 
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
@@ -3042,12 +3417,10 @@ async function startServer() {
     app.get('*', async (req, res, next) => {
       const accept = String(req.headers.accept || '');
       if (
-        !accept.includes('text/html') ||
-        req.path.startsWith('/api/') ||
-        req.path.startsWith('/assets/') ||
-        req.path.startsWith('/src/') ||
-        req.path.startsWith('/@') ||
-        path.extname(req.path) !== ''
+        isNonHtmlAssetPath(req.path) ||
+        (accept !== '' &&
+          !accept.includes('text/html') &&
+          !accept.includes('*/*'))
       ) {
         next();
         return;
@@ -3062,6 +3435,7 @@ async function startServer() {
         );
         const searchIdx = req.originalUrl.indexOf('?');
         const search = searchIdx >= 0 ? req.originalUrl.slice(searchIdx) : '';
+        const cms = readPersistedCmsSnapshot();
         const seoHtml = injectRouteSeoIntoHtml(
           transformed,
           req.path,
@@ -3069,6 +3443,10 @@ async function startServer() {
           {
             search,
             airtimeEnabled: AIRTIME_SALES_ENABLED,
+            lookup: resolveServerRouteLookup(req.path, cms?.portfolioCases, {
+              search,
+              airtimeEnabled: AIRTIME_SALES_ENABLED,
+            }),
           }
         );
         sendCompressibleText(
@@ -3076,7 +3454,7 @@ async function startServer() {
           res,
           'text/html; charset=utf-8',
           seoHtml,
-          'no-cache'
+          'no-store, no-cache, must-revalidate'
         );
       } catch (err) {
         vite.ssrFixStacktrace(err as Error);
@@ -3095,23 +3473,40 @@ async function startServer() {
       );
     }
     app.use(express.static(distPath, { index: false, maxAge: '1h' }));
-    let cachedProdHtml: string | null = null;
-    app.get('*', (req, res) => {
-      if (!cachedProdHtml) {
-        cachedProdHtml = fs.readFileSync(
-          path.join(distPath, 'index.html'),
-          'utf8'
-        );
+
+    const prodIndexPath = path.join(distPath, 'index.html');
+    let cachedProdHtml: { mtimeMs: number; html: string } | null = null;
+    const readFreshProdHtml = (): string => {
+      const stats = fs.statSync(prodIndexPath);
+      if (!cachedProdHtml || cachedProdHtml.mtimeMs !== stats.mtimeMs) {
+        cachedProdHtml = {
+          mtimeMs: stats.mtimeMs,
+          html: fs.readFileSync(prodIndexPath, 'utf8'),
+        };
       }
+      return cachedProdHtml.html;
+    };
+
+    app.get('*', (req, res) => {
+      if (isNonHtmlAssetPath(req.path)) {
+        res.status(404).type('text/plain').send('Not Found');
+        return;
+      }
+
       const searchIdx = req.originalUrl.indexOf('?');
       const search = searchIdx >= 0 ? req.originalUrl.slice(searchIdx) : '';
+      const cms = readPersistedCmsSnapshot();
       const seoHtml = injectRouteSeoIntoHtml(
-        cachedProdHtml,
+        readFreshProdHtml(),
         req.path,
         resolveRequestPublicOrigin(req),
         {
           search,
           airtimeEnabled: AIRTIME_SALES_ENABLED,
+          lookup: resolveServerRouteLookup(req.path, cms?.portfolioCases, {
+            search,
+            airtimeEnabled: AIRTIME_SALES_ENABLED,
+          }),
         }
       );
       sendCompressibleText(
@@ -3119,10 +3514,35 @@ async function startServer() {
         res,
         'text/html; charset=utf-8',
         seoHtml,
-        'no-cache'
+        'no-store, no-cache, must-revalidate'
       );
     });
   }
+
+  // OWASP WSTG-ERRH-02: глобальный перехват системных ошибок Express без утечки stack trace
+  app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+    if (res.headersSent) {
+      return;
+    }
+    const status =
+      typeof (err as { status?: unknown })?.status === 'number'
+        ? (err as { status: number }).status
+        : 500;
+    if (req.path.startsWith('/api/')) {
+      const safeMessage =
+        status === 400
+          ? 'Некорректный формат входного запроса'
+          : status === 413
+            ? 'Превышен допустимый размер тела запроса'
+            : 'Внутренняя ошибка обработки запроса';
+      res.status(status >= 400 && status < 600 ? status : 500).json({
+        ok: false,
+        error: safeMessage,
+      });
+      return;
+    }
+    res.status(status >= 400 && status < 600 ? status : 500).type('text/plain').send('Error');
+  });
 
   // Фоновый сторожевой таймер SLA (проверка опозданий звонка каждые 30 секунд)
   const slaSweepInterval = setInterval(() => {
