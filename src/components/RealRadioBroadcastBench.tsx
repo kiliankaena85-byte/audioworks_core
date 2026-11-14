@@ -43,6 +43,7 @@ import {
   validateHumanLeadContact,
 } from '../security/leadShield';
 import { useLeadShieldForm } from '../security/useLeadShieldForm';
+import { PersonalDataConsentField } from './legal/PersonalDataConsentField';
 import { WaveformTimeline } from './WaveformTimeline';
 
 interface RealRadioBroadcastBenchProps {
@@ -83,10 +84,12 @@ export function RealRadioBroadcastBench({
   const [clientName, setClientName] = useState('');
   const [clientContact, setClientContact] = useState('');
   const [clientCompany, setClientCompany] = useState('');
+  const [pdnConsentAccepted, setPdnConsentAccepted] = useState(false);
 
   const [nameError, setNameError] = useState<string | undefined>();
   const [contactError, setContactError] = useState<string | undefined>();
   const [companyError, setCompanyError] = useState<string | undefined>();
+  const [consentError, setConsentError] = useState<string | undefined>();
   const [submitBannerError, setSubmitBannerError] = useState<string | undefined>();
   const [submittedLead, setSubmittedLead] = useState<{
     orderNumber: string;
@@ -98,6 +101,7 @@ export function RealRadioBroadcastBench({
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const contactInputRef = useRef<HTMLInputElement | null>(null);
   const companyInputRef = useRef<HTMLInputElement | null>(null);
+  const consentInputRef = useRef<HTMLInputElement | null>(null);
 
   const formUid = useId();
 
@@ -203,13 +207,20 @@ export function RealRadioBroadcastBench({
     setContactError(nextContactErr);
     setCompanyError(nextCompanyErr);
 
-    if (nextNameErr || nextContactErr || nextCompanyErr) {
+    const nextConsentErr = !pdnConsentAccepted
+      ? 'Подтвердите согласие на обработку персональных данных согласно 152-ФЗ.'
+      : undefined;
+    setConsentError(nextConsentErr);
+
+    if (nextNameErr || nextContactErr || nextCompanyErr || nextConsentErr) {
       if (nextNameErr) {
         scrollToAndFocus(nameInputRef.current);
       } else if (nextContactErr) {
         scrollToAndFocus(contactInputRef.current);
       } else if (nextCompanyErr) {
         scrollToAndFocus(companyInputRef.current);
+      } else if (nextConsentErr) {
+        scrollToAndFocus(consentInputRef.current);
       }
       return;
     }
@@ -242,6 +253,7 @@ export function RealRadioBroadcastBench({
       mediaPlanSnapshot: null,
       isReturningFastTrack: false,
       requireBriefOrVoice: true,
+      pdnConsentAccepted: true,
     });
 
     if (!result.ok) {
@@ -819,7 +831,7 @@ export function RealRadioBroadcastBench({
                 <button
                   type="button"
                   onClick={openLeadDrawerAndFocus}
-                  className="min-h-[40px] px-4 py-2 rounded-full bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer shrink-0 whitespace-nowrap"
+                  className="w-full sm:w-auto min-h-[42px] px-4 py-2 rounded-full bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer shrink-0 whitespace-normal sm:whitespace-nowrap text-center"
                 >
                   <span>Получить правки продюсера</span>
                   <ArrowRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
@@ -861,12 +873,12 @@ export function RealRadioBroadcastBench({
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 w-full lg:w-auto shrink-0">
                   <button
                     type="button"
                     data-testid="aircheck-proceed-order-btn"
                     onClick={handleProceedToFullOrder}
-                    className="min-h-[44px] px-4 py-2 rounded-full bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+                    className="w-full sm:w-auto min-h-[44px] px-4 py-2 rounded-full bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap text-center"
                   >
                     <span>Оформить ролик под ключ</span>
                     <ArrowRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
@@ -878,7 +890,7 @@ export function RealRadioBroadcastBench({
                       setSubmittedLead(null);
                       setIsLeadDrawerOpen(false);
                     }}
-                    className="min-h-[44px] px-3.5 py-2 rounded-full border border-[#111111]/16 dark:border-white/16 text-xs font-semibold hover:border-[#FF4820] transition-colors cursor-pointer whitespace-nowrap"
+                    className="w-full sm:w-auto min-h-[44px] px-3.5 py-2 rounded-full border border-[#111111]/16 dark:border-white/16 text-xs font-semibold hover:border-[#FF4820] transition-colors cursor-pointer whitespace-nowrap"
                   >
                     Свернуть
                   </button>
@@ -1041,7 +1053,7 @@ export function RealRadioBroadcastBench({
                       type="submit"
                       data-testid="aircheck-lead-submit-btn"
                       disabled={isSubmittingLead || rateLimitCountdownSec > 0}
-                      className="w-full min-h-[44px] px-4 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] disabled:opacity-55 text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+                      className="w-full min-h-[44px] px-4 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] disabled:opacity-55 text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap"
                     >
                       <span>
                         {rateLimitCountdownSec > 0
@@ -1055,6 +1067,19 @@ export function RealRadioBroadcastBench({
                   </div>
                 </div>
 
+                <PersonalDataConsentField
+                  id={`${formUid}-pdn-consent`}
+                  inputRef={consentInputRef}
+                  checked={pdnConsentAccepted}
+                  onChange={(next) => {
+                    setPdnConsentAccepted(next);
+                    if (consentError) setConsentError(undefined);
+                  }}
+                  error={consentError}
+                  compact
+                  testIdPrefix="aircheck-pdn-consent"
+                />
+
                 {submitBannerError && (
                   <p
                     role="alert"
@@ -1064,12 +1089,12 @@ export function RealRadioBroadcastBench({
                   </p>
                 )}
 
-                <div className="flex items-center justify-between gap-2 text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58">
                   <span>Без спама и рассылок · ответит живой продюсер</span>
                   <button
                     type="button"
                     onClick={handleProceedToFullOrder}
-                    className="font-semibold text-[#111111] dark:text-[#F4F3EF] hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors cursor-pointer whitespace-nowrap"
+                    className="min-h-[36px] inline-flex items-center font-semibold text-[#111111] dark:text-[#F4F3EF] hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors cursor-pointer text-left sm:text-right"
                   >
                     Сразу к расчёту заказа →
                   </button>

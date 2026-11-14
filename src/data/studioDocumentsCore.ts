@@ -682,7 +682,7 @@ export function computeVatBreakdown(
 
   const taxLegalLabel =
     rate === 0
-      ? 'НДС не облагается в связи с применением упрощённой системы налогообложения (ст. 346.11 НК РФ)'
+      ? 'НДС не облагается в связи с применением УСН (гл. 26.2, ст. 346.11 НК РФ)'
       : `В том числе НДС ${rate}% — ${formatKopecksRubDecimal(vatAmountKopecks)}`;
 
   return {

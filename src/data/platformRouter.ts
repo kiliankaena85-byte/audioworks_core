@@ -1,4 +1,4 @@
-import { AIRTIME_SALES_ENABLED, isAirtimeSalesEnabled } from './platformFeatures';
+import { AIRTIME_SALES_ENABLED, isAirtimeSalesEnabled } from './platformFeatures.ts';
 
 export type IndustryVerticalSlug =
   | 'real-estate'
@@ -258,11 +258,18 @@ export function resolveActiveTopNavSection(
   }
 }
 
+export interface RouteBreadcrumbItem {
+  name: string;
+  path: string;
+}
+
 export interface RouteSeoMetadata {
   title: string;
   description: string;
   canonicalPath: string;
   schemaType: 'WebSite' | 'Service' | 'CollectionPage' | 'Article' | 'CheckoutPage';
+  noindex?: boolean;
+  breadcrumbs?: readonly RouteBreadcrumbItem[];
 }
 
 export interface RouteSeoLookupTitles {
@@ -272,9 +279,12 @@ export interface RouteSeoLookupTitles {
   articleTitle?: string;
 }
 
+export const DEFAULT_OG_IMAGE_PATH =
+  '/src/assets/images/hero_studio_editorial_1794399404984.jpg';
+
 /**
- * Генерирует индивидуальные SEO-метаданные, OpenGraph-теги и тип микроразметки Schema.org
- * для каждого маршрута многостраничной платформы FMWorks.
+ * Генерирует индивидуальные SEO-метаданные, OpenGraph-теги, директивы роботам, хлебные крошки
+ * и тип микроразметки Schema.org для каждого маршрута многостраничной платформы FMWorks.
  */
 export function resolveRouteSeoMeta(
   route: PlatformRoute,
@@ -291,6 +301,7 @@ export function resolveRouteSeoMeta(
           'Производство коммерческих аудиороликов по договору и предоплате: 3 сценария, голоса кинодубляжа, саунд-дизайн и паспорт прав РАО/ВОИС.',
         canonicalPath: '/',
         schemaType: 'WebSite',
+        noindex: false,
       };
     case 'hot-air':
       return {
@@ -299,6 +310,11 @@ export function resolveRouteSeoMeta(
           'Интерактивный подбор тайм-слотов на радиостанциях со скидкой до 45%, честным посекундным расчётом хронометража и резервом квоты на 4 часа.',
         canonicalPath: '/hot-air',
         schemaType: 'Service',
+        noindex: !airtimeEnabled,
+        breadcrumbs: [
+          { name: 'Главная', path: '/' },
+          { name: 'Горящий эфир', path: '/hot-air' },
+        ],
       };
     case 'station-detail': {
       const name = lookup.stationName || route.stationSlug.toUpperCase();
@@ -307,6 +323,12 @@ export function resolveRouteSeoMeta(
         description: `Портрет слушателей ${name}, доступные эфирные блоки, правила кратности хронометража и расчёт горящих квот по посекундной ставке.`,
         canonicalPath: `/hot-air/stations/${route.stationSlug}`,
         schemaType: 'Service',
+        noindex: !airtimeEnabled,
+        breadcrumbs: [
+          { name: 'Главная', path: '/' },
+          { name: 'Горящий эфир', path: '/hot-air' },
+          { name: name, path: `/hot-air/stations/${route.stationSlug}` },
+        ],
       };
     }
     case 'cases':
@@ -316,6 +338,11 @@ export function resolveRouteSeoMeta(
           'Примеры радиороликов с полными текстами сценариев, таймкодами, юридической адаптацией и решениями для ЖК, медицины, ритейла и B2B.',
         canonicalPath: '/cases',
         schemaType: 'CollectionPage',
+        noindex: false,
+        breadcrumbs: [
+          { name: 'Главная', path: '/' },
+          { name: 'Кейсы', path: '/cases' },
+        ],
       };
     case 'case-detail': {
       const client = lookup.caseClientName || 'Разбор проекта';
@@ -324,6 +351,12 @@ export function resolveRouteSeoMeta(
         description: `Подробный разбор аудиоролика «${client}»: бизнес-задача, посекундная партитура сценария, юридический комплаенс и показатели отклика.`,
         canonicalPath: `/cases/${route.caseSlug}`,
         schemaType: 'Article',
+        noindex: false,
+        breadcrumbs: [
+          { name: 'Главная', path: '/' },
+          { name: 'Кейсы', path: '/cases' },
+          { name: client, path: `/cases/${route.caseSlug}` },
+        ],
       };
     }
     case 'industry-detail': {
@@ -333,6 +366,12 @@ export function resolveRouteSeoMeta(
         description: `Отраслевой стандарт радиорекламы (${ind}): рабочие сценарии, прохождение модерации по ФЗ «О рекламе» и звуковая драматургия.`,
         canonicalPath: `/cases/industry/${route.industrySlug}`,
         schemaType: 'Service',
+        noindex: false,
+        breadcrumbs: [
+          { name: 'Главная', path: '/' },
+          { name: 'Кейсы', path: '/cases' },
+          { name: ind, path: `/cases/industry/${route.industrySlug}` },
+        ],
       };
     }
     case 'pricing':
@@ -343,6 +382,11 @@ export function resolveRouteSeoMeta(
           'Фиксированная стоимость радиороликов от 15 000 ₽ по рамочному договору, этапы продакшна, паспорт прав РАО/ВОИС и эфирная модерация.',
         canonicalPath: '/pricing',
         schemaType: 'Service',
+        noindex: false,
+        breadcrumbs: [
+          { name: 'Главная', path: '/' },
+          { name: 'Тарифы', path: '/pricing' },
+        ],
       };
     case 'approach':
       return {
@@ -351,6 +395,11 @@ export function resolveRouteSeoMeta(
           'Почему слушатели игнорируют 80% объявлений в рекламном блоке: исследования внимания и разбор 5 типовых ошибок в сценариях радиороликов.',
         canonicalPath: '/approach',
         schemaType: 'CollectionPage',
+        noindex: false,
+        breadcrumbs: [
+          { name: 'Главная', path: '/' },
+          { name: 'О подходе', path: '/approach' },
+        ],
       };
     case 'mistake-detail': {
       const art = lookup.articleTitle || 'Разбор ошибки в радиорекламе';
@@ -359,6 +408,12 @@ export function resolveRouteSeoMeta(
         description: `Практический разбор ошибки в радиорекламе: сравнение сценариев «до и после», экономика удержания внимания и чек-лист продюсера.`,
         canonicalPath: `/approach/${route.articleSlug}`,
         schemaType: 'Article',
+        noindex: false,
+        breadcrumbs: [
+          { name: 'Главная', path: '/' },
+          { name: 'О подходе', path: '/approach' },
+          { name: art, path: `/approach/${route.articleSlug}` },
+        ],
       };
     }
     case 'faq':
@@ -368,6 +423,11 @@ export function resolveRouteSeoMeta(
           'Как устроена проверка реквизитов, рамочный договор и счёт в ЭДО, оплата картой физлица по 54-ФЗ, договорной тариф и сроки продакшна аудиороликов.',
         canonicalPath: '/faq',
         schemaType: 'CollectionPage',
+        noindex: false,
+        breadcrumbs: [
+          { name: 'Главная', path: '/' },
+          { name: 'FAQ', path: '/faq' },
+        ],
       };
     case 'order':
       return airtimeEnabled
@@ -377,6 +437,7 @@ export function resolveRouteSeoMeta(
               'Поставьте эфирную сетку на приоритетный 4-часовой резерв или передайте голосовое ТЗ на производство радиоролика по договору и ЭДО.',
             canonicalPath: '/order',
             schemaType: 'CheckoutPage',
+            noindex: true,
           }
         : {
             title: 'Оформление заказа аудиоролика — Студия FMWorks',
@@ -384,6 +445,7 @@ export function resolveRouteSeoMeta(
               'Передайте задачу и реквизиты или выберите консультацию продюсера: рамочный договор и счёт в ЭДО или оплата картой (54-ФЗ), старт сценариев и записи после предоплаты.',
             canonicalPath: '/order',
             schemaType: 'CheckoutPage',
+            noindex: true,
           };
     case 'admin':
       return airtimeEnabled
@@ -393,6 +455,7 @@ export function resolveRouteSeoMeta(
               'Закрытая панель управления студийной витриной и эфирными квотами FMWorks.',
             canonicalPath: '/admin',
             schemaType: 'WebSite',
+            noindex: true,
           }
         : {
             title: 'Кабинет продюсера — Управление студией и заказами FMWorks',
@@ -400,12 +463,73 @@ export function resolveRouteSeoMeta(
               'Закрытая панель управления студийной витриной, заказами аудиороликов и SLA FMWorks.',
             canonicalPath: '/admin',
             schemaType: 'WebSite',
+            noindex: true,
           };
   }
 }
 
 /**
- * Применяет SEO-метаданные, OpenGraph, Twitter-карточки, canonical и JSON-LD к текущему документу.
+ * Формирует расширенный граф Schema.org JSON-LD (`ProfessionalService` + сущность страницы + `BreadcrumbList`).
+ */
+export function buildRouteSchemaGraph(
+  meta: RouteSeoMetadata,
+  origin: string
+): Record<string, unknown> {
+  const cleanOrigin = origin.replace(/\/+$/g, '') || 'https://fmworks.ru';
+  const fullUrl = `${cleanOrigin}${meta.canonicalPath}`;
+  const ogImageUrl = `${cleanOrigin}${DEFAULT_OG_IMAGE_PATH}`;
+
+  const graphNodes: Record<string, unknown>[] = [
+    {
+      '@type': 'ProfessionalService',
+      '@id': `${cleanOrigin}/#organization`,
+      name: 'FMWorks',
+      url: cleanOrigin,
+      email: 'hello@fmworks.ru',
+      telephone: '+7 (4822) 75-04-20',
+      image: ogImageUrl,
+      address: {
+        '@type': 'PostalAddress',
+        addressLocality: 'Тверь',
+        addressRegion: 'Тверская область',
+        addressCountry: 'RU',
+      },
+      areaServed: 'RU',
+    },
+    {
+      '@type': meta.schemaType,
+      '@id': `${fullUrl}#webpage`,
+      name: meta.title,
+      description: meta.description,
+      url: fullUrl,
+      inLanguage: 'ru-RU',
+      primaryImageOfPage: ogImageUrl,
+      provider: {
+        '@id': `${cleanOrigin}/#organization`,
+      },
+    },
+  ];
+
+  if (meta.breadcrumbs && meta.breadcrumbs.length > 0) {
+    graphNodes.push({
+      '@type': 'BreadcrumbList',
+      itemListElement: meta.breadcrumbs.map((crumb, idx) => ({
+        '@type': 'ListItem',
+        position: idx + 1,
+        name: crumb.name,
+        item: `${cleanOrigin}${crumb.path}`,
+      })),
+    });
+  }
+
+  return {
+    '@context': 'https://schema.org',
+    '@graph': graphNodes,
+  };
+}
+
+/**
+ * Применяет SEO-метаданные, OpenGraph, Twitter-карточки, директивы robots, canonical и JSON-LD к текущему документу.
  */
 export function applyRouteSeoToDocument(meta: RouteSeoMetadata): void {
   if (typeof document === 'undefined') return;
@@ -427,14 +551,19 @@ export function applyRouteSeoToDocument(meta: RouteSeoMetadata): void {
       ? window.location.origin
       : 'https://fmworks.ru';
   const fullUrl = `${origin}${meta.canonicalPath}`;
+  const ogImageUrl = `${origin}${DEFAULT_OG_IMAGE_PATH}`;
 
   upsertMeta('name', 'description', meta.description);
+  upsertMeta(
+    'name',
+    'robots',
+    meta.noindex ? 'noindex, nofollow' : 'index, follow'
+  );
   upsertMeta('property', 'og:title', meta.title);
   upsertMeta('property', 'og:description', meta.description);
   upsertMeta('property', 'og:url', fullUrl);
+  upsertMeta('property', 'og:image', ogImageUrl);
   upsertMeta('property', 'og:site_name', 'FMWorks');
-  upsertMeta('name', 'twitter:title', meta.title);
-  upsertMeta('name', 'twitter:description', meta.description);
 
   let canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
   if (!canonical) {
@@ -444,18 +573,7 @@ export function applyRouteSeoToDocument(meta: RouteSeoMetadata): void {
   }
   canonical.setAttribute('href', fullUrl);
 
-  const jsonLdPayload = {
-    '@context': 'https://schema.org',
-    '@type': meta.schemaType,
-    name: meta.title,
-    description: meta.description,
-    url: fullUrl,
-    provider: {
-      '@type': 'Organization',
-      name: 'FMWorks',
-      email: 'hello@fmworks.ru',
-    },
-  };
+  const jsonLdPayload = buildRouteSchemaGraph(meta, origin);
 
   let scriptEl = document.getElementById('fmworks-route-jsonld') as HTMLScriptElement | null;
   if (!scriptEl) {

@@ -21,6 +21,7 @@ import type {
   StudioWorkScheduleConfig,
 } from './slaWorkCalendar.ts';
 import type { OrderDocumentMeta } from './studioDocumentsCore.ts';
+import { maskContactChannelSummary } from '../security/rfLegalCompliance.ts';
 
 function formatRubCompact(amount: number): string {
   return `${Math.round(amount)
@@ -338,6 +339,7 @@ export interface CrmOrderRecord {
   mediaPlanSnapshot: OrderMediaPlanSnapshot | null;
   documentMeta?: OrderDocumentMeta;
   pdnConsentAcceptedAt?: string | null;
+  pdnAnonymizedAt?: string | null;
   slaState?: OrderSlaTrackingState;
   delivery: {
     crmRegistry: 'saved';
@@ -353,6 +355,8 @@ export interface OrderDispatchSettings {
     chatId: string;
     notifyOnNewOrder: boolean;
     notifyOnStageChange: boolean;
+    /** 152-ФЗ ст. 12 / ФЗ-41-ФЗ: по умолчанию true — исключает передачу ПДн клиентов через зарубежные мессенджеры */
+    maskPdnInExternalAlerts?: boolean;
   };
   webhook: {
     enabled: boolean;
@@ -583,13 +587,21 @@ export function computeOrderHoldStatus(
   };
 }
 
+export interface TelegramDispatchFormatOptions {
+  /** По умолчанию true (152-ФЗ ст. 12 / ФЗ-41-ФЗ): скрывает контакты, ФИО, ИНН и текст брифа */
+  maskPdn?: boolean;
+}
+
 /**
- * Формирует оперативное сообщение для рабочего Telegram-чата сейлз-продюсеров и трафик-службы.
+ * Формирует оперативное сообщение для рабочего оповещения продюсеров и трафик-службы.
+ * По умолчанию работает в обезличенном режиме 152-ФЗ (не передаёт телефон, e-mail, ИНН и бриф в зарубежный мессенджер).
  */
 export function formatTelegramOrderDispatchMessage(
   order: CrmOrderRecord,
-  event: CrmDispatchEvent = 'order.created'
+  event: CrmDispatchEvent = 'order.created',
+  options: TelegramDispatchFormatOptions = {}
 ): string {
+  const maskPdn = options.maskPdn !== false;
   const stageMeta = getCrmStageMetaForOrder(order.stage, order.checkoutMode);
   const prefMeta = getCallbackPreferenceMeta(order.callbackPreference);
   const header =
@@ -614,12 +626,16 @@ export function formatTelegramOrderDispatchMessage(
       ? 'Карта физлица / СБП (ЮKassa / Робокасса, 54-ФЗ)'
       : 'Безнал по рамочному договору и счёту в ЭДО';
 
+  const contactDisplayLine = maskPdn
+    ? `Канал связи: ${maskContactChannelSummary(order.detectedChannel)}`
+    : `Контакт клиента: ${order.contact} (${order.detectedChannel})`;
+
   const lines: string[] = [
     header,
     `Этап: ${stageMeta.fullTitle}`,
     `Сумма договора: ${budgetLabel}`,
     `Способ оплаты: ${paymentLabel}`,
-    `Контакт клиента: ${order.contact} (${order.detectedChannel})`,
+    contactDisplayLine,
     `Режим связи: ${prefMeta.fullLabel}`,
   ];
 
@@ -631,11 +647,19 @@ export function formatTelegramOrderDispatchMessage(
   }
 
   if (order.companyOrInn) {
-    lines.push(
-      `Контрагент / ИНН: ${order.companyOrInn}${
-        order.innVerified ? ' · ИНН проверен по ключу ФНС' : ''
-      }`
-    );
+    if (maskPdn) {
+      lines.push(
+        `Контрагент / ИНН: указан в защищённом реестре РФ${
+          order.innVerified ? ' · ИНН проверен по ключу ФНС' : ''
+        }`
+      );
+    } else {
+      lines.push(
+        `Контрагент / ИНН: ${order.companyOrInn}${
+          order.innVerified ? ' · ИНН проверен по ключу ФНС' : ''
+        }`
+      );
+    }
   }
 
   if (order.mediaPlanSnapshot) {
@@ -658,14 +682,48 @@ export function formatTelegramOrderDispatchMessage(
   }
 
   if (order.briefText) {
-    lines.push(`Бриф / задача: ${order.briefText}`);
+    if (maskPdn) {
+      lines.push(
+        `Бриф / задача: сохранён в закрытом контуре РФ (${order.briefText.length} симв.)`
+      );
+    } else {
+      lines.push(`Бриф / задача: ${order.briefText}`);
+    }
   }
   if (order.hasVoiceRecording) {
     lines.push(`Голосовое ТЗ: прикреплено (${order.voiceDurationSec} сек)`);
   }
 
-  lines.push(``, `Пульт управления: /admin -> Заказы и воронка (CRM)`);
+  lines.push(
+    ``,
+    maskPdn
+      ? `Режим 152-ФЗ (ст. 12): ПДн не передаются в зарубежный мессенджер. Откройте локальный кабинет РФ: /admin -> Заказы и воронка (CRM)`
+      : `Пульт управления: /admin -> Заказы и воронка (CRM)`
+  );
   return lines.join('\n');
+}
+
+/**
+ * Обезличивает персональные данные субъекта в карточке заказа CRM
+ * в рамках исполнения ч. 5 ст. 21 Федерального закона № 152-ФЗ (отзыв согласия / уничтожение ПДн),
+ * сохраняя обезличенный учётный номер и сумму для 402-ФЗ «О бухгалтерском учёте».
+ */
+export function anonymizeCrmOrderPdnRecord(
+  order: CrmOrderRecord,
+  nowIso = new Date().toISOString()
+): CrmOrderRecord {
+  const anonymizedNote = `ПДн обезличены по ст. 21 152-ФЗ (${nowIso.slice(0, 10)})`;
+  return {
+    ...order,
+    updatedAt: nowIso,
+    contact: '[ПДН УДАЛЕНЫ ПО 152-ФЗ]',
+    companyOrInn: '[РЕКВИЗИТЫ ОБЕЗЛИЧЕНЫ ПО 152-ФЗ]',
+    innVerified: false,
+    briefText: anonymizedNote,
+    attachedFileName: null,
+    producerNotes: anonymizedNote,
+    pdnAnonymizedAt: nowIso,
+  };
 }
 
 export interface WebhookOrderEnvelope {

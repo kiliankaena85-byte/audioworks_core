@@ -1,5 +1,6 @@
 import { ArrowRightLeft, Car, Pause, Play } from 'lucide-react';
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from 'react';
+import { createSafeAudioContext } from '../audio/audioContextHelper';
 import { casePlayerEngine } from '../audio/casePlayerEngine';
 import { contrastAudioEngine } from '../audio/contrastAudioEngine';
 import {
@@ -102,15 +103,11 @@ export function FifteenSecDuel() {
       return;
     }
 
-    const AudioCtx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
-
     if (!audioCtxRef.current) {
-      audioCtxRef.current = new AudioCtx();
+      audioCtxRef.current = createSafeAudioContext();
     }
     const ctx = audioCtxRef.current;
+    if (!ctx) return;
     if (ctx.state === 'suspended') {
       ctx.resume().catch(() => {});
     }

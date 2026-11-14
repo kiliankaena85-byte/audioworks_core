@@ -520,9 +520,9 @@ export function PremiumAcousticWaveform({
             strokeWidth="1.45"
             strokeLinecap="round"
           >
-            {geometry.filaments.map((f, idx) => (
+            {geometry.filaments.map((f) => (
               <line
-                key={idx}
+                key={`idle-filament-${Math.round(f.x * 100)}`}
                 x1={f.x.toFixed(2)}
                 y1={f.yTop.toFixed(2)}
                 x2={f.x.toFixed(2)}
@@ -593,9 +593,9 @@ export function PremiumAcousticWaveform({
               strokeWidth="1.5"
               strokeLinecap="round"
             >
-              {geometry.filaments.map((f, idx) => (
+              {geometry.filaments.map((f) => (
                 <line
-                  key={idx}
+                  key={`active-filament-${Math.round(f.x * 100)}`}
                   x1={f.x.toFixed(2)}
                   y1={f.yTop.toFixed(2)}
                   x2={f.x.toFixed(2)}

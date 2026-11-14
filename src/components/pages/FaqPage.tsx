@@ -1,5 +1,10 @@
 import { ArrowRight, ArrowUpRight } from 'lucide-react';
-import { HOME_PROCESS_FAQ_ITEMS } from '../../data/faqData';
+import { useMemo } from 'react';
+import {
+  buildFaqPageJsonLd,
+  HOME_PROCESS_FAQ_ITEMS,
+  serializeJsonLd,
+} from '../../data/faqData';
 import { PlatformRoute } from '../../data/platformRouter';
 import { OrderFormatId } from '../../data/pricingData';
 import { FAQSection } from '../FAQSection';
@@ -10,8 +15,30 @@ interface FaqPageProps {
 }
 
 export function FaqPage({ onNavigate, onStartOrder }: FaqPageProps) {
+  const faqJsonLdMarkup = useMemo(() => {
+    const pageUrl =
+      typeof window !== 'undefined' && window.location.origin
+        ? `${window.location.origin}/faq`
+        : 'https://fmworks.ru/faq';
+
+    return serializeJsonLd(
+      buildFaqPageJsonLd(HOME_PROCESS_FAQ_ITEMS, {
+        pageUrl,
+        name: 'Ответы на частые вопросы о договоре, оплате и этапах создания ролика — FMWorks',
+        description:
+          'Как устроена проверка реквизитов, рамочный договор и счёт в ЭДО, оплата картой физлица по 54-ФЗ, договорной тариф, сроки продакшна и передача паспорта прав РАО/ВОИС.',
+      })
+    );
+  }, []);
+
   return (
     <div data-testid="faq-page-root">
+      <script
+        id="fmworks-faqpage-jsonld"
+        data-testid="faq-page-jsonld"
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: faqJsonLdMarkup }}
+      />
       {/* Редакционная шапка раздела FAQ */}
       <section className="pt-10 pb-6 sm:pt-14 sm:pb-8 px-4 sm:px-6 lg:px-12">
         <div className="max-w-7xl mx-auto space-y-4">

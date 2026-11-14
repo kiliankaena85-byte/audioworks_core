@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  anonymizeCrmOrderPdnRecord,
   buildWebhookOrderEnvelope,
   computeOrderHoldStatus,
   createSeedCrmOrders,
@@ -84,6 +85,10 @@ test('Форматтеры счёта ЭДО, Telegram-уведомления, W
   const tgText = formatTelegramOrderDispatchMessage(seedOrder, 'order.created');
   assert.ok(tgText.includes('НОВЫЙ ПРИОРИТЕТНЫЙ ХОЛД 4Ч'));
   assert.ok(tgText.includes('Business FM'));
+  // По умолчанию ПДн клиента не передаются в открытом виде в зарубежный мессенджер (152-ФЗ ст. 12)
+  assert.equal(tgText.includes(seedOrder.contact), false);
+  assert.equal(tgText.includes('Квартал Инвест'), false);
+  assert.ok(tgText.includes('152-ФЗ'));
 
   const webhookEnv = buildWebhookOrderEnvelope(
     seedOrder,
@@ -124,6 +129,13 @@ test('Форматтеры ЭДО и Telegram корректно обрабат�
   assert.ok(tgText.includes('Договорная цена (по оценке продюсера)'));
   assert.ok(tgText.includes('ЮKassa / Робокасса, 54-ФЗ'));
   assert.ok(tgText.includes('01. Проверка заявки и реквизитов'));
+
+  const anonymized = anonymizeCrmOrderPdnRecord(seedOrder, '2026-11-14T10:00:00.000Z');
+  assert.equal(anonymized.orderNumber, seedOrder.orderNumber);
+  assert.equal(anonymized.totalBudgetRub, seedOrder.totalBudgetRub);
+  assert.equal(anonymized.contact, '[ПДН УДАЛЕНЫ ПО 152-ФЗ]');
+  assert.equal(anonymized.companyOrInn, '[РЕКВИЗИТЫ ОБЕЗЛИЧЕНЫ ПО 152-ФЗ]');
+  assert.equal(anonymized.pdnAnonymizedAt, '2026-11-14T10:00:00.000Z');
 });
 
 test('Научный контур I: аудит 5+ касаний и 12-недельная кривая памяти доказывают кратное преимущество пульсирующих волн', () => {

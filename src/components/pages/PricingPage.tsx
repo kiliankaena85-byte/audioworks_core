@@ -135,6 +135,7 @@ export function PricingPage({
                 <img
                   src={LOCAL_EDITORIAL_IMAGES.studioLegalMastering}
                   alt="Рабочий стол продюсера в студии звукозаписи со сценарием и студийным микрофоном"
+                  loading="lazy"
                   decoding="async"
                   onError={(e) => {
                     const img = e.currentTarget;

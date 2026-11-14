@@ -5,14 +5,22 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import zlib from 'node:zlib';
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
+import { AIRTIME_SALES_ENABLED } from './src/data/platformFeatures.ts';
+import {
+  buildRobotsTxt,
+  buildSitemapXml,
+  injectRouteSeoIntoHtml,
+} from './src/data/seoServerTemplates.ts';
 import {
   validateAndNormalizeCmsSnapshot,
   type StudioCmsSnapshot,
 } from './src/data/studioCmsTypes.ts';
 import {
+  anonymizeCrmOrderPdnRecord,
   buildWebhookOrderEnvelope,
   createSeedCrmOrders,
   CRM_ORDER_STAGES,
@@ -54,6 +62,11 @@ import {
   SECURITY_DEFENSE_LAYERS,
   verifyLeadChallengePow,
 } from './src/security/leadShield.ts';
+import {
+  checkBannedForeignServiceUrl,
+  containsDirectPersonalData,
+  evaluateWebhookEndpointRfSafety,
+} from './src/security/rfLegalCompliance.ts';
 import { VERIFIED_LIVE_REGIONAL_STATIONS } from './src/data/broadcastAircheckData.ts';
 import {
   createDefaultStudioLegalProfiles,
@@ -522,6 +535,7 @@ function createDefaultDispatchSettings(): OrderDispatchSettings {
       chatId: envTgChat,
       notifyOnNewOrder: true,
       notifyOnStageChange: true,
+      maskPdnInExternalAlerts: true,
     },
     webhook: {
       enabled: Boolean(envWebhookUrl),
@@ -691,7 +705,10 @@ async function dispatchOrderToExternalChannels(
   } else {
     const started = Date.now();
     try {
-      const text = formatTelegramOrderDispatchMessage(targetOrder, event);
+      const maskPdn = telegram.maskPdnInExternalAlerts !== false;
+      const text = formatTelegramOrderDispatchMessage(targetOrder, event, {
+        maskPdn,
+      });
       const tgUrl = `https://api.telegram.org/bot${telegram.botToken.trim()}/sendMessage`;
       const tgRes = await fetch(tgUrl, {
         method: 'POST',
@@ -786,6 +803,14 @@ async function dispatchOrderToExternalChannels(
           'JSON-конверт и подпись HMAC-SHA256 сформированы корректно (URL не задан)',
       });
     }
+  } else if (checkBannedForeignServiceUrl(webhook.endpointUrl).matched) {
+    const blockedMatch = checkBannedForeignServiceUrl(webhook.endpointUrl);
+    webhookResult = {
+      state: 'failed',
+      updatedAt: nowIso,
+      httpStatus: null,
+      detail: blockedMatch.reason ?? 'Домен приёмника запрещён политикой 152-ФЗ / РФ.',
+    };
   } else {
     const started = Date.now();
     try {
@@ -1496,6 +1521,23 @@ async function startServer() {
       return;
     }
 
+    if (body.pdnConsentAccepted === false && !body.isReturningFastTrack) {
+      res.status(400).json({
+        ok: false,
+        verdict: 'validation_error',
+        conversionAllowed: false,
+        consentError:
+          'Для отправки заявки подтвердите согласие на обработку персональных данных (ст. 9 Федерального закона № 152-ФЗ).',
+        rateLimit: {
+          remainingAttempts: preRateCheck.remainingAttempts,
+          maxAttempts: preRateCheck.maxAttempts,
+          retryAfterSec: 0,
+        },
+        nextChallenge: issueLeadChallenge(),
+      });
+      return;
+    }
+
     const contactLine = typeof body.contactLine === 'string' ? body.contactLine : '';
     const companyLine = typeof body.companyLine === 'string' ? body.companyLine : '';
     const briefText = typeof body.briefText === 'string' ? body.briefText : '';
@@ -2059,6 +2101,7 @@ async function startServer() {
           chatId: telegram.chatId,
           notifyOnNewOrder: telegram.notifyOnNewOrder,
           notifyOnStageChange: telegram.notifyOnStageChange,
+          maskPdnInExternalAlerts: telegram.maskPdnInExternalAlerts !== false,
         },
         webhook: {
           enabled: webhook.enabled,
@@ -2256,6 +2299,44 @@ async function startServer() {
     });
   });
 
+  app.post('/api/cms/orders/:orderId/anonymize-pdn', requireStudioAuth, (req, res) => {
+    const { orderId } = req.params;
+    const crmStore = readOrdersCrmStore();
+    const idx = crmStore.orders.findIndex((o) => o.id === orderId);
+    if (idx === -1) {
+      res.status(404).json({ ok: false, error: 'Заказ не найден в реестре CRM' });
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const anonymized = anonymizeCrmOrderPdnRecord(crmStore.orders[idx], nowIso);
+    crmStore.orders[idx] = anonymized;
+    writeOrdersCrmStore(crmStore);
+
+    // Синхронное обезличивание ПДн в журнале заявок безопасности (ч. 5 ст. 21 152-ФЗ)
+    const secStore = readSecurityStore();
+    let touchedSec = false;
+    secStore.verifiedLeads = secStore.verifiedLeads.map((lead) => {
+      if (lead.orderNumber !== anonymized.orderNumber) return lead;
+      touchedSec = true;
+      return {
+        ...lead,
+        contact: '[ПДН УДАЛЕНЫ ПО 152-ФЗ]',
+        companyOrInn: '[ОБЕЗЛИЧЕНО ПО 152-ФЗ]',
+        innVerified: false,
+        briefExcerpt: `ПДн обезличены по ст. 21 152-ФЗ (${nowIso.slice(0, 10)})`,
+      };
+    });
+    if (touchedSec) {
+      writeSecurityStore(secStore);
+    }
+
+    res.json({
+      ok: true,
+      order: anonymized,
+    });
+  });
+
   app.put(
     '/api/cms/orders-dispatch/settings',
     requireStudioAuth,
@@ -2268,6 +2349,7 @@ async function startServer() {
           chatId?: string;
           notifyOnNewOrder?: boolean;
           notifyOnStageChange?: boolean;
+          maskPdnInExternalAlerts?: boolean;
         };
         webhook?: {
           enabled?: boolean;
@@ -2278,6 +2360,23 @@ async function startServer() {
         };
         workSchedule?: Partial<StudioWorkScheduleConfig>;
       };
+
+      const incomingWebhookUrl =
+        typeof body.webhook?.endpointUrl === 'string'
+          ? body.webhook.endpointUrl.trim().slice(0, 320)
+          : '';
+      if (incomingWebhookUrl) {
+        const whSafety = evaluateWebhookEndpointRfSafety(incomingWebhookUrl);
+        if (whSafety.isBannedForeignService) {
+          res.status(400).json({
+            ok: false,
+            error:
+              whSafety.warning ??
+              'Указанный домен приёмника Webhook запрещён политикой 152-ФЗ / РФ.',
+          });
+          return;
+        }
+      }
 
       const crmStore = readOrdersCrmStore();
       const prevTg = crmStore.settings.telegram;
@@ -2322,6 +2421,10 @@ async function startServer() {
             typeof body.telegram?.notifyOnStageChange === 'boolean'
               ? body.telegram.notifyOnStageChange
               : prevTg.notifyOnStageChange,
+          maskPdnInExternalAlerts:
+            typeof body.telegram?.maskPdnInExternalAlerts === 'boolean'
+              ? body.telegram.maskPdnInExternalAlerts
+              : prevTg.maskPdnInExternalAlerts !== false,
         },
         webhook: {
           enabled:
@@ -2330,7 +2433,7 @@ async function startServer() {
               : prevWh.enabled,
           endpointUrl:
             typeof body.webhook?.endpointUrl === 'string'
-              ? body.webhook.endpointUrl.trim().slice(0, 320)
+              ? incomingWebhookUrl
               : prevWh.endpointUrl,
           hmacSecret: nextHmacSecret,
           notifyOnNewOrder:
@@ -2358,6 +2461,8 @@ async function startServer() {
             chatId: crmStore.settings.telegram.chatId,
             notifyOnNewOrder: crmStore.settings.telegram.notifyOnNewOrder,
             notifyOnStageChange: crmStore.settings.telegram.notifyOnStageChange,
+            maskPdnInExternalAlerts:
+              crmStore.settings.telegram.maskPdnInExternalAlerts !== false,
           },
           webhook: {
             enabled: crmStore.settings.webhook.enabled,
@@ -2439,11 +2544,14 @@ async function startServer() {
         return;
       }
 
+      const allowForeignGeminiApi =
+        AIRTIME_SALES_ENABLED && process.env.ALLOW_FOREIGN_GEMINI_API === 'true';
       const apiKey = process.env.GEMINI_API_KEY?.trim();
-      if (!apiKey) {
+      if (!allowForeignGeminiApi || !apiKey) {
         res.json({
           ok: true,
           usedGeminiModel: false,
+          complianceMode: 'rf_local_deterministic',
           hint: null,
         });
         return;
@@ -2461,6 +2569,15 @@ async function startServer() {
 
       const rawProductNote =
         typeof body.productNote === 'string' ? body.productNote.trim().slice(0, 280) : '';
+      if (containsDirectPersonalData(rawProductNote)) {
+        res.json({
+          ok: true,
+          usedGeminiModel: false,
+          complianceMode: 'rf_pdn_shield_blocked',
+          hint: null,
+        });
+        return;
+      }
       const noteInspection = inspectBriefForSpamSignals(rawProductNote);
       if (noteInspection.isBotSpam) {
         const store = readSecurityStore();
@@ -2845,6 +2962,71 @@ async function startServer() {
     app.use('/assets', express.static(publicAssetsRoot, { maxAge: '1d' }));
   }
 
+  const resolveRequestPublicOrigin = (req: Request): string => {
+    const rawProto = req.headers['x-forwarded-proto'];
+    const proto =
+      typeof rawProto === 'string' && rawProto.trim()
+        ? rawProto.split(',')[0].trim()
+        : req.protocol || 'https';
+    const rawHost = req.headers['x-forwarded-host'] || req.headers.host;
+    const host =
+      typeof rawHost === 'string' && rawHost.trim()
+        ? rawHost.split(',')[0].trim()
+        : '';
+    return host ? `${proto}://${host}` : 'https://fmworks.ru';
+  };
+
+  const sendCompressibleText = (
+    req: Request,
+    res: Response,
+    contentType: string,
+    payload: string,
+    cacheControl?: string
+  ) => {
+    res.setHeader('Content-Type', contentType);
+    if (cacheControl) {
+      res.setHeader('Cache-Control', cacheControl);
+    }
+    res.setHeader('Vary', 'Accept-Encoding');
+    const acceptEncoding = String(req.headers['accept-encoding'] || '');
+    if (
+      Buffer.byteLength(payload, 'utf8') > 1024 &&
+      acceptEncoding.includes('gzip')
+    ) {
+      res.setHeader('Content-Encoding', 'gzip');
+      res.send(zlib.gzipSync(payload));
+      return;
+    }
+    res.send(payload);
+  };
+
+  app.get('/robots.txt', (req, res) => {
+    sendCompressibleText(
+      req,
+      res,
+      'text/plain; charset=utf-8',
+      buildRobotsTxt(resolveRequestPublicOrigin(req)),
+      'public, max-age=3600'
+    );
+  });
+
+  app.get('/sitemap.xml', (req, res) => {
+    const cms = readPersistedCmsSnapshot();
+    const caseSlugs = cms?.portfolioCases
+      ?.filter((c) => c.published !== false)
+      .map((c) => c.id);
+    sendCompressibleText(
+      req,
+      res,
+      'application/xml; charset=utf-8',
+      buildSitemapXml(resolveRequestPublicOrigin(req), {
+        airtimeEnabled: AIRTIME_SALES_ENABLED,
+        caseSlugs,
+      }),
+      'public, max-age=3600'
+    );
+  });
+
   const isProd =
     process.env.NODE_ENV === 'production' ||
     process.env.npm_lifecycle_event === 'start' ||
@@ -2856,12 +3038,89 @@ async function startServer() {
       server: { middlewareMode: true },
       appType: 'spa',
     });
+
+    app.get('*', async (req, res, next) => {
+      const accept = String(req.headers.accept || '');
+      if (
+        !accept.includes('text/html') ||
+        req.path.startsWith('/api/') ||
+        req.path.startsWith('/assets/') ||
+        req.path.startsWith('/src/') ||
+        req.path.startsWith('/@') ||
+        path.extname(req.path) !== ''
+      ) {
+        next();
+        return;
+      }
+
+      try {
+        const templatePath = path.join(__dirname, 'index.html');
+        const rawTemplate = fs.readFileSync(templatePath, 'utf8');
+        const transformed = await vite.transformIndexHtml(
+          req.originalUrl,
+          rawTemplate
+        );
+        const searchIdx = req.originalUrl.indexOf('?');
+        const search = searchIdx >= 0 ? req.originalUrl.slice(searchIdx) : '';
+        const seoHtml = injectRouteSeoIntoHtml(
+          transformed,
+          req.path,
+          resolveRequestPublicOrigin(req),
+          {
+            search,
+            airtimeEnabled: AIRTIME_SALES_ENABLED,
+          }
+        );
+        sendCompressibleText(
+          req,
+          res,
+          'text/html; charset=utf-8',
+          seoHtml,
+          'no-cache'
+        );
+      } catch (err) {
+        vite.ssrFixStacktrace(err as Error);
+        next(err);
+      }
+    });
+
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(__dirname, 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    const distAssetsPath = path.join(distPath, 'assets');
+    if (fs.existsSync(distAssetsPath)) {
+      app.use(
+        '/assets',
+        express.static(distAssetsPath, { maxAge: '365d', immutable: true })
+      );
+    }
+    app.use(express.static(distPath, { index: false, maxAge: '1h' }));
+    let cachedProdHtml: string | null = null;
+    app.get('*', (req, res) => {
+      if (!cachedProdHtml) {
+        cachedProdHtml = fs.readFileSync(
+          path.join(distPath, 'index.html'),
+          'utf8'
+        );
+      }
+      const searchIdx = req.originalUrl.indexOf('?');
+      const search = searchIdx >= 0 ? req.originalUrl.slice(searchIdx) : '';
+      const seoHtml = injectRouteSeoIntoHtml(
+        cachedProdHtml,
+        req.path,
+        resolveRequestPublicOrigin(req),
+        {
+          search,
+          airtimeEnabled: AIRTIME_SALES_ENABLED,
+        }
+      );
+      sendCompressibleText(
+        req,
+        res,
+        'text/html; charset=utf-8',
+        seoHtml,
+        'no-cache'
+      );
     });
   }
 

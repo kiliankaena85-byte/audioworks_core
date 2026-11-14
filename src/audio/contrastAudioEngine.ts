@@ -11,6 +11,7 @@ import {
   getCrashTestPhaseAtElapsed,
 } from '../data/audioworksCommercial';
 import { LayaPersonaSlot } from '../engine/layaTypes';
+import { createSafeAudioContext } from './audioContextHelper';
 import { duelAudioStore } from './duelAudioStore';
 
 export type StageMode = CommercialStageMode;
@@ -153,14 +154,10 @@ class ContrastAudioEngine {
   }
 
   private ensureAudioGraph(): AudioContext | null {
-    if (typeof window === 'undefined') return null;
-    const AudioCtx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return null;
-
     if (!this.ctx) {
-      this.ctx = new AudioCtx();
+      const created = createSafeAudioContext();
+      if (!created) return null;
+      this.ctx = created;
 
       this.analyser = this.ctx.createAnalyser();
       this.analyser.fftSize = 128;

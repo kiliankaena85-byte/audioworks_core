@@ -120,6 +120,7 @@ export function ApproachSection() {
               src={neuro.studioPhotoUrl}
               alt={neuro.studioPhotoAlt}
               referrerPolicy="no-referrer"
+              loading="lazy"
               decoding="async"
               onError={(e) => {
                 const img = e.currentTarget;

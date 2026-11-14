@@ -1,24 +1,79 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { broadcastAircheckEngine } from './audio/broadcastAircheckEngine';
 import { casePlayerEngine, CasePlayerSnapshot } from './audio/casePlayerEngine';
 import { contrastAudioEngine } from './audio/contrastAudioEngine';
 import { SiteTextBlocksProvider } from './cms/SiteTextBlocksContext';
 import { StudioCmsProvider, useStudioCms } from './cms/StudioCmsContext';
-import { AdminWorkspace } from './components/admin/AdminWorkspace';
-import { BrandKitModal } from './components/BrandKitModal';
+import { AppErrorBoundary } from './components/AppErrorBoundary';
 import { CompactHeaderNav } from './components/CompactHeaderNav';
 import { FloatingCasePlayer } from './components/FloatingCasePlayer';
 import { Footer } from './components/Footer';
-import { ApproachPage } from './components/pages/ApproachPage';
-import { CasesPage } from './components/pages/CasesPage';
-import { FaqPage } from './components/pages/FaqPage';
+import { RfStorageNoticeBanner } from './components/legal/RfStorageNoticeBanner';
 import { HomePage } from './components/pages/HomePage';
-import { HotAirPage } from './components/pages/HotAirPage';
-import { OrderPage } from './components/pages/OrderPage';
-import { PricingPage } from './components/pages/PricingPage';
-import { RadioInventoryAdmin } from './components/RadioInventoryAdmin';
-import { ReservationConfirmedModal } from './components/ReservationConfirmedModal';
 import { BrandDomainVariant } from './data/brandKitData';
+
+const AdminWorkspace = lazy(() =>
+  import('./components/admin/AdminWorkspace').then((m) => ({
+    default: m.AdminWorkspace,
+  }))
+);
+const BrandKitModal = lazy(() =>
+  import('./components/BrandKitModal').then((m) => ({
+    default: m.BrandKitModal,
+  }))
+);
+const ApproachPage = lazy(() =>
+  import('./components/pages/ApproachPage').then((m) => ({
+    default: m.ApproachPage,
+  }))
+);
+const CasesPage = lazy(() =>
+  import('./components/pages/CasesPage').then((m) => ({
+    default: m.CasesPage,
+  }))
+);
+const FaqPage = lazy(() =>
+  import('./components/pages/FaqPage').then((m) => ({
+    default: m.FaqPage,
+  }))
+);
+const HotAirPage = lazy(() =>
+  import('./components/pages/HotAirPage').then((m) => ({
+    default: m.HotAirPage,
+  }))
+);
+const OrderPage = lazy(() =>
+  import('./components/pages/OrderPage').then((m) => ({
+    default: m.OrderPage,
+  }))
+);
+const PricingPage = lazy(() =>
+  import('./components/pages/PricingPage').then((m) => ({
+    default: m.PricingPage,
+  }))
+);
+const RadioInventoryAdmin = lazy(() =>
+  import('./components/RadioInventoryAdmin').then((m) => ({
+    default: m.RadioInventoryAdmin,
+  }))
+);
+const ReservationConfirmedModal = lazy(() =>
+  import('./components/ReservationConfirmedModal').then((m) => ({
+    default: m.ReservationConfirmedModal,
+  }))
+);
+
+function RouteLoadingFallback() {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="min-h-[45vh] flex items-center justify-center px-6 text-sm text-[#111111]/55 dark:text-[#F4F3EF]/55"
+    >
+      Загрузка раздела FMWorks…
+    </div>
+  );
+}
 import {
   INDUSTRY_SOLUTIONS,
   RADIO_MISTAKE_ARTICLES,
@@ -98,9 +153,12 @@ function FmworksExperience() {
     return unsubscribeDraft;
   }, []);
 
+  const hasNormalizedInitialUrlRef = useRef(false);
+
   // Нормализация URL при первом заходе (включая скрытый /hot-air -> / и старые хеш-ссылки)
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || hasNormalizedInitialUrlRef.current) return;
+    hasNormalizedInitialUrlRef.current = true;
     const lowerPath = window.location.pathname.toLowerCase();
     if (!AIRTIME_SALES_ENABLED && lowerPath.startsWith('/hot-air')) {
       window.history.replaceState({}, '', '/');
@@ -113,8 +171,7 @@ function FmworksExperience() {
         window.history.replaceState({}, '', canonical);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [route]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -211,7 +268,7 @@ function FmworksExperience() {
 
   if (route.kind === 'admin') {
     return (
-      <>
+      <Suspense fallback={<RouteLoadingFallback />}>
         <AdminWorkspace
           brandVariant={brandVariant}
           onSelectBrandVariant={setBrandVariant}
@@ -220,13 +277,15 @@ function FmworksExperience() {
           onToggleTheme={() => setIsDark((prev) => !prev)}
           onNavigateHome={() => navigateTo({ kind: 'home' })}
         />
-        <BrandKitModal
-          isOpen={isBrandKitOpen}
-          onClose={() => setIsBrandKitOpen(false)}
-          activeSiteVariant={brandVariant}
-          onSelectSiteVariant={setBrandVariant}
-        />
-      </>
+        {isBrandKitOpen && (
+          <BrandKitModal
+            isOpen={isBrandKitOpen}
+            onClose={() => setIsBrandKitOpen(false)}
+            activeSiteVariant={brandVariant}
+            onSelectSiteVariant={setBrandVariant}
+          />
+        )}
+      </Suspense>
     );
   }
 
@@ -298,75 +357,77 @@ function FmworksExperience() {
       />
 
       <main className="flex-1">
-        {route.kind === 'home' && (
-          <HomePage
-            scrollAnchor={route.scrollAnchor}
-            brandVariant={brandVariant}
-            playerSnap={caseSnap}
-            onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
-            onStartPreview={(item) => casePlayerEngine.startPreview(item)}
-            onStopPreview={(caseId) => casePlayerEngine.stopPreview(caseId)}
-            onNavigate={navigateTo}
-            onStartStudioOrder={handleOpenStudioOrder}
-          />
-        )}
-
-        {AIRTIME_SALES_ENABLED &&
-          (route.kind === 'hot-air' || route.kind === 'station-detail') && (
-            <HotAirPage
-              stationSlug={
-                route.kind === 'station-detail' ? route.stationSlug : undefined
-              }
-              isCasePlayerVisible={isCasePlayerVisible}
+        <Suspense fallback={<RouteLoadingFallback />}>
+          {route.kind === 'home' && (
+            <HomePage
+              scrollAnchor={route.scrollAnchor}
+              brandVariant={brandVariant}
+              playerSnap={caseSnap}
+              onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
+              onStartPreview={(item) => casePlayerEngine.startPreview(item)}
+              onStopPreview={(caseId) => casePlayerEngine.stopPreview(caseId)}
               onNavigate={navigateTo}
-              onReserveMediaGrid={handleReserveMediaGrid}
+              onStartStudioOrder={handleOpenStudioOrder}
             />
           )}
 
-        {(route.kind === 'cases' ||
-          route.kind === 'case-detail' ||
-          route.kind === 'industry-detail') && (
-          <CasesPage
-            caseSlug={route.kind === 'case-detail' ? route.caseSlug : undefined}
-            industrySlug={
-              route.kind === 'industry-detail' ? route.industrySlug : undefined
-            }
-            playerSnap={caseSnap}
-            onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
-            onStartPreview={(item) => casePlayerEngine.startPreview(item)}
-            onStopPreview={(caseId) => casePlayerEngine.stopPreview(caseId)}
-            onNavigate={navigateTo}
-          />
-        )}
+          {AIRTIME_SALES_ENABLED &&
+            (route.kind === 'hot-air' || route.kind === 'station-detail') && (
+              <HotAirPage
+                stationSlug={
+                  route.kind === 'station-detail' ? route.stationSlug : undefined
+                }
+                isCasePlayerVisible={isCasePlayerVisible}
+                onNavigate={navigateTo}
+                onReserveMediaGrid={handleReserveMediaGrid}
+              />
+            )}
 
-        {route.kind === 'pricing' && (
-          <PricingPage
-            scrollAnchor={route.scrollAnchor}
-            onSelectFormat={(formatId) => handleOpenStudioOrder(formatId)}
-            onNavigate={navigateTo}
-          />
-        )}
+          {(route.kind === 'cases' ||
+            route.kind === 'case-detail' ||
+            route.kind === 'industry-detail') && (
+            <CasesPage
+              caseSlug={route.kind === 'case-detail' ? route.caseSlug : undefined}
+              industrySlug={
+                route.kind === 'industry-detail' ? route.industrySlug : undefined
+              }
+              playerSnap={caseSnap}
+              onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
+              onStartPreview={(item) => casePlayerEngine.startPreview(item)}
+              onStopPreview={(caseId) => casePlayerEngine.stopPreview(caseId)}
+              onNavigate={navigateTo}
+            />
+          )}
 
-        {(route.kind === 'approach' || route.kind === 'mistake-detail') && (
-          <ApproachPage
-            articleSlug={
-              route.kind === 'mistake-detail' ? route.articleSlug : undefined
-            }
-            onNavigate={navigateTo}
-            onStartOrder={() => handleOpenStudioOrder('turnkey')}
-          />
-        )}
+          {route.kind === 'pricing' && (
+            <PricingPage
+              scrollAnchor={route.scrollAnchor}
+              onSelectFormat={(formatId) => handleOpenStudioOrder(formatId)}
+              onNavigate={navigateTo}
+            />
+          )}
 
-        {route.kind === 'faq' && (
-          <FaqPage
-            onNavigate={navigateTo}
-            onStartOrder={(formatId) => handleOpenStudioOrder(formatId ?? null)}
-          />
-        )}
+          {(route.kind === 'approach' || route.kind === 'mistake-detail') && (
+            <ApproachPage
+              articleSlug={
+                route.kind === 'mistake-detail' ? route.articleSlug : undefined
+              }
+              onNavigate={navigateTo}
+              onStartOrder={() => handleOpenStudioOrder('turnkey')}
+            />
+          )}
 
-        {route.kind === 'order' && (
-          <OrderPage draft={orderDraft} onNavigate={navigateTo} />
-        )}
+          {route.kind === 'faq' && (
+            <FaqPage
+              onNavigate={navigateTo}
+              onStartOrder={(formatId) => handleOpenStudioOrder(formatId ?? null)}
+            />
+          )}
+
+          {route.kind === 'order' && (
+            <OrderPage draft={orderDraft} onNavigate={navigateTo} />
+          )}
+        </Suspense>
       </main>
 
       <Footer
@@ -385,39 +446,43 @@ function FmworksExperience() {
         onNext={() => casePlayerEngine.playNextCase(playlistWithReel)}
       />
 
-      {AIRTIME_SALES_ENABLED && (
-        <RadioInventoryAdmin
-          isOpen={isRadioAdminOpen}
-          onClose={() => setIsRadioAdminOpen(false)}
-        />
+      <RfStorageNoticeBanner liftForFloatingPlayer={isCasePlayerVisible} />
+
+      {AIRTIME_SALES_ENABLED && isRadioAdminOpen && (
+        <Suspense fallback={null}>
+          <RadioInventoryAdmin
+            isOpen={isRadioAdminOpen}
+            onClose={() => setIsRadioAdminOpen(false)}
+          />
+        </Suspense>
       )}
 
-      <ReservationConfirmedModal
-        isOpen={
-          AIRTIME_SALES_ENABLED &&
-          isHeaderConfirmedModalOpen &&
-          orderDraft.confirmedReservation !== null
-        }
-        confirmed={orderDraft.confirmedReservation}
-        onClose={() => setIsHeaderConfirmedModalOpen(false)}
-        onNavigateHotAir={
-          AIRTIME_SALES_ENABLED
-            ? () => navigateTo({ kind: 'hot-air' })
-            : undefined
-        }
-      />
+      {AIRTIME_SALES_ENABLED &&
+        isHeaderConfirmedModalOpen &&
+        orderDraft.confirmedReservation !== null && (
+          <Suspense fallback={null}>
+            <ReservationConfirmedModal
+              isOpen
+              confirmed={orderDraft.confirmedReservation}
+              onClose={() => setIsHeaderConfirmedModalOpen(false)}
+              onNavigateHotAir={() => navigateTo({ kind: 'hot-air' })}
+            />
+          </Suspense>
+        )}
     </div>
   );
 }
 
 export default function App() {
   return (
-    <LayaDecisionProvider>
-      <StudioCmsProvider>
-        <SiteTextBlocksProvider>
-          <FmworksExperience />
-        </SiteTextBlocksProvider>
-      </StudioCmsProvider>
-    </LayaDecisionProvider>
+    <AppErrorBoundary>
+      <LayaDecisionProvider>
+        <StudioCmsProvider>
+          <SiteTextBlocksProvider>
+            <FmworksExperience />
+          </SiteTextBlocksProvider>
+        </StudioCmsProvider>
+      </LayaDecisionProvider>
+    </AppErrorBoundary>
   );
 }

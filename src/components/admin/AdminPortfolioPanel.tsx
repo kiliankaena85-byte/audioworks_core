@@ -817,11 +817,12 @@ export function AdminPortfolioPanel({
                 aria-hidden="true"
                 className="w-full flex items-center justify-between gap-1 opacity-30 pointer-events-none"
               >
-                {Array.from({ length: 36 }).map((_, idx) => {
-                  const barHeight = 28 + Math.round(Math.abs(Math.sin(idx * 0.85)) * 56);
+                {Array.from({ length: 36 }).map((_, barSlot) => {
+                  const barHeight =
+                    28 + Math.round(Math.abs(Math.sin(barSlot * 0.85)) * 56);
                   return (
                     <span
-                      key={idx}
+                      key={`preview-strip-bar-${barSlot}`}
                       className="w-0.5 rounded-full bg-[#111111] dark:bg-white"
                       style={{ height: `${Math.round((barHeight / 100) * 22)}px` }}
                     />

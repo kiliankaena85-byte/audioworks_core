@@ -8,7 +8,7 @@ import {
   PhoneForwarded,
   ShieldCheck,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   buildMediaPlanSnapshotFromReservation,
   CrmOrderRecord,
@@ -29,9 +29,22 @@ import {
   StudioWorkScheduleConfig,
 } from '../data/slaWorkCalendar';
 
+import {
+  BrandedDocumentKind,
+  OrderDocumentMeta,
+  StudioLegalProfilesConfig,
+} from '../data/studioDocumentsCore';
+
+const BrandedDocumentSuiteModal = lazy(() =>
+  import('./documents/BrandedDocumentSuiteModal').then((m) => ({
+    default: m.BrandedDocumentSuiteModal,
+  }))
+);
+
 interface ClientSlaAndRescuePanelProps {
   confirmed: ConfirmedReservationSummary;
   workSchedule?: Partial<StudioWorkScheduleConfig> | null;
+  legalProfiles?: Partial<StudioLegalProfilesConfig> | null;
   onUpdatedConfirmed?: (next: ConfirmedReservationSummary) => void;
   defaultExpandedEdo?: boolean;
 }
@@ -39,12 +52,16 @@ interface ClientSlaAndRescuePanelProps {
 export function ClientSlaAndRescuePanel({
   confirmed,
   workSchedule,
+  legalProfiles,
   onUpdatedConfirmed,
   defaultExpandedEdo = false,
 }: ClientSlaAndRescuePanelProps) {
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [liveStage, setLiveStage] = useState<CrmOrderStage>('new_hold');
   const [liveSlaState, setLiveSlaState] = useState<OrderSlaTrackingState | null>(null);
+  const [liveLegalProfiles, setLiveLegalProfiles] =
+    useState<Partial<StudioLegalProfilesConfig> | null>(legalProfiles ?? null);
+  const [liveDocMeta, setLiveDocMeta] = useState<OrderDocumentMeta | null>(null);
   const [serverEdoText, setServerEdoText] = useState<string | null>(null);
   const [showEdoPreview, setShowEdoPreview] = useState<boolean>(
     () =>
@@ -52,12 +69,20 @@ export function ClientSlaAndRescuePanel({
       confirmed.paymentChannel !== 'card_online' &&
       Boolean(confirmed.companyLine)
   );
+  const [isDocSuiteOpen, setIsDocSuiteOpen] = useState<boolean>(false);
+  const [suiteInitialDoc, setSuiteInitialDoc] = useState<BrandedDocumentKind>('invoice');
   const [copiedEdo, setCopiedEdo] = useState<boolean>(false);
   const [isRescuePending, setIsRescuePending] = useState<boolean>(false);
   const [rescueFeedback, setRescueFeedback] = useState<{
     kind: 'ok' | 'error';
     text: string;
   } | null>(null);
+
+  useEffect(() => {
+    if (legalProfiles) {
+      setLiveLegalProfiles(legalProfiles);
+    }
+  }, [legalProfiles]);
 
   useEffect(() => {
     const id = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -83,11 +108,15 @@ export function ClientSlaAndRescuePanel({
         callbackPreference?: ClientCallbackPreference;
         slaState?: OrderSlaTrackingState | null;
         edoSpecificationText?: string;
+        documentMeta?: OrderDocumentMeta | null;
+        legalProfiles?: StudioLegalProfilesConfig | null;
       };
       if (!data.ok) return;
       if (data.stage) setLiveStage(data.stage);
       if (data.slaState) setLiveSlaState(data.slaState);
       if (data.edoSpecificationText) setServerEdoText(data.edoSpecificationText);
+      if (data.documentMeta) setLiveDocMeta(data.documentMeta);
+      if (data.legalProfiles) setLiveLegalProfiles(data.legalProfiles);
 
       const parsedHoldMs = data.holdExpiresAt ? Date.parse(data.holdExpiresAt) : NaN;
       const nextHoldMs = Number.isFinite(parsedHoldMs)
@@ -213,6 +242,7 @@ export function ClientSlaAndRescuePanel({
               confirmed.lockedTotals
             )
           : null,
+      documentMeta: liveDocMeta ?? undefined,
       slaState: liveSlaState ?? undefined,
       delivery: {
         crmRegistry: 'saved',
@@ -231,7 +261,7 @@ export function ClientSlaAndRescuePanel({
       },
     };
     return formatEdoInvoiceSpecificationDocument(syntheticRecord);
-  }, [activeCallbackPref, confirmed, liveSlaState, liveStage, serverEdoText]);
+  }, [activeCallbackPref, confirmed, liveDocMeta, liveSlaState, liveStage, serverEdoText]);
 
   const executeRescueAction = async (
     action: 'extend_hold_and_escalate' | 'switch_to_async' | 'reschedule_callback',
@@ -458,13 +488,31 @@ export function ClientSlaAndRescuePanel({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 w-full lg:w-auto min-w-0">
+          <button
+            type="button"
+            data-testid="client-open-branded-suite-btn"
+            onClick={() => {
+              setSuiteInitialDoc(
+                confirmed.selectedFormatId === 'custom_consult' ||
+                  confirmed.selectedBudgetRub === 0
+                  ? 'kp'
+                  : 'invoice'
+              );
+              setIsDocSuiteOpen(true);
+            }}
+            className="w-full sm:w-auto max-w-full min-h-[44px] px-3.5 sm:px-4 py-2.5 rounded-xl bg-[#FF4820] hover:bg-[#E63C17] text-white text-xs font-semibold inline-flex items-center justify-center gap-2 text-center leading-snug transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap"
+          >
+            <FileText className="w-4 h-4 shrink-0" aria-hidden="true" />
+            <span>Бланки A4: КП · Договор · Счёт · Паспорт</span>
+          </button>
+
           {confirmed.paymentChannel !== 'card_online' && Boolean(confirmed.companyLine) && (
             <button
               type="button"
               data-testid="client-quick-download-edo-btn"
               onClick={handleDownloadEdo}
-              className="min-h-[42px] px-3.5 py-2 rounded-xl border border-[#111111]/18 dark:border-white/18 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+              className="w-full sm:w-auto max-w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[#111111]/18 dark:border-white/18 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center justify-center gap-1.5 text-center leading-snug transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap"
             >
               <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
               <span>Договор и счёт (.txt)</span>
@@ -474,7 +522,7 @@ export function ClientSlaAndRescuePanel({
             type="button"
             data-testid="client-toggle-autonomous-edo-btn"
             onClick={() => setShowEdoPreview((prev) => !prev)}
-            className="min-h-[42px] px-4 py-2 rounded-xl bg-[#111111] hover:bg-[#27272A] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
+            className="w-full sm:w-auto max-w-full min-h-[44px] px-3.5 sm:px-4 py-2.5 rounded-xl bg-[#111111] hover:bg-[#27272A] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-white text-xs font-semibold inline-flex items-center justify-center gap-2 text-center leading-snug transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap"
           >
             <FileText className="w-4 h-4 shrink-0" aria-hidden="true" />
             <span>
@@ -506,20 +554,20 @@ export function ClientSlaAndRescuePanel({
       {showEdoPreview && (
         <div
           data-testid="client-autonomous-edo-box"
-          className="rounded-xl p-4 bg-[#EFECE5] dark:bg-[#15151A] border border-[#111111]/10 dark:border-white/10 space-y-3"
+          className="rounded-xl p-4 bg-[#EFECE5] dark:bg-[#15151A] border border-[#111111]/10 dark:border-white/10 space-y-3 min-w-0"
         >
-          <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 min-w-0">
             <p className="text-xs font-bold text-[#111111] dark:text-[#F4F3EF]">
               {confirmed.paymentChannel === 'card_online'
                 ? 'Рамочный договор-оферта и бланк заказа (для онлайн-оплаты картой / СБП по 54-ФЗ)'
                 : 'Рамочный договор-оферта и счёт ЭДО (можно скачать сразу и передать в бухгалтерию / Диадок / СБИС)'}
             </p>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
               <button
                 type="button"
                 data-testid="client-copy-edo-btn"
                 onClick={() => void handleCopyEdo()}
-                className="min-h-[36px] px-3 py-1.5 rounded-lg bg-[#FF4820] hover:bg-[#E63C17] text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
+                className="flex-1 sm:flex-initial min-h-[40px] px-3 py-1.5 rounded-lg bg-[#FF4820] hover:bg-[#E63C17] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer whitespace-normal sm:whitespace-nowrap"
               >
                 <Copy className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                 <span>{copiedEdo ? 'Скопировано' : 'Скопировать текст'}</span>
@@ -528,7 +576,7 @@ export function ClientSlaAndRescuePanel({
                 type="button"
                 data-testid="client-download-edo-btn"
                 onClick={handleDownloadEdo}
-                className="min-h-[36px] px-3 py-1.5 rounded-lg border border-[#111111]/16 dark:border-white/16 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
+                className="flex-1 sm:flex-initial min-h-[40px] px-3 py-1.5 rounded-lg border border-[#111111]/16 dark:border-white/16 text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer whitespace-normal sm:whitespace-nowrap"
               >
                 <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                 <span>Скачать (.txt)</span>
@@ -635,6 +683,33 @@ export function ClientSlaAndRescuePanel({
           </div>
         )}
       </div>
+
+      {isDocSuiteOpen && (
+        <Suspense fallback={null}>
+          <BrandedDocumentSuiteModal
+            isOpen={isDocSuiteOpen}
+            onClose={() => setIsDocSuiteOpen(false)}
+            mode="client"
+            initialDoc={suiteInitialDoc}
+            legalProfiles={liveLegalProfiles}
+            order={{
+              orderNumber: confirmed.orderNumber,
+              createdAtIso: new Date(confirmed.confirmedAtMs).toISOString(),
+              formatLabel: confirmed.formatLabel,
+              baseBudgetRub:
+                confirmed.lockedTotals?.unifiedTotalRub ??
+                (typeof confirmed.selectedBudgetRub === 'number'
+                  ? confirmed.selectedBudgetRub
+                  : 0),
+              defaultDurationSec: confirmed.spotDurationSec || 15,
+              contact: confirmed.contactLine,
+              companyOrInn: confirmed.companyLine,
+              briefText: confirmed.briefNote,
+              documentMeta: liveDocMeta,
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

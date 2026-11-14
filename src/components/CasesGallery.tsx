@@ -374,6 +374,7 @@ function StudioCommercialStrip({
         src={reel.coverImageUrl}
         alt={reel.coverImageAlt}
         referrerPolicy="no-referrer"
+        loading="lazy"
         decoding="async"
         onError={(e) => {
           const img = e.currentTarget;
@@ -666,6 +667,7 @@ function BrandCaseCard({
             src={item.coverImageUrl}
             alt={item.coverImageAlt}
             referrerPolicy="no-referrer"
+            loading="lazy"
             decoding="async"
             onError={(e) => {
               const img = e.currentTarget;
@@ -713,6 +715,7 @@ function BrandCaseCard({
         src={item.coverImageUrl}
         alt={item.coverImageAlt}
         referrerPolicy="no-referrer"
+        loading="lazy"
         decoding="async"
         onError={(e) => {
           const img = e.currentTarget;

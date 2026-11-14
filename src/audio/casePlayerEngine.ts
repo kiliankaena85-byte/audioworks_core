@@ -8,6 +8,7 @@ import {
   computeCaseSpectrumBands,
   getCasePreviewWindow,
 } from '../data/casesData';
+import { createSafeAudioContext } from './audioContextHelper';
 import { contrastAudioEngine } from './contrastAudioEngine';
 
 export interface CasePlayerSnapshot {
@@ -172,14 +173,10 @@ class CasePlayerEngine {
   }
 
   private ensureContext(): AudioContext | null {
-    if (typeof window === 'undefined') return null;
-    const AudioCtx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return null;
-
     if (!this.ctx) {
-      this.ctx = new AudioCtx();
+      const created = createSafeAudioContext();
+      if (!created) return null;
+      this.ctx = created;
       this.masterGain = this.ctx.createGain();
       this.analyser = this.ctx.createAnalyser();
       this.analyser.fftSize = 128;

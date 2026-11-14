@@ -189,7 +189,7 @@
     print-color-adjust: exact !important;
   }
 
-  body[data-fmworks-print-active='true'] #root > *:not(.fmworks-print-portal) {
+  body[data-fmworks-print-active='true'] > *:not(.fmworks-print-portal) {
     display: none !important;
   }
 

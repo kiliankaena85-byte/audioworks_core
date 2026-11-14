@@ -8,6 +8,10 @@ import {
   PlatformRoute,
 } from '../data/platformRouter';
 import { BrandLogo } from './BrandLogo';
+import {
+  PersonalData152FzModal,
+  PersonalData152FzTab,
+} from './legal/PersonalData152FzModal';
 
 const STUDIO_EMAIL = 'hello@fmworks.ru';
 
@@ -86,6 +90,8 @@ export function Footer({
 }: FooterProps = {}) {
   const [studioTime, setStudioTime] = useState<string>(() => readStudioTimeHHMM());
   const [isEmailCopied, setIsEmailCopied] = useState<boolean>(false);
+  const [isPdnModalOpen, setIsPdnModalOpen] = useState<boolean>(false);
+  const [pdnModalTab, setPdnModalTab] = useState<PersonalData152FzTab>('policy');
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -329,7 +335,35 @@ export function Footer({
             </span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <button
+              type="button"
+              data-testid="footer-pdn-policy-btn"
+              onClick={() => {
+                setPdnModalTab('policy');
+                setIsPdnModalOpen(true);
+              }}
+              className="min-h-[44px] inline-flex items-center text-left text-[#111111]/62 dark:text-[#F4F3EF]/62 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap"
+            >
+              Политика ПДн (152-ФЗ)
+            </button>
+            <span aria-hidden="true" className="opacity-25">
+              ·
+            </span>
+            <button
+              type="button"
+              data-testid="footer-rf-security-btn"
+              onClick={() => {
+                setPdnModalTab('rf_security');
+                setIsPdnModalOpen(true);
+              }}
+              className="min-h-[44px] inline-flex items-center text-left text-[#111111]/62 dark:text-[#F4F3EF]/62 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap"
+            >
+              Комплаенс РФ (без Google)
+            </button>
+            <span aria-hidden="true" className="opacity-25">
+              ·
+            </span>
             <a
               href="/admin"
               onClick={(e) => {
@@ -354,6 +388,12 @@ export function Footer({
           </div>
         </div>
       </div>
+
+      <PersonalData152FzModal
+        isOpen={isPdnModalOpen}
+        initialTab={pdnModalTab}
+        onClose={() => setIsPdnModalOpen(false)}
+      />
     </footer>
   );
 }

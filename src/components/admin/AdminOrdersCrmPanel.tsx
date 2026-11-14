@@ -1,16 +1,16 @@
 import {
   ArrowRight,
+  Building2,
   CheckCircle2,
   Clock,
-  Copy,
   Download,
   FileSpreadsheet,
   FlaskConical,
-  Printer,
   RefreshCw,
   Send,
+  ShieldCheck,
+  UserX,
   Webhook,
-  X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -22,18 +22,29 @@ import {
   DispatchAttemptLog,
   exportCrmOrdersToCsv,
   ExternalDeliveryState,
-  formatEdoInvoiceSpecificationDocument,
   formatTelegramOrderDispatchMessage,
   getCrmStageMetaForOrder,
   OrderComplianceChecklist,
 } from '../../data/orderCrmTypes';
 import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
 import { formatNumberSpaced, formatRubCompact } from '../../data/radioInventory';
+import {
+  createDefaultStudioLegalProfiles,
+  OrderDocumentMeta,
+  StudioEntityKind,
+  StudioLegalProfile,
+  StudioLegalProfilesConfig,
+  StudioTaxRegimeId,
+  StudioVatCalculationMode,
+  TAX_REGIME_OPTIONS,
+} from '../../data/studioDocumentsCore';
+import { BrandedDocumentSuiteModal } from '../documents/BrandedDocumentSuiteModal';
+import { evaluateWebhookEndpointRfSafety } from '../../security/rfLegalCompliance';
 import { AdminScientificPlanView } from './AdminScientificPlanView';
 
 const ADMIN_TOKEN_STORAGE_KEY = 'audioworks_cms_session_token_v1';
 
-export type OrdersCrmSubView = 'funnel' | 'channels' | 'science';
+export type OrdersCrmSubView = 'funnel' | 'channels' | 'science' | 'legal';
 
 interface AdminOrdersCrmPanelProps {
   initialSubView?: OrdersCrmSubView;
@@ -47,6 +58,7 @@ interface AdminDispatchSettingsResponse {
     chatId: string;
     notifyOnNewOrder: boolean;
     notifyOnStageChange: boolean;
+    maskPdnInExternalAlerts?: boolean;
   };
   webhook: {
     enabled: boolean;
@@ -156,9 +168,18 @@ export function AdminOrdersCrmPanel({
   const [isUpdatingOrder, setIsUpdatingOrder] = useState<boolean>(false);
   const [isRedelivering, setIsRedelivering] = useState<boolean>(false);
 
-  // Модальное окно счёта-спецификации для ЭДО
+  // Модальное окно фирменного пакета документов A4 (КП, Договор + Приложение, Счёт, Паспорт)
   const [edoModalOrder, setEdoModalOrder] = useState<CrmOrderRecord | null>(null);
-  const [copiedEdoText, setCopiedEdoText] = useState<boolean>(false);
+
+  // Юридические и налоговые профили студии (ИП / ООО, г. Тверь)
+  const [legalProfiles, setLegalProfiles] = useState<StudioLegalProfilesConfig>(() =>
+    createDefaultStudioLegalProfiles()
+  );
+  const [legalDraft, setLegalDraft] = useState<StudioLegalProfilesConfig>(() =>
+    createDefaultStudioLegalProfiles()
+  );
+  const [editingEntityTab, setEditingEntityTab] = useState<StudioEntityKind>('ip');
+  const [isSavingLegal, setIsSavingLegal] = useState<boolean>(false);
 
   // Целевой заказ для передачи в «Научный план развития»
   const [scienceTargetOrder, setScienceTargetOrder] =
@@ -171,11 +192,11 @@ export function AdminOrdersCrmPanel({
   const [tgChatId, setTgChatId] = useState<string>('');
   const [tgNotifyNew, setTgNotifyNew] = useState<boolean>(true);
   const [tgNotifyStage, setTgNotifyStage] = useState<boolean>(true);
+  const [tgMaskPdn, setTgMaskPdn] = useState<boolean>(true);
 
   const [whEnabled, setWhEnabled] = useState<boolean>(false);
   const [whEndpointUrl, setWhEndpointUrl] = useState<string>('');
   const [whSecretInput, setWhSecretInput] = useState<string>('');
-  const [whHasSecret, setWhHasSecret] = useState<boolean>(false);
   const [whNotifyNew, setWhNotifyNew] = useState<boolean>(true);
   const [whNotifyStage, setWhNotifyStage] = useState<boolean>(true);
 
@@ -189,10 +210,10 @@ export function AdminOrdersCrmPanel({
     setTgChatId(settings.telegram.chatId || '');
     setTgNotifyNew(settings.telegram.notifyOnNewOrder);
     setTgNotifyStage(settings.telegram.notifyOnStageChange);
+    setTgMaskPdn(settings.telegram.maskPdnInExternalAlerts !== false);
 
     setWhEnabled(settings.webhook.enabled);
     setWhEndpointUrl(settings.webhook.endpointUrl || '');
-    setWhHasSecret(settings.webhook.hasHmacSecret);
     setWhSecretInput(settings.webhook.maskedHmacSecret || '');
     setWhNotifyNew(settings.webhook.notifyOnNewOrder);
     setWhNotifyStage(settings.webhook.notifyOnStageChange);
@@ -214,11 +235,17 @@ export function AdminOrdersCrmPanel({
           orders: CrmOrderRecord[];
           dispatchLogs: DispatchAttemptLog[];
           settings: AdminDispatchSettingsResponse;
+          legalProfiles?: StudioLegalProfilesConfig;
         };
 
         setOrders(json.orders);
         setDispatchLogs(json.dispatchLogs);
         applyServerSettings(json.settings);
+        if (json.legalProfiles) {
+          setLegalProfiles(json.legalProfiles);
+          setLegalDraft(json.legalProfiles);
+          setEditingEntityTab(json.legalProfiles.activeEntityKind);
+        }
         setSelectedOrderId((prev) => {
           if (prev && json.orders.some((o) => o.id === prev)) return prev;
           return json.orders[0]?.id ?? '';
@@ -242,18 +269,6 @@ export function AdminOrdersCrmPanel({
   useEffect(() => {
     void fetchOrdersCrm(false);
   }, [fetchOrdersCrm]);
-
-  // Закрытие модального окна ЭДО по Escape
-  useEffect(() => {
-    if (!edoModalOrder) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setEdoModalOrder(null);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [edoModalOrder]);
 
   const stageCounts = useMemo(() => {
     const counts: Record<string, number> = { all: orders.length };
@@ -335,6 +350,8 @@ export function AdminOrdersCrmPanel({
       stage?: CrmOrderStage;
       producerNotes?: string;
       compliance?: Partial<OrderComplianceChecklist>;
+      documentMeta?: OrderDocumentMeta;
+      totalBudgetRub?: number;
     },
     successMessage?: string
   ) => {
@@ -360,6 +377,7 @@ export function AdminOrdersCrmPanel({
       }
       const updated = json.order;
       setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+      setEdoModalOrder((prev) => (prev && prev.id === updated.id ? updated : prev));
       if (successMessage) {
         setFeedbackBanner({ kind: 'ok', text: successMessage });
       }
@@ -372,6 +390,63 @@ export function AdminOrdersCrmPanel({
     } finally {
       setIsUpdatingOrder(false);
     }
+  };
+
+  const handleSaveLegalProfiles = async () => {
+    setIsSavingLegal(true);
+    setFeedbackBanner(null);
+    try {
+      const token = readAdminToken();
+      const res = await fetch('/api/cms/legal-profiles', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(legalDraft),
+      });
+      const json = (await res.json()) as {
+        ok?: boolean;
+        legalProfiles?: StudioLegalProfilesConfig;
+        error?: string;
+      };
+      if (!res.ok || !json.ok || !json.legalProfiles) {
+        throw new Error(json.error ?? 'Не удалось сохранить юридические профили');
+      }
+      setLegalProfiles(json.legalProfiles);
+      setLegalDraft(json.legalProfiles);
+      setFeedbackBanner({
+        kind: 'ok',
+        text: 'Юридические реквизиты и налоговый режим студии (г. Тверь) сохранены.',
+      });
+    } catch (err) {
+      setFeedbackBanner({
+        kind: 'error',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Ошибка сохранения юридических реквизитов',
+      });
+    } finally {
+      setIsSavingLegal(false);
+    }
+  };
+
+  const updateEditingProfileField = <K extends keyof StudioLegalProfile>(
+    key: K,
+    value: StudioLegalProfile[K]
+  ) => {
+    setLegalDraft((prev) => {
+      const targetKey = editingEntityTab === 'ip' ? 'ipProfile' : 'oooProfile';
+      const current = prev[targetKey];
+      return {
+        ...prev,
+        [targetKey]: {
+          ...current,
+          [key]: editingEntityTab === 'ip' && key === 'kpp' ? '' : value,
+        },
+      };
+    });
   };
 
   const handleRedeliverOrder = async (orderId: string) => {
@@ -435,6 +510,7 @@ export function AdminOrdersCrmPanel({
             chatId: tgChatId,
             notifyOnNewOrder: tgNotifyNew,
             notifyOnStageChange: tgNotifyStage,
+            maskPdnInExternalAlerts: tgMaskPdn,
           },
           webhook: {
             enabled: whEnabled,
@@ -471,6 +547,39 @@ export function AdminOrdersCrmPanel({
     }
   };
 
+  const handleAnonymizeOrderPdn = async (order: CrmOrderRecord) => {
+    setIsUpdatingOrder(true);
+    setFeedbackBanner(null);
+    try {
+      const token = readAdminToken();
+      const res = await fetch(`/api/cms/orders/${order.id}/anonymize-pdn`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const json = (await res.json()) as {
+        ok: boolean;
+        order?: CrmOrderRecord;
+        error?: string;
+      };
+      if (!res.ok || !json.ok || !json.order) {
+        throw new Error(json.error ?? 'Не удалось обезличить ПДн заказа');
+      }
+      setOrders((prev) => prev.map((o) => (o.id === json.order!.id ? json.order! : o)));
+      setNotesDraft(json.order.producerNotes);
+      setFeedbackBanner({
+        kind: 'ok',
+        text: `Персональные данные по сделке #${order.orderNumber} обезличены согласно ч. 5 ст. 21 152-ФЗ.`,
+      });
+    } catch (err) {
+      setFeedbackBanner({
+        kind: 'error',
+        text: err instanceof Error ? err.message : 'Ошибка обезличивания ПДн',
+      });
+    } finally {
+      setIsUpdatingOrder(false);
+    }
+  };
+
   const handleTestDispatchGateway = async () => {
     setIsTestingDispatch(true);
     setFeedbackBanner(null);
@@ -490,6 +599,7 @@ export function AdminOrdersCrmPanel({
             chatId: tgChatId,
             notifyOnNewOrder: tgNotifyNew,
             notifyOnStageChange: tgNotifyStage,
+            maskPdnInExternalAlerts: tgMaskPdn,
           },
           webhook: {
             enabled: whEnabled,
@@ -559,20 +669,6 @@ export function AdminOrdersCrmPanel({
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-  };
-
-  const handleCopyEdoDocument = async (order: CrmOrderRecord) => {
-    const docText = formatEdoInvoiceSpecificationDocument(order);
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(docText);
-      }
-      setCopiedEdoText(true);
-      window.setTimeout(() => setCopiedEdoText(false), 2200);
-    } catch {
-      setCopiedEdoText(true);
-      window.setTimeout(() => setCopiedEdoText(false), 2200);
-    }
   };
 
   const samplePreviewOrder = selectedOrder ?? orders[0] ?? null;
@@ -645,12 +741,12 @@ export function AdminOrdersCrmPanel({
         </div>
       </div>
 
-      {/* Переключатель 3 режимов: Воронка заказов / Каналы приёма / Научный план развития */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#111111]/10 dark:border-white/10 pb-3">
+      {/* Переключатель 4 режимов: Воронка заказов / Каналы приёма / Реквизиты ИП и ООО / Научный план развития */}
+      <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center justify-between gap-3 border-b border-[#111111]/10 dark:border-white/10 pb-3 min-w-0">
         <div
           role="tablist"
           aria-label="Контуры системы заказов и развития"
-          className="flex flex-wrap items-center gap-2"
+          className="flex flex-wrap items-center gap-2 min-w-0"
         >
           <button
             type="button"
@@ -658,7 +754,7 @@ export function AdminOrdersCrmPanel({
             aria-selected={subView === 'funnel'}
             data-testid="crm-subtab-funnel"
             onClick={() => setSubView('funnel')}
-            className={`min-h-[40px] px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+            className={`min-h-[40px] px-3.5 sm:px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap text-left ${
               subView === 'funnel'
                 ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
                 : 'bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:text-[#111111] dark:hover:text-white'
@@ -673,14 +769,30 @@ export function AdminOrdersCrmPanel({
             aria-selected={subView === 'channels'}
             data-testid="crm-subtab-channels"
             onClick={() => setSubView('channels')}
-            className={`min-h-[40px] px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+            className={`min-h-[40px] px-3.5 sm:px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap text-left ${
               subView === 'channels'
                 ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
                 : 'bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:text-[#111111] dark:hover:text-white'
             }`}
           >
             <Webhook className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-            <span>Куда поступают заказы (Telegram и Webhook)</span>
+            <span>Шлюзы Telegram и Webhook</span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={subView === 'legal'}
+            data-testid="crm-subtab-legal"
+            onClick={() => setSubView('legal')}
+            className={`min-h-[40px] px-3.5 sm:px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap text-left ${
+              subView === 'legal'
+                ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                : 'bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:text-[#111111] dark:hover:text-white'
+            }`}
+          >
+            <Building2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+            <span>Реквизиты ИП / ООО (г. Тверь)</span>
           </button>
 
           <button
@@ -689,24 +801,24 @@ export function AdminOrdersCrmPanel({
             aria-selected={subView === 'science'}
             data-testid="crm-subtab-science"
             onClick={() => setSubView('science')}
-            className={`min-h-[40px] px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+            className={`min-h-[40px] px-3.5 sm:px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap text-left ${
               subView === 'science'
                 ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
                 : 'bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:text-[#111111] dark:hover:text-white'
             }`}
           >
             <FlaskConical className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-            <span>Научный план развития (4 контура)</span>
+            <span>Научный план (4 контура)</span>
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           {subView === 'funnel' && (
             <button
               type="button"
               data-testid="crm-export-csv-btn"
               onClick={handleDownloadCsv}
-              className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:border-[#FF4820] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:border-[#FF4820] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
             >
               <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
               <span>Выгрузить реестр CSV</span>
@@ -717,7 +829,7 @@ export function AdminOrdersCrmPanel({
             type="button"
             onClick={() => void fetchOrdersCrm(false)}
             disabled={isRefreshing}
-            className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:text-[#111111] dark:hover:text-white inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:text-[#111111] dark:hover:text-white inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
           >
             <RefreshCw
               className={`w-3.5 h-3.5 shrink-0 ${isRefreshing ? 'animate-spin' : ''}`}
@@ -1284,13 +1396,28 @@ export function AdminOrdersCrmPanel({
                           </p>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2.5 w-full sm:w-auto min-w-0">
+                          <button
+                            type="button"
+                            disabled={isUpdatingOrder || Boolean(selectedOrder.pdnAnonymizedAt)}
+                            data-testid="crm-anonymize-pdn-btn"
+                            onClick={() => void handleAnonymizeOrderPdn(selectedOrder)}
+                            className="w-full sm:w-auto min-h-[42px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:border-[#DC2626] hover:text-[#DC2626] disabled:opacity-50 inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap text-center"
+                          >
+                            <UserX className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                            <span>
+                              {selectedOrder.pdnAnonymizedAt
+                                ? 'ПДн обезличены (152-ФЗ)'
+                                : 'Обезличить ПДн (ст. 21 152-ФЗ)'}
+                            </span>
+                          </button>
+
                           <button
                             type="button"
                             disabled={isRedelivering}
                             data-testid="crm-redeliver-order-btn"
                             onClick={() => void handleRedeliverOrder(selectedOrder.id)}
-                            className="min-h-[40px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                            className="w-full sm:w-auto min-h-[42px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820] inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap text-center"
                           >
                             <Send className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                             <span>
@@ -1302,13 +1429,13 @@ export function AdminOrdersCrmPanel({
                             type="button"
                             data-testid="crm-open-edo-spec-btn"
                             onClick={() => setEdoModalOrder(selectedOrder)}
-                            className="min-h-[40px] px-4 py-2 rounded-xl bg-[#111111] hover:bg-[#27272A] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-white text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                            className="w-full sm:w-auto min-h-[42px] px-4 py-2 rounded-xl bg-[#111111] hover:bg-[#27272A] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap text-center"
                           >
                             <FileSpreadsheet
                               className="w-3.5 h-3.5 shrink-0"
                               aria-hidden="true"
                             />
-                            <span>Счёт-спецификация ЭДО</span>
+                            <span>Документы A4 (КП · Договор · Счёт · Паспорт)</span>
                           </button>
                         </div>
                       </div>
@@ -1438,24 +1565,41 @@ export function AdminOrdersCrmPanel({
                     />
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-4 pt-1">
-                    <label className="inline-flex items-center gap-2 cursor-pointer">
+                  <div className="flex flex-col gap-2 pt-1">
+                    <div className="flex flex-wrap items-center gap-4">
+                      <label className="inline-flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={tgNotifyNew}
+                          onChange={(e) => setTgNotifyNew(e.target.checked)}
+                          className="accent-[#FF4820]"
+                        />
+                        <span>Новый заказ</span>
+                      </label>
+                      <label className="inline-flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={tgNotifyStage}
+                          onChange={(e) => setTgNotifyStage(e.target.checked)}
+                          className="accent-[#FF4820]"
+                        />
+                        <span>Смена этапа сделки</span>
+                      </label>
+                    </div>
+
+                    <label className="inline-flex items-start gap-2 cursor-pointer rounded-xl p-2.5 bg-[#16A34A]/[0.08] border border-[#16A34A]/20">
                       <input
                         type="checkbox"
-                        checked={tgNotifyNew}
-                        onChange={(e) => setTgNotifyNew(e.target.checked)}
-                        className="accent-[#FF4820]"
+                        data-testid="crm-tg-mask-pdn-checkbox"
+                        checked={tgMaskPdn}
+                        onChange={(e) => setTgMaskPdn(e.target.checked)}
+                        className="mt-0.5 accent-[#16A34A]"
                       />
-                      <span>Новый заказ</span>
-                    </label>
-                    <label className="inline-flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={tgNotifyStage}
-                        onChange={(e) => setTgNotifyStage(e.target.checked)}
-                        className="accent-[#FF4820]"
-                      />
-                      <span>Смена этапа сделки</span>
+                      <span className="leading-snug text-[#111111]/85 dark:text-[#F4F3EF]/85">
+                        <strong>Обезличивать ПДн в Telegram (ст. 12 152-ФЗ и ФЗ-41-ФЗ):</strong>{' '}
+                        отправлять только номер сделки, бюджет и этап без телефона, e-mail, ИНН и
+                        текста брифа.
+                      </span>
                     </label>
                   </div>
                 </div>
@@ -1466,7 +1610,9 @@ export function AdminOrdersCrmPanel({
                       Формат сообщения в Telegram (на примере #{samplePreviewOrder.orderNumber}):
                     </p>
                     <pre className="p-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[11px] leading-relaxed whitespace-pre-wrap font-mono text-[#111111]/85 dark:text-[#F4F3EF]/85 max-h-44 overflow-y-auto">
-                      {formatTelegramOrderDispatchMessage(samplePreviewOrder, 'order.created')}
+                      {formatTelegramOrderDispatchMessage(samplePreviewOrder, 'order.created', {
+                        maskPdn: tgMaskPdn,
+                      })}
                     </pre>
                   </div>
                 )}
@@ -1524,6 +1670,31 @@ export function AdminOrdersCrmPanel({
                       placeholder="https://crm.company.ru/webhooks/fmworks"
                       className="w-full min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
                     />
+                    {whEndpointUrl.trim() && (() => {
+                      const safety = evaluateWebhookEndpointRfSafety(whEndpointUrl);
+                      if (safety.warning) {
+                        return (
+                          <p
+                            className={`text-[11px] leading-snug pt-0.5 ${
+                              safety.isBannedForeignService
+                                ? 'text-[#DC2626] dark:text-[#F87171] font-semibold'
+                                : 'text-[#D97706] dark:text-[#FBBF24]'
+                            }`}
+                          >
+                            {safety.warning}
+                          </p>
+                        );
+                      }
+                      if (safety.isRfContourRecommended) {
+                        return (
+                          <p className="text-[11px] text-[#16A34A] dark:text-[#4ADE80] inline-flex items-center gap-1 pt-0.5">
+                            <ShieldCheck className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                            <span>Сервер находится в допустимом контуре РФ (ч. 5 ст. 18 152-ФЗ).</span>
+                          </p>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
 
                   <div className="space-y-1">
@@ -1678,7 +1849,333 @@ export function AdminOrdersCrmPanel({
       )}
 
       {/* ===================================================================== */}
-      {/* ВКЛАДКА 3: НАУЧНЫЙ ПЛАН РАЗВИТИЯ ПЛАТФОРМЫ И КАМПАНИЙ (4 КОНТУРА)     */}
+      {/* ВКЛАДКА 3: ЮРИДИЧЕСКИЕ И НАЛОГОВЫЕ РЕКВИЗИТЫ СТУДИИ (ИП / ООО)       */}
+      {/* ===================================================================== */}
+      {subView === 'legal' && (() => {
+        const editedProfile =
+          editingEntityTab === 'ip' ? legalDraft.ipProfile : legalDraft.oooProfile;
+
+        return (
+          <div data-testid="crm-legal-profiles-view" className="space-y-6">
+            <section className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-6 space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#111111]/10 dark:border-white/10">
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-[#111111]/56 dark:text-[#F4F3EF]/56">
+                    Брендированные документы A4 (КП · Рамочный договор г. Тверь · Счёт · Паспорт РАО/ВОИС)
+                  </p>
+                  <h2 className="text-lg font-bold text-[#111111] dark:text-[#F4F3EF]">
+                    Переключаемый профиль исполнителя (ИП / ООО) и налоговый режим (УСН / НДС)
+                  </h2>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={isSavingLegal}
+                  data-testid="crm-save-legal-profiles-btn"
+                  onClick={() => void handleSaveLegalProfiles()}
+                  className="w-full sm:w-auto min-h-[44px] px-5 py-2.5 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] disabled:opacity-55 text-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                >
+                  <CheckCircle2 className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span>
+                    {isSavingLegal ? 'Сохранение…' : 'Сохранить реквизиты студии'}
+                  </span>
+                </button>
+              </div>
+
+              {/* Основной профиль по умолчанию для новых счетов и договоров */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="rounded-xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 space-y-2.5">
+                  <p className="text-xs font-bold text-[#111111] dark:text-[#F4F3EF]">
+                    Активное юрлицо по умолчанию для новых заказов:
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      data-testid="crm-legal-active-ip"
+                      onClick={() => {
+                        setLegalDraft((prev) => ({ ...prev, activeEntityKind: 'ip' }));
+                        setEditingEntityTab('ip');
+                      }}
+                      className={`min-h-[44px] px-3.5 py-2 rounded-xl border text-xs font-semibold text-left transition-colors cursor-pointer ${
+                        legalDraft.activeEntityKind === 'ip'
+                          ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                          : 'bg-white dark:bg-[#141418] border-[#111111]/14 dark:border-white/14'
+                      }`}
+                    >
+                      ИП (без КПП · УСН / НДС)
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="crm-legal-active-ooo"
+                      onClick={() => {
+                        setLegalDraft((prev) => ({ ...prev, activeEntityKind: 'ooo' }));
+                        setEditingEntityTab('ooo');
+                      }}
+                      className={`min-h-[44px] px-3.5 py-2 rounded-xl border text-xs font-semibold text-left transition-colors cursor-pointer ${
+                        legalDraft.activeEntityKind === 'ooo'
+                          ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                          : 'bg-white dark:bg-[#141418] border-[#111111]/14 dark:border-white/14'
+                      }`}
+                    >
+                      ООО (с КПП · УСН / ОСНО)
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 space-y-2.5">
+                  <p className="text-xs font-bold text-[#111111] dark:text-[#F4F3EF]">
+                    Редактируемая карточка реквизитов:
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      data-testid="crm-legal-edit-tab-ip"
+                      onClick={() => setEditingEntityTab('ip')}
+                      className={`min-h-[44px] px-3 py-2 rounded-xl border text-xs font-semibold cursor-pointer transition-colors ${
+                        editingEntityTab === 'ip'
+                          ? 'border-[#FF4820] bg-[#FF4820]/10 text-[#FF4820]'
+                          : 'border-[#111111]/14 dark:border-white/14'
+                      }`}
+                    >
+                      Карточка ИП
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="crm-legal-edit-tab-ooo"
+                      onClick={() => setEditingEntityTab('ooo')}
+                      className={`min-h-[44px] px-3 py-2 rounded-xl border text-xs font-semibold cursor-pointer transition-colors ${
+                        editingEntityTab === 'ooo'
+                          ? 'border-[#FF4820] bg-[#FF4820]/10 text-[#FF4820]'
+                          : 'border-[#111111]/14 dark:border-white/14'
+                      }`}
+                    >
+                      Карточка ООО
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Поля редактируемого профиля */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+                <div className="md:col-span-2 space-y-1">
+                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    Полное юридическое наименование
+                  </label>
+                  <input
+                    type="text"
+                    value={editedProfile.legalName}
+                    onChange={(e) => updateEditingProfileField('legalName', e.target.value)}
+                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    Налоговый режим и ставка НДС
+                  </label>
+                  <select
+                    data-testid="crm-legal-tax-select"
+                    value={editedProfile.taxRegime}
+                    onChange={(e) =>
+                      updateEditingProfileField(
+                        'taxRegime',
+                        e.target.value as StudioTaxRegimeId
+                      )
+                    }
+                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 font-semibold"
+                  >
+                    {TAX_REGIME_OPTIONS.map((opt) => (
+                      <option key={opt.id} value={opt.id}>
+                        {opt.shortLabel}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    Порядок расчёта НДС в прайсе
+                  </label>
+                  <select
+                    value={editedProfile.vatMode}
+                    onChange={(e) =>
+                      updateEditingProfileField(
+                        'vatMode',
+                        e.target.value as StudioVatCalculationMode
+                      )
+                    }
+                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 font-semibold"
+                  >
+                    <option value="included">НДС включён в сумму заказа</option>
+                    <option value="on_top">НДС начисляется сверху суммы заказа</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    ИНН
+                  </label>
+                  <input
+                    type="text"
+                    value={editedProfile.inn}
+                    onChange={(e) => updateEditingProfileField('inn', e.target.value)}
+                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    {editingEntityTab === 'ip' ? 'КПП (у ИП отсутствует)' : 'КПП (9 цифр)'}
+                  </label>
+                  <input
+                    type="text"
+                    disabled={editingEntityTab === 'ip'}
+                    value={editingEntityTab === 'ip' ? '' : editedProfile.kpp}
+                    placeholder={editingEntityTab === 'ip' ? 'Не применяется для ИП' : '695001001'}
+                    onChange={(e) => updateEditingProfileField('kpp', e.target.value)}
+                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 disabled:opacity-55"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    {editingEntityTab === 'ip' ? 'ОГРНИП' : 'ОГРН'}
+                  </label>
+                  <input
+                    type="text"
+                    value={editedProfile.ogrnOrOgrnip}
+                    onChange={(e) =>
+                      updateEditingProfileField('ogrnOrOgrnip', e.target.value)
+                    }
+                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    Город (место заключения договора)
+                  </label>
+                  <input
+                    type="text"
+                    value={editedProfile.city}
+                    onChange={(e) => updateEditingProfileField('city', e.target.value)}
+                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    Телефон студии
+                  </label>
+                  <input
+                    type="text"
+                    value={editedProfile.phone}
+                    onChange={(e) => updateEditingProfileField('phone', e.target.value)}
+                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                  />
+                </div>
+
+                <div className="md:col-span-2 lg:col-span-3 space-y-1">
+                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    Юридический адрес
+                  </label>
+                  <input
+                    type="text"
+                    value={editedProfile.legalAddress}
+                    onChange={(e) =>
+                      updateEditingProfileField('legalAddress', e.target.value)
+                    }
+                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    Банк получателя
+                  </label>
+                  <input
+                    type="text"
+                    value={editedProfile.bankName}
+                    onChange={(e) => updateEditingProfileField('bankName', e.target.value)}
+                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    БИК
+                  </label>
+                  <input
+                    type="text"
+                    value={editedProfile.bik}
+                    onChange={(e) => updateEditingProfileField('bik', e.target.value)}
+                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    Расчётный счёт (20 цифр)
+                  </label>
+                  <input
+                    type="text"
+                    value={editedProfile.checkingAccount}
+                    onChange={(e) =>
+                      updateEditingProfileField('checkingAccount', e.target.value)
+                    }
+                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    Корреспондентский счёт
+                  </label>
+                  <input
+                    type="text"
+                    value={editedProfile.correspondentAccount}
+                    onChange={(e) =>
+                      updateEditingProfileField('correspondentAccount', e.target.value)
+                    }
+                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    Подписант (И. О. Фамилия)
+                  </label>
+                  <input
+                    type="text"
+                    value={editedProfile.signatoryShortName}
+                    onChange={(e) =>
+                      updateEditingProfileField('signatoryShortName', e.target.value)
+                    }
+                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    Идентификатор ЭДО (Диадок / СБИС)
+                  </label>
+                  <input
+                    type="text"
+                    value={editedProfile.edoParticipantId}
+                    onChange={(e) =>
+                      updateEditingProfileField('edoParticipantId', e.target.value)
+                    }
+                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                  />
+                </div>
+              </div>
+            </section>
+          </div>
+        );
+      })()}
+
+      {/* ===================================================================== */}
+      {/* ВКЛАДКА 4: НАУЧНЫЙ ПЛАН РАЗВИТИЯ ПЛАТФОРМЫ И КАМПАНИЙ (4 КОНТУРА)     */}
       {/* ===================================================================== */}
       {subView === 'science' && (
         <AdminScientificPlanView
@@ -1687,85 +2184,40 @@ export function AdminOrdersCrmPanel({
         />
       )}
 
-      {/* Модальное окно официальной счёт-спецификации для ЭДО (Диадок / СБИС) */}
+      {/* Фирменный пакет документов A4 FMWorks® (КП · Договор + Приложение · Счёт · Паспорт) */}
       {edoModalOrder && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="edo-modal-title"
-          data-testid="crm-edo-modal"
-          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
-          onClick={() => setEdoModalOrder(null)}
-        >
-          <div
-            className="w-full max-w-3xl max-h-[88vh] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/14 dark:border-white/14 flex flex-col overflow-hidden shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="px-5 sm:px-6 py-4 border-b border-[#111111]/10 dark:border-white/10 flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                  Документ для выставления в Диадок / СБИС / 1С
-                </p>
-                <h3
-                  id="edo-modal-title"
-                  className="text-base sm:text-lg font-bold text-[#111111] dark:text-[#F4F3EF]"
-                >
-                  Счёт-спецификация по заказу #{edoModalOrder.orderNumber}
-                </h3>
-              </div>
-
-              <button
-                type="button"
-                aria-label="Закрыть окно спецификации"
-                data-testid="crm-edo-modal-close"
-                onClick={() => setEdoModalOrder(null)}
-                className="w-9 h-9 rounded-xl border border-[#111111]/12 dark:border-white/12 flex items-center justify-center text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:text-[#111111] dark:hover:text-white cursor-pointer shrink-0"
-              >
-                <X className="w-4 h-4" aria-hidden="true" />
-              </button>
-            </div>
-
-            <div className="p-5 sm:p-6 overflow-y-auto flex-1">
-              <pre
-                data-testid="crm-edo-document-pre"
-                className="p-4 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 text-xs leading-relaxed whitespace-pre-wrap font-mono text-[#111111] dark:text-[#F4F3EF]"
-              >
-                {formatEdoInvoiceSpecificationDocument(edoModalOrder)}
-              </pre>
-            </div>
-
-            <div className="px-5 sm:px-6 py-4 border-t border-[#111111]/10 dark:border-white/10 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                Единый договор без скрытых агентских комиссий · ЭДО
-              </p>
-
-              <div className="flex items-center gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="min-h-[40px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
-                >
-                  <Printer className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                  <span>Печать / PDF</span>
-                </button>
-
-                <button
-                  type="button"
-                  data-testid="crm-copy-edo-btn"
-                  onClick={() => void handleCopyEdoDocument(edoModalOrder)}
-                  className="min-h-[40px] px-4 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0"
-                >
-                  <Copy className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                  <span>
-                    {copiedEdoText
-                      ? 'Скопировано в буфер'
-                      : 'Скопировать для ЭДО'}
-                  </span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <BrandedDocumentSuiteModal
+          isOpen={Boolean(edoModalOrder)}
+          onClose={() => setEdoModalOrder(null)}
+          mode="admin"
+          initialDoc="invoice"
+          legalProfiles={legalProfiles}
+          order={{
+            orderId: edoModalOrder.id,
+            orderNumber: edoModalOrder.orderNumber,
+            createdAtIso: edoModalOrder.createdAt,
+            formatLabel: edoModalOrder.formatLabel,
+            baseBudgetRub: edoModalOrder.totalBudgetRub,
+            defaultDurationSec:
+              edoModalOrder.mediaPlanSnapshot?.spotDurationSec ?? 15,
+            contact: edoModalOrder.contact,
+            companyOrInn: edoModalOrder.companyOrInn,
+            briefText: edoModalOrder.briefText,
+            documentMeta: edoModalOrder.documentMeta ?? null,
+          }}
+          onSaveOrderDocumentMeta={async (orderId, nextMeta, nextBudgetRub) => {
+            await patchOrderOnServer(
+              orderId,
+              {
+                documentMeta: nextMeta,
+                ...(typeof nextBudgetRub === 'number'
+                  ? { totalBudgetRub: nextBudgetRub }
+                  : {}),
+              },
+              `Документы и реквизиты заказа #${edoModalOrder.orderNumber} сохранены.`
+            );
+          }}
+        />
       )}
     </div>
   );

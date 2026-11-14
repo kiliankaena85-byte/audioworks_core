@@ -1,7 +1,6 @@
 import type { LayaPersona, RecommendedTier } from '../engine/layaTypes.ts';
 import {
   AUDIOWORKS_TOTAL_DURATION_SEC,
-  AUDIOWORKS_WAV_URL,
   KOTO_LENS_MANIFESTO_PARAGRAPH,
   ZERNO_DUEL_DATA,
   type DuelSpotSpec,
@@ -22,6 +21,7 @@ import {
 } from './casesData.ts';
 import { EDITORIAL_FAQ_ITEMS, type FaqItem } from './faqData.ts';
 import { EDITORIAL_PRICING_ROWS, type EditorialPricingRow } from './pricingData.ts';
+import { checkBannedForeignServiceUrl } from '../security/rfLegalCompliance.ts';
 
 export type PortfolioPersonaFocus = 'fmcg' | 'real_estate' | 'general';
 
@@ -313,15 +313,18 @@ const LEGACY_UNSPLASH_TO_LOCAL_MAP: readonly [string, string][] = [
 
 function migrateLegacyExternalImageUrl(raw: unknown, fallbackLocalUrl: string): string {
   const cleaned = asCleanString(raw, fallbackLocalUrl, 1024);
-  if (!cleaned.includes('images.unsplash.com')) {
-    return cleaned;
-  }
-  for (const [unsplashToken, localAssetUrl] of LEGACY_UNSPLASH_TO_LOCAL_MAP) {
-    if (cleaned.includes(unsplashToken)) {
-      return localAssetUrl;
+  if (cleaned.includes('images.unsplash.com')) {
+    for (const [unsplashToken, localAssetUrl] of LEGACY_UNSPLASH_TO_LOCAL_MAP) {
+      if (cleaned.includes(unsplashToken)) {
+        return localAssetUrl;
+      }
     }
+    return fallbackLocalUrl;
   }
-  return fallbackLocalUrl;
+  if (checkBannedForeignServiceUrl(cleaned).matched) {
+    return fallbackLocalUrl;
+  }
+  return cleaned;
 }
 
 function asOptionalCleanString(

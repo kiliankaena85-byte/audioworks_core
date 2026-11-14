@@ -620,7 +620,7 @@ export function RadioInventoryAdmin({ isOpen, onClose }: RadioInventoryAdminProp
   // Вкладка 2: Ручное добавление слота
   const [isManualFormOpen, setIsManualFormOpen] = useState(false);
   const [manualStation, setManualStation] = useState('');
-  const [manualFrequency, setManualFrequency] = useState('101.2 FM');
+  const [manualFrequency] = useState('101.2 FM');
   const [manualDaypart, setManualDaypart] = useState<DaypartLabel>(
     'Утренний прайм 07:30–10:30'
   );

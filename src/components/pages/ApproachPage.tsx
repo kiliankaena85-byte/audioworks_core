@@ -370,6 +370,7 @@ export function ApproachPage({
                 <img
                   src={LOCAL_EDITORIAL_IMAGES.radioAttention}
                   alt="Акустические деревянные панели вещательной студии в тёплом архитектурном свете"
+                  loading="lazy"
                   decoding="async"
                   onError={(e) => {
                     const img = e.currentTarget;

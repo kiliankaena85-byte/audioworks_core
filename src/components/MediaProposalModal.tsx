@@ -1,6 +1,6 @@
 import { CheckCircle2, Copy, Printer, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { FormEvent, useState } from 'react';
+import { FormEvent, useRef, useState } from 'react';
 import {
   FlexibleMediaPlanResult,
   formatAudienceSummaryLine,
@@ -14,6 +14,7 @@ import {
   validateMediaHoldReservation,
 } from '../data/radioInventory';
 import { useLeadShieldForm } from '../security/useLeadShieldForm';
+import { PersonalDataConsentField } from './legal/PersonalDataConsentField';
 
 export function buildFlexibleExecutiveProposalText(
   plan: FlexibleMediaPlanResult
@@ -317,11 +318,14 @@ interface StandaloneHoldModalProps {
 export function StandaloneHoldModal({ isOpen, plan, onClose }: StandaloneHoldModalProps) {
   const [holdContact, setHoldContact] = useState('');
   const [holdCompany, setHoldCompany] = useState('');
+  const [pdnConsentAccepted, setPdnConsentAccepted] = useState(false);
+  const [consentError, setConsentError] = useState<string | undefined>();
   const [holdError, setHoldError] = useState<string | undefined>();
   const [confirmed, setConfirmed] = useState<{
     code: string;
     contact: string;
   } | null>(null);
+  const consentInputRef = useRef<HTMLInputElement | null>(null);
 
   const {
     websiteTrap,
@@ -348,6 +352,14 @@ export function StandaloneHoldModal({ isOpen, plan, onClose }: StandaloneHoldMod
       return;
     }
 
+    if (!pdnConsentAccepted) {
+      setConsentError(
+        'Подтвердите согласие на обработку персональных данных согласно 152-ФЗ.'
+      );
+      consentInputRef.current?.focus();
+      return;
+    }
+
     const codeCandidate = `FM-HOLD-${420 + (plan.totalSpots % 500)}`;
     const shieldRes = await submitProtectedLead({
       source: 'standalone_hold_modal',
@@ -363,6 +375,7 @@ export function StandaloneHoldModal({ isOpen, plan, onClose }: StandaloneHoldMod
       mediaPlanSnapshot: buildMediaPlanSnapshotFromFlexiblePlan(plan),
       isReturningFastTrack: false,
       requireBriefOrVoice: false,
+      pdnConsentAccepted: true,
     });
 
     if (!shieldRes.ok) {
@@ -376,6 +389,7 @@ export function StandaloneHoldModal({ isOpen, plan, onClose }: StandaloneHoldMod
     }
 
     setHoldError(undefined);
+    setConsentError(undefined);
     setConfirmed({
       code: shieldRes.orderNumber,
       contact: holdContact.trim(),
@@ -464,6 +478,18 @@ export function StandaloneHoldModal({ isOpen, plan, onClose }: StandaloneHoldMod
                     className="w-full h-10 px-3.5 rounded-xl bg-white border border-[#111111]/15 text-sm"
                   />
                 </div>
+                <PersonalDataConsentField
+                  id="hold-modal-pdn-consent"
+                  inputRef={consentInputRef}
+                  checked={pdnConsentAccepted}
+                  onChange={(next) => {
+                    setPdnConsentAccepted(next);
+                    if (consentError) setConsentError(undefined);
+                  }}
+                  error={consentError}
+                  compact
+                  testIdPrefix="hold-pdn-consent"
+                />
                 {holdError && (
                   <p
                     role="alert"
@@ -476,7 +502,7 @@ export function StandaloneHoldModal({ isOpen, plan, onClose }: StandaloneHoldMod
                 <button
                   type="submit"
                   disabled={isSubmittingLead || rateLimitCountdownSec > 0}
-                  className="w-full min-h-[44px] rounded-full bg-[#FF4820] disabled:opacity-65 text-white text-xs font-semibold cursor-pointer"
+                  className="w-full min-h-[44px] px-4 rounded-full bg-[#FF4820] disabled:opacity-65 text-white text-xs font-semibold cursor-pointer whitespace-normal"
                 >
                   {isSubmittingLead
                     ? 'Проверка контакта…'

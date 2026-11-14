@@ -148,6 +148,7 @@ export function CasesPage({
                       src={spec.coverImageUrl}
                       alt={spec.coverImageAlt}
                       referrerPolicy="no-referrer"
+                      loading="lazy"
                       decoding="async"
                       onError={(e) => {
                         const img = e.currentTarget;
@@ -343,7 +344,9 @@ function CaseDetailSubpage({
               src={item.coverImageUrl}
               alt={item.coverImageAlt}
               referrerPolicy="no-referrer"
+              loading="eager"
               decoding="async"
+              fetchPriority="high"
               onError={(e) => {
                 const img = e.currentTarget;
                 if (!img.dataset.fallbackApplied) {
@@ -640,7 +643,9 @@ function IndustrySolutionSubpage({
                 src={spec.coverImageUrl}
                 alt={spec.coverImageAlt}
                 referrerPolicy="no-referrer"
+                loading="eager"
                 decoding="async"
+                fetchPriority="high"
                 onError={(e) => {
                   const img = e.currentTarget;
                   if (!img.dataset.fallbackApplied) {

@@ -12,6 +12,7 @@ import {
   VERIFIED_LIVE_REGIONAL_STATIONS,
   VerifiedRegionalStationSpec,
 } from '../data/broadcastAircheckData';
+import { createSafeAudioContext } from './audioContextHelper';
 import { casePlayerEngine } from './casePlayerEngine';
 import { contrastAudioEngine } from './contrastAudioEngine';
 
@@ -342,18 +343,11 @@ class BroadcastAircheckEngine {
 
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const AudioCtx =
-        typeof window !== 'undefined'
-          ? window.AudioContext ||
-            (window as unknown as { webkitAudioContext?: typeof AudioContext })
-              .webkitAudioContext
-          : undefined;
+      const decodeCtx = createSafeAudioContext();
 
-      if (!AudioCtx) {
+      if (!decodeCtx) {
         throw new Error('Браузер не поддерживает декодирование аудио');
       }
-
-      const decodeCtx = new AudioCtx();
       let decoded: AudioBuffer;
       try {
         decoded = await decodeCtx.decodeAudioData(arrayBuffer.slice(0));
@@ -869,13 +863,10 @@ class BroadcastAircheckEngine {
       return;
     }
 
-    const AudioCtx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
-
     if (!this.noiseCtx) {
-      this.noiseCtx = new AudioCtx();
+      const created = createSafeAudioContext();
+      if (!created) return;
+      this.noiseCtx = created;
       this.roadGain = this.noiseCtx.createGain();
       this.roadGain.gain.value = 0.0001;
       this.roadGain.connect(this.noiseCtx.destination);

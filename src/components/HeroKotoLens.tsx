@@ -355,7 +355,9 @@ export function HeroKotoLens({
               src={HERO_GREY_TRAFFIC_IMAGE}
               alt="Вечерний поток машин — обычный рекламный блок"
               referrerPolicy="no-referrer"
+              loading="eager"
               decoding="async"
+              fetchPriority="high"
               onError={(e) => {
                 const img = e.currentTarget;
                 if (!img.dataset.fallbackApplied) {
@@ -400,7 +402,9 @@ export function HeroKotoLens({
                     src={frame.imageUrl}
                     alt={frame.imageAlt}
                     referrerPolicy="no-referrer"
+                    loading={isCurrent ? 'eager' : 'lazy'}
                     decoding="async"
+                    fetchPriority={isCurrent ? 'high' : 'low'}
                     onError={(e) => {
                       const img = e.currentTarget;
                       if (!img.dataset.fallbackApplied) {

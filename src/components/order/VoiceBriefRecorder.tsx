@@ -1,5 +1,6 @@
 import { Mic, Pause, Play, Square, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createSafeAudioContext } from '../../audio/audioContextHelper';
 import { casePlayerEngine } from '../../audio/casePlayerEngine';
 import { contrastAudioEngine } from '../../audio/contrastAudioEngine';
 
@@ -98,11 +99,13 @@ export function VoiceBriefRecorder({
     setVoiceStatus('idle');
   }, [cleanupRecordingTimersAndStream, recordedBlobUrl]);
 
+  const deleteRecordedVoiceRef = useRef(deleteRecordedVoice);
+  deleteRecordedVoiceRef.current = deleteRecordedVoice;
+
   useEffect(() => {
     if (resetSignal > 0) {
-      deleteRecordedVoice();
+      deleteRecordedVoiceRef.current();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetSignal]);
 
   const stopVoiceRecording = () => {
@@ -183,14 +186,11 @@ export function VoiceBriefRecorder({
         cleanupRecordingTimersAndStream();
       };
 
-      const AudioCtx =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       let analyser: AnalyserNode | null = null;
       let freqBuf: Uint8Array<ArrayBuffer> | null = null;
 
-      if (AudioCtx) {
-        const ctx = new AudioCtx();
+      const ctx = createSafeAudioContext();
+      if (ctx) {
         audioCtxRef.current = ctx;
         const src = ctx.createMediaStreamSource(stream);
         analyser = ctx.createAnalyser();
@@ -300,9 +300,9 @@ export function VoiceBriefRecorder({
               Идёт запись · 0:{String(recordSeconds).padStart(2, '0')}
             </span>
             <div aria-hidden="true" className="flex items-end gap-1 h-5 ml-1">
-              {pulseBars.map((bar, idx) => (
+              {pulseBars.map((bar, slot) => (
                 <span
-                  key={idx}
+                  key={`voice-pulse-bar-${slot}`}
                   className={`w-1 bg-[#FF4820] rounded-full transition-all duration-150 ${getPulseBarHeightClass(
                     bar
                   )}`}

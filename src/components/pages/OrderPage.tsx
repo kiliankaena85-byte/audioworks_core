@@ -73,6 +73,11 @@ import {
   VoiceBriefRecorder,
   VoiceBriefSnapshot,
 } from '../order/VoiceBriefRecorder';
+import { PersonalDataConsentField } from '../legal/PersonalDataConsentField';
+import {
+  createDefaultStudioLegalProfiles,
+  StudioLegalProfilesConfig,
+} from '../../data/studioDocumentsCore';
 import { ReservationConfirmedModal } from '../ReservationConfirmedModal';
 
 interface OrderPageProps {
@@ -122,7 +127,12 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
   const [companyNameError, setCompanyNameError] = useState<string | undefined>();
   const [companyInnError, setCompanyInnError] = useState<string | undefined>();
   const [taskError, setTaskError] = useState<string | undefined>();
+  const [consentError, setConsentError] = useState<string | undefined>();
   const [rateLimitError, setRateLimitError] = useState<string | undefined>();
+  const [pdnConsentAccepted, setPdnConsentAccepted] = useState<boolean>(false);
+  const [legalProfiles, setLegalProfiles] = useState<StudioLegalProfilesConfig>(() =>
+    createDefaultStudioLegalProfiles()
+  );
   const [confirmedOrder, setConfirmedOrder] =
     useState<ConfirmedReservationSummary | null>(() => draft.confirmedReservation);
   const [isConfirmedModalOpen, setIsConfirmedModalOpen] = useState<boolean>(false);
@@ -164,6 +174,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
   const contactInputRef = useRef<HTMLInputElement | null>(null);
   const companyNameInputRef = useRef<HTMLInputElement | null>(null);
   const companyInnInputRef = useRef<HTMLInputElement | null>(null);
+  const consentInputRef = useRef<HTMLInputElement | null>(null);
   const rateLimitErrorRef = useRef<HTMLParagraphElement | null>(null);
   const mediaReservation = AIRTIME_SALES_ENABLED ? draft.mediaReservation : null;
 
@@ -175,6 +186,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       companyName: companyNameInputRef.current,
       companyInn: companyInnInputRef.current,
       companyLine: companyNameInputRef.current ?? companyInnInputRef.current,
+      consent: consentInputRef.current,
       rateLimit: rateLimitErrorRef.current,
     };
     const target = targetMap[field];
@@ -207,6 +219,16 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       })
       .catch(() => {
         // Локальный календарь DEFAULT_STUDIO_WORK_SCHEDULE работает автономно
+      });
+    fetch('/api/public/legal-profile', { headers: { Accept: 'application/json' } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { ok?: boolean; legalProfiles?: StudioLegalProfilesConfig } | null) => {
+        if (active && data?.ok && data.legalProfiles) {
+          setLegalProfiles(data.legalProfiles);
+        }
+      })
+      .catch(() => {
+        // Локальные профили г. Тверь работают автономно
       });
     return () => {
       active = false;
@@ -267,6 +289,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
     setCompanyNameError(undefined);
     setCompanyInnError(undefined);
     setTaskError(undefined);
+    setConsentError(undefined);
     setRateLimitError(undefined);
     orderDraftStore.switchMode(nextMode);
   };
@@ -278,6 +301,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
     setCompanyNameError(undefined);
     setCompanyInnError(undefined);
     setTaskError(undefined);
+    setConsentError(undefined);
     setRateLimitError(undefined);
     if (nextMode === 'returning_client') {
       const stored = readSavedVipProfile();
@@ -335,6 +359,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
     setCompanyNameError(undefined);
     setCompanyInnError(undefined);
     setTaskError(undefined);
+    setConsentError(undefined);
     setRateLimitError(undefined);
 
     const preLimitCheck = checkRateLimit(activeRateScope);
@@ -368,6 +393,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       hasAttachedFile: Boolean(attachedFileName),
       isReturningFastTrack,
       honeypotFilled: Boolean(websiteTrap.trim()),
+      pdnConsentAccepted: isReturningFastTrack ? true : pdnConsentAccepted,
     });
 
     if (!validation.valid) {
@@ -376,6 +402,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       setCompanyNameError(validation.companyNameError);
       setCompanyInnError(validation.companyInnError);
       setCompanyError(validation.companyError);
+      setConsentError(validation.consentError);
       window.requestAnimationFrame(() =>
         scrollAndFocusField(validation.firstErrorField)
       );
@@ -417,6 +444,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
         ),
         isReturningFastTrack,
         requireBriefOrVoice: false,
+        pdnConsentAccepted: isReturningFastTrack ? true : pdnConsentAccepted,
         skipClientRateConsume: true,
       });
 
@@ -529,6 +557,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       mediaPlanSnapshot: null,
       isReturningFastTrack,
       requireBriefOrVoice: true,
+      pdnConsentAccepted: isReturningFastTrack ? true : pdnConsentAccepted,
       skipClientRateConsume: true,
     });
 
@@ -924,6 +953,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
             <ClientSlaAndRescuePanel
               confirmed={confirmedOrder}
               workSchedule={workSchedule}
+              legalProfiles={legalProfiles}
               defaultExpandedEdo
               onUpdatedConfirmed={(next) => setConfirmedOrder(next)}
             />
@@ -1261,12 +1291,27 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                       </p>
                     )}
 
-                    <div className="pt-1 space-y-2.5">
+                    <div className="pt-1 space-y-3">
+                      {!isReturningFastTrack && (
+                        <PersonalDataConsentField
+                          id="media-order-pdn-consent"
+                          inputRef={consentInputRef}
+                          checked={pdnConsentAccepted}
+                          onChange={(checked) => {
+                            setPdnConsentAccepted(checked);
+                            if (checked && consentError) setConsentError(undefined);
+                          }}
+                          error={consentError}
+                          compact
+                          testIdPrefix="order-pdn-consent"
+                        />
+                      )}
+
                       <button
                         type="submit"
                         disabled={isSubmittingLead}
                         data-testid="drawer-submit-btn"
-                        className="w-full sm:w-auto min-w-[280px] min-h-[52px] py-3.5 px-7 rounded-full bg-[#FF4820] hover:bg-[#E63C17] disabled:opacity-65 active:scale-[0.99] text-white text-sm sm:text-base font-semibold transition-all cursor-pointer disabled:cursor-default text-center leading-snug"
+                        className="w-full sm:w-auto min-w-0 min-h-[52px] py-3.5 px-4 sm:px-7 rounded-2xl sm:rounded-full bg-[#FF4820] hover:bg-[#E63C17] disabled:opacity-65 active:scale-[0.99] text-white text-sm sm:text-base font-semibold transition-all cursor-pointer disabled:cursor-default text-center leading-snug whitespace-normal sm:whitespace-nowrap"
                       >
                         {isSubmittingLead
                           ? 'Проверка и фиксация квот…'
@@ -1914,26 +1959,42 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                     )}
                   </div>
 
-                  <div className="pt-2 space-y-2.5">
+                  <div className="pt-2 space-y-3">
+                    {!isReturningFastTrack && (
+                      <PersonalDataConsentField
+                        id="production-order-pdn-consent"
+                        inputRef={consentInputRef}
+                        checked={pdnConsentAccepted}
+                        onChange={(checked) => {
+                          setPdnConsentAccepted(checked);
+                          if (checked && consentError) setConsentError(undefined);
+                        }}
+                        error={consentError}
+                        testIdPrefix="order-pdn-consent"
+                      />
+                    )}
+
                     {(taskError ||
                       contactError ||
                       companyNameError ||
                       companyInnError ||
-                      companyError) && (
+                      companyError ||
+                      consentError) && (
                       <p
                         role="alert"
                         data-testid="order-submit-validation-hint"
-                        className="text-xs font-semibold text-[#FF4820] flex items-center gap-1.5"
+                        className="text-xs font-semibold text-[#FF4820] flex items-start gap-1.5"
                       >
-                        <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" aria-hidden="true" />
                         <span>
-                          Заполните подсвеченные поля:{' '}
+                          Заполните и подтвердите:{' '}
                           {[
                             taskError ? 'описание задачи' : null,
                             contactError ? 'контакт' : null,
                             companyNameError ? 'название компании' : null,
                             companyInnError ? 'ИНН' : null,
                             companyError ? 'реквизиты' : null,
+                            consentError ? 'согласие 152-ФЗ' : null,
                           ]
                             .filter(Boolean)
                             .join(', ')}
@@ -1945,7 +2006,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                       type="submit"
                       disabled={isSubmittingLead}
                       data-testid="drawer-submit-btn"
-                      className="w-full sm:w-auto min-w-[280px] min-h-[52px] py-4 px-8 rounded-full bg-[#FF4820] hover:bg-[#E63C17] disabled:opacity-65 active:scale-[0.99] text-white text-sm sm:text-base font-semibold transition-all cursor-pointer disabled:cursor-default text-center leading-snug whitespace-nowrap"
+                      className="w-full sm:w-auto min-w-0 min-h-[52px] py-3.5 px-4 sm:px-8 rounded-2xl sm:rounded-full bg-[#FF4820] hover:bg-[#E63C17] disabled:opacity-65 active:scale-[0.99] text-white text-sm sm:text-base font-semibold transition-all cursor-pointer disabled:cursor-default text-center leading-snug whitespace-normal sm:whitespace-nowrap"
                     >
                       {isSubmittingLead
                         ? 'Проверка и фиксация заявки…'

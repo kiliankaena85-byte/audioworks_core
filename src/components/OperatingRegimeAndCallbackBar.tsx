@@ -200,7 +200,7 @@ export function CallbackPreferenceSelector({
         <span className="text-[11px] text-[#111111]/58 dark:text-[#F4F3EF]/58 tabular-nums">
           {isAirMode
             ? 'Часовой пояс интервалов: UTC+3'
-            : `${studioCopy.badgeLabel} · ${regime.studioClockFormatted} (UTC+3)`}
+            : `${studioCopy.badgeLabel} · ${regime.studioClockFormatted}`}
         </span>
       </div>
 

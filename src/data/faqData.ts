@@ -180,3 +180,84 @@ export function toggleFaqItem(
 ): string | null {
   return currentOpenId === clickedId ? null : clickedId;
 }
+
+export interface FaqAnswerJsonLd {
+  '@type': 'Answer';
+  text: string;
+}
+
+export interface FaqQuestionJsonLd {
+  '@type': 'Question';
+  name: string;
+  acceptedAnswer: FaqAnswerJsonLd;
+}
+
+export interface FaqPageJsonLdSchema {
+  '@context': 'https://schema.org';
+  '@type': 'FAQPage';
+  name: string;
+  description: string;
+  url: string;
+  inLanguage: 'ru-RU';
+  mainEntity: FaqQuestionJsonLd[];
+}
+
+export interface BuildFaqPageJsonLdOptions {
+  pageUrl?: string;
+  name?: string;
+  description?: string;
+}
+
+const DEFAULT_FAQ_PAGE_URL = 'https://fmworks.ru/faq';
+const DEFAULT_FAQ_PAGE_NAME =
+  'Частые вопросы (FAQ) по договору, оплате и срокам — FMWorks';
+const DEFAULT_FAQ_PAGE_DESCRIPTION =
+  'Ответы на частые вопросы о рамочном договоре, счёте в ЭДО, оплате картой по 54-ФЗ, договорной цене, сроках производства аудиороликов и передаче паспорта прав РАО/ВОИС.';
+
+/**
+ * Формирует валидную структуру Schema.org `FAQPage` (JSON-LD) для списка вопросов продакшна.
+ */
+export function buildFaqPageJsonLd(
+  items: readonly FaqItem[],
+  options: BuildFaqPageJsonLdOptions = {}
+): FaqPageJsonLdSchema {
+  const normalizedUrl = options.pageUrl?.trim() || DEFAULT_FAQ_PAGE_URL;
+  const normalizedName = options.name?.trim() || DEFAULT_FAQ_PAGE_NAME;
+  const normalizedDescription =
+    options.description?.trim() || DEFAULT_FAQ_PAGE_DESCRIPTION;
+
+  const mainEntity: FaqQuestionJsonLd[] = items
+    .map((item) => ({
+      question: item.question.trim(),
+      answer: item.answer.trim(),
+    }))
+    .filter((item) => item.question.length > 0 && item.answer.length > 0)
+    .map((item) => ({
+      '@type': 'Question',
+      name: item.question,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: item.answer,
+      },
+    }));
+
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    name: normalizedName,
+    description: normalizedDescription,
+    url: normalizedUrl,
+    inLanguage: 'ru-RU',
+    mainEntity,
+  };
+}
+
+/**
+ * Безопасно сериализует объект в JSON-LD, экранируя символы HTML/XML тегов.
+ */
+export function serializeJsonLd(payload: unknown): string {
+  return JSON.stringify(payload)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026');
+}
