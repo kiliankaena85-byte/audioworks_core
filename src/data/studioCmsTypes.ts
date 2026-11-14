@@ -1,27 +1,27 @@
-import { LayaPersona, RecommendedTier } from '../engine/layaTypes';
+import type { LayaPersona, RecommendedTier } from '../engine/layaTypes.ts';
 import {
   AUDIOWORKS_TOTAL_DURATION_SEC,
   AUDIOWORKS_WAV_URL,
-  DuelSpotSpec,
-  DuelTranscriptPhrase,
   KOTO_LENS_MANIFESTO_PARAGRAPH,
   ZERNO_DUEL_DATA,
-} from './audioworksCommercial';
+  type DuelSpotSpec,
+  type DuelTranscriptPhrase,
+} from './audioworksCommercial.ts';
 import {
   APPROACH_LEAD_PARAGRAPH,
   APPROACH_NEURO_STUDIES,
   APPROACH_PILLARS,
   APPROACH_STUDIO_PHOTO,
   APPROACH_THESIS,
-  ApproachPillar,
   BRAND_CASES,
-  BrandCasePoster,
   DEFAULT_CASE_PREVIEW_DURATION_SEC,
   FLAGSHIP_STUDIO_REEL,
-  NeuroStudyProofCard,
-} from './casesData';
-import { EDITORIAL_FAQ_ITEMS, FaqItem } from './faqData';
-import { EDITORIAL_PRICING_ROWS, EditorialPricingRow } from './pricingData';
+  type ApproachPillar,
+  type BrandCasePoster,
+  type NeuroStudyProofCard,
+} from './casesData.ts';
+import { EDITORIAL_FAQ_ITEMS, type FaqItem } from './faqData.ts';
+import { EDITORIAL_PRICING_ROWS, type EditorialPricingRow } from './pricingData.ts';
 
 export type PortfolioPersonaFocus = 'fmcg' | 'real_estate' | 'general';
 
@@ -257,10 +257,10 @@ export function createDefaultStudioCmsSnapshot(): StudioCmsSnapshot {
         'Пять роликов подряд сливаются в фон. Выигрывает режиссура паузы.',
       heroManifestoLead: KOTO_LENS_MANIFESTO_PARAGRAPH,
       pricingEyebrow: 'Стоимость',
-      pricingHeadingPrimary: 'Три формата работы.',
-      pricingHeadingMuted: 'Фиксированная смета.',
+      pricingHeadingPrimary: 'Три пакета с фикс-ценой.',
+      pricingHeadingMuted: 'Плюс индивидуальный разбор.',
       pricingSubheading:
-        'Работаем по договору и ЭДО. Все исключительные права сразу переходят вам.',
+        'Работаем по рамочному договору и ЭДО либо картой физлица / СБП (54-ФЗ). Для нестандартных задач доступен тариф с договорной ценой.',
       pricingRows: EDITORIAL_PRICING_ROWS.map((row) => ({ ...row })),
       faqEyebrow: 'Частые вопросы',
       faqHeading: 'Отвечаем до того, как вы спросите.',
@@ -297,6 +297,31 @@ function asCleanString(val: unknown, fallback: string, maxLength = 2400): string
   const trimmed = val.trim();
   if (!trimmed) return fallback;
   return trimmed.slice(0, maxLength);
+}
+
+const LEGACY_UNSPLASH_TO_LOCAL_MAP: readonly [string, string][] = [
+  ['photo-1598488035139-bdbb2231ce04', '/src/assets/images/hero_broadcast_booth_wide_1794605231279.jpg'],
+  ['photo-1495474472287-4d71bcdd2085', '/src/assets/images/hero_artisan_bakery_taste_1794605229940.jpg'],
+  ['photo-1509440159596-0249088772ff', '/src/assets/images/hero_artisan_bakery_taste_1794605229940.jpg'],
+  ['photo-1545324418-cc1a3fa10c00', '/src/assets/images/case_estate_cinema_1794399406227.jpg'],
+  ['photo-1600585154340-be6161a56a0c', '/src/assets/images/case_estate_cinema_1794399406227.jpg'],
+  ['photo-1629909613654-28e377c37b09', '/src/assets/images/industry_medicine_clinic_1794514558724.jpg'],
+  ['photo-1590602847861-f357a9332bbc', '/src/assets/images/approach_condenser_mic_portrait_1794605230714.jpg'],
+  ['photo-1515694346937-94d85e41e6f0', '/src/assets/images/hero_grey_traffic_clutter_1794605229421.jpg'],
+  ['photo-1515162816999-a0c47dc192f7', '/src/assets/images/hero_grey_traffic_clutter_1794605229421.jpg'],
+];
+
+function migrateLegacyExternalImageUrl(raw: unknown, fallbackLocalUrl: string): string {
+  const cleaned = asCleanString(raw, fallbackLocalUrl, 1024);
+  if (!cleaned.includes('images.unsplash.com')) {
+    return cleaned;
+  }
+  for (const [unsplashToken, localAssetUrl] of LEGACY_UNSPLASH_TO_LOCAL_MAP) {
+    if (cleaned.includes(unsplashToken)) {
+      return localAssetUrl;
+    }
+  }
+  return fallbackLocalUrl;
 }
 
 function asOptionalCleanString(
@@ -386,7 +411,10 @@ function normalizeCaseRecord(
     clipEndSec,
     previewStartSec: rawPreviewStart,
     previewDurationSec: Math.min(durationSec, rawPreviewDur),
-    coverImageUrl: asCleanString(obj.coverImageUrl, fallback.coverImageUrl, 1024),
+    coverImageUrl: migrateLegacyExternalImageUrl(
+      obj.coverImageUrl,
+      fallback.coverImageUrl
+    ),
     coverImageAlt: asCleanString(obj.coverImageAlt, fallback.coverImageAlt, 260),
     editorialSurfaceBg: asCleanString(
       obj.editorialSurfaceBg,
@@ -598,10 +626,9 @@ export function validateAndNormalizeCmsSnapshot(
     ),
     studies,
     pillars,
-    studioPhotoUrl: asCleanString(
+    studioPhotoUrl: migrateLegacyExternalImageUrl(
       rawNeuro.studioPhotoUrl,
-      defaults.neuroApproach.studioPhotoUrl,
-      1024
+      defaults.neuroApproach.studioPhotoUrl
     ),
     studioPhotoAlt: asCleanString(
       rawNeuro.studioPhotoAlt,

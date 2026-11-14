@@ -199,7 +199,7 @@ export function BrandKitModal({
     <AnimatePresence>
       {isOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6"
+          className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-6"
           data-testid="brand-kit-modal-backdrop"
           data-last-download={lastDownloadedFile ?? ''}
         >

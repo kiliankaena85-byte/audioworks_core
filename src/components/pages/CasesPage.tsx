@@ -19,6 +19,7 @@ import {
   stationNameToSlug,
 } from '../../data/multiPageContentData';
 import { orderDraftStore } from '../../data/orderDraftStore';
+import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
 import {
   IndustryVerticalSlug,
   PlatformRoute,
@@ -110,55 +111,6 @@ export function CasesPage({
         onStopPreview={onStopPreview}
         onOpenCaseDetail={(id) => onNavigate({ kind: 'case-detail', caseSlug: id })}
       />
-
-      {/* Быстрый реестр разборов со сценариями (чтобы любой кейс открывался в 1 клик) */}
-      <section className="py-12 sm:py-16 px-4 sm:px-6 lg:px-12 border-t border-[#111111]/8 dark:border-white/10">
-        <div className="max-w-7xl mx-auto space-y-6">
-          <div className="max-w-2xl space-y-2">
-            <p className="text-xs font-semibold text-[#111111]/56 dark:text-[#F4F3EF]/56">
-              Тексты сценариев и партитуры по секундам
-            </p>
-            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">
-              Детальные разборы проектов со сценариями и цифрами
-            </h2>
-          </div>
-
-          <div className="divide-y divide-[#111111]/12 dark:divide-white/12 border-y border-[#111111]/12 dark:border-white/12">
-            {allCases
-              .filter((c) => c.published !== false)
-              .map((c) => {
-                const detail = getCaseDetailedBreakdown(c);
-                return (
-                  <div
-                    key={c.id}
-                    data-testid={`case-breakdown-row-${c.id}`}
-                    className="py-5 sm:py-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-                  >
-                    <div className="space-y-1 max-w-2xl">
-                      <p className="text-xs font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58 tabular-nums">
-                        {detail.industryLabel} · Хронометраж {detail.spotSeconds} сек ·{' '}
-                        {detail.metrics[0]?.value} {detail.metrics[0]?.label}
-                      </p>
-                      <h3 className="text-xl sm:text-2xl font-bold tracking-tight">
-                        {c.client} — «{c.headline}»
-                      </h3>
-                    </div>
-
-                    <button
-                      type="button"
-                      data-testid={`open-case-detail-${c.id}`}
-                      onClick={() => onNavigate({ kind: 'case-detail', caseSlug: c.id })}
-                      className="min-h-[44px] px-5 py-2.5 rounded-full bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] hover:bg-[#FF4820] hover:text-white text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 self-start sm:self-auto"
-                    >
-                      <span>Читать сценарий и разбор</span>
-                      <ArrowUpRight className="w-4 h-4 shrink-0" aria-hidden="true" />
-                    </button>
-                  </div>
-                );
-              })}
-          </div>
-        </div>
-      </section>
 
       {/* 4 Отраслевых решения (ЖК, Медицина, Ритейл, B2B) */}
       <section
@@ -353,12 +305,12 @@ function CaseDetailSubpage({
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3 pt-2">
+            <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 pt-2 min-w-0">
               <button
                 type="button"
                 data-testid="case-detail-play-btn"
                 onClick={() => onToggleCase(item)}
-                className={`min-h-[48px] px-6 py-3 rounded-full inline-flex items-center gap-2.5 text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                className={`w-full sm:w-auto min-h-[48px] px-5 sm:px-6 py-3 rounded-full inline-flex items-center justify-center gap-2.5 text-sm font-semibold text-center leading-snug transition-colors cursor-pointer sm:whitespace-nowrap ${
                   isPlayingThis
                     ? 'bg-[#FF4820] text-white'
                     : 'bg-white text-[#111111] hover:bg-[#FF4820] hover:text-white'
@@ -379,7 +331,7 @@ function CaseDetailSubpage({
               <button
                 type="button"
                 onClick={handleOrderSimilar}
-                className="min-h-[48px] px-6 py-3 rounded-full border border-white/24 hover:border-white text-white text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap"
+                className="w-full sm:w-auto min-h-[48px] px-5 sm:px-6 py-3 rounded-full border border-white/24 hover:border-white text-white text-sm font-semibold text-center leading-snug transition-colors cursor-pointer sm:whitespace-nowrap"
               >
                 Заказать ролик такого уровня
               </button>
@@ -455,25 +407,33 @@ function CaseDetailSubpage({
             </p>
             <div className="pt-3 border-t border-[#111111]/10 dark:border-white/10 space-y-2">
               <p className="text-xs font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                Рекомендуемые станции под этот формат:
+                {AIRTIME_SALES_ENABLED
+                  ? 'Рекомендуемые станции под этот формат:'
+                  : 'Целевой эфирный формат проекта:'}
               </p>
-              <div className="flex flex-wrap gap-2">
-                {detail.recommendedStations.map((stName) => (
-                  <button
-                    key={stName}
-                    type="button"
-                    onClick={() =>
-                      onNavigate({
-                        kind: 'station-detail',
-                        stationSlug: stationNameToSlug(stName),
-                      })
-                    }
-                    className="min-h-[36px] px-3.5 rounded-full border border-[#111111]/15 dark:border-white/15 hover:border-[#FF4820] text-xs font-semibold transition-colors cursor-pointer"
-                  >
-                    {stName} →
-                  </button>
-                ))}
-              </div>
+              {AIRTIME_SALES_ENABLED ? (
+                <div className="flex flex-wrap gap-2">
+                  {detail.recommendedStations.map((stName) => (
+                    <button
+                      key={stName}
+                      type="button"
+                      onClick={() =>
+                        onNavigate({
+                          kind: 'station-detail',
+                          stationSlug: stationNameToSlug(stName),
+                        })
+                      }
+                      className="min-h-[36px] px-3.5 rounded-full border border-[#111111]/15 dark:border-white/15 hover:border-[#FF4820] text-xs font-semibold transition-colors cursor-pointer"
+                    >
+                      {stName} →
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm font-semibold text-[#111111] dark:text-[#F4F3EF]">
+                  {detail.recommendedStations.join(' · ')}
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -632,7 +592,7 @@ function IndustrySolutionSubpage({
         {/* Сплит-обложка отраслевого решения */}
         <div className="space-y-8">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-stretch">
-            <div className="lg:col-span-7 flex flex-col justify-between gap-8">
+            <div className="min-w-0 lg:col-span-7 flex flex-col justify-between gap-8">
               <div className="space-y-4">
                 <p className="text-sm font-medium text-[#FF4820]">{spec.kicker}</p>
                 <h1 className="text-3xl sm:text-5xl font-bold tracking-tight leading-[1.06] editorial-balance">
@@ -648,19 +608,30 @@ function IndustrySolutionSubpage({
                   type="button"
                   data-testid="industry-order-cta"
                   onClick={handleStartIndustryOrder}
-                  className="min-h-[48px] px-7 py-3.5 rounded-full bg-[#FF4820] hover:bg-[#E63C17] text-white text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap"
+                  className="min-h-[48px] max-w-full px-5 sm:px-7 py-3.5 rounded-full bg-[#FF4820] hover:bg-[#E63C17] text-white text-sm font-semibold leading-snug text-center transition-colors cursor-pointer sm:whitespace-nowrap"
                 >
                   Заказать ролик для отрасли «{spec.shortTitle}»
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => onNavigate({ kind: 'hot-air' })}
-                  className="min-h-[48px] px-6 py-3.5 rounded-full border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-sm font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
-                >
-                  <Radio className="w-4 h-4 text-[#FF4820]" aria-hidden="true" />
-                  <span>Подобрать эфирную сетку</span>
-                </button>
+                {AIRTIME_SALES_ENABLED ? (
+                  <button
+                    type="button"
+                    onClick={() => onNavigate({ kind: 'hot-air' })}
+                    className="min-h-[48px] px-6 py-3.5 rounded-full border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-sm font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    <Radio className="w-4 h-4 text-[#FF4820]" aria-hidden="true" />
+                    <span>Подобрать эфирную сетку</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onNavigate({ kind: 'pricing' })}
+                    className="min-h-[48px] px-6 py-3.5 rounded-full border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-sm font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    <ShieldCheck className="w-4 h-4 text-[#FF4820]" aria-hidden="true" />
+                    <span>Тарифы и паспорт прав</span>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -764,7 +735,7 @@ function IndustrySolutionSubpage({
         </div>
 
         {/* Рекомендуемые радиостанции для отрасли */}
-        {recommendedStations.length > 0 && (
+        {AIRTIME_SALES_ENABLED && recommendedStations.length > 0 && (
           <section className="space-y-6 pt-4 border-t border-[#111111]/10 dark:border-white/10">
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div className="space-y-1">

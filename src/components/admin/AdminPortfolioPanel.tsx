@@ -376,7 +376,7 @@ export function AdminPortfolioPanel({
   return (
     <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
       {/* Left Column: Case Directory & Reordering */}
-      <div className="xl:col-span-4 rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 overflow-hidden">
+      <div className="min-w-0 xl:col-span-4 rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 overflow-hidden">
         <div className="px-5 py-4 border-b border-[#111111]/10 dark:border-white/10 flex items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-bold text-[#111111] dark:text-[#F4F3EF]">
@@ -497,7 +497,7 @@ export function AdminPortfolioPanel({
       </div>
 
       {/* Right Column: Wave 1 Portfolio Editor (Headlines + WAV/MP3 + 3s Preview Timing) */}
-      <div className="xl:col-span-8 rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-6 sm:p-8 space-y-8">
+      <div className="min-w-0 xl:col-span-8 rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-8 space-y-8">
         {/* Header & Visibility Controls */}
         <div className="flex flex-wrap items-start justify-between gap-4 pb-6 border-b border-[#111111]/10 dark:border-white/10">
           <div className="space-y-1 min-w-0">
@@ -1051,7 +1051,7 @@ export function AdminPortfolioPanel({
               </p>
             </div>
 
-            <div className="flex items-center gap-2.5">
+            <div className="flex flex-wrap items-center gap-2.5 max-w-full">
               <select
                 id="case-surface-preset"
                 aria-label="Палитра фона постера"
@@ -1068,7 +1068,7 @@ export function AdminPortfolioPanel({
                     });
                   }
                 }}
-                className="min-h-[38px] px-3 py-1.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs font-medium text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
+                className="min-h-[38px] max-w-full min-w-0 px-3 py-1.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs font-medium text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
               >
                 {SURFACE_PRESETS.map((preset) => (
                   <option key={preset.surface} value={preset.surface}>

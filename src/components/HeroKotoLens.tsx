@@ -29,7 +29,6 @@ import {
 } from '../data/audioworksCommercial';
 import { BrandDomainVariant } from '../data/brandKitData';
 import { isSiteTextBlockSubtitleModified } from '../data/siteTextBlocksData';
-import { LAYA_CONTENT_DICTIONARY, VALID_PERSONAS } from '../engine/layaEngine';
 import { useLayaDecision } from '../engine/LayaContext';
 import { BrandLogo } from './BrandLogo';
 
@@ -82,7 +81,7 @@ export function HeroKotoLens({
   brandVariant = 'fmworks_reg',
   onOpenBrandKit,
 }: HeroKotoLensProps = {}) {
-  const { decision, slot, selectPersonaProfile } = useLayaDecision();
+  const { slot } = useLayaDecision();
   const { getBlock } = useSiteTextBlocks();
   const heroStageBlock = getBlock('hero-stage');
   const heroManifestoBlock = getBlock('hero-manifesto');
@@ -643,7 +642,7 @@ export function HeroKotoLens({
         aria-label="Манифест студии FMWorks"
         className="py-18 sm:py-24 lg:py-28 px-4 sm:px-6 lg:px-12"
       >
-        <div className="max-w-7xl mx-auto space-y-10">
+        <div className="max-w-7xl mx-auto">
           <div className="space-y-6 max-w-5xl">
             <div className="flex items-center">
               <BrandLogo
@@ -663,34 +662,6 @@ export function HeroKotoLens({
             <p className="text-lg sm:text-2xl leading-[1.45] tracking-tight text-[#111111]/76 dark:text-[#F4F3EF]/76 max-w-3xl editorial-pretty">
               {heroManifestoBlock.description}
             </p>
-          </div>
-
-          {/* Спокойная строка отраслевого фокуса без лишних дублирующих ссылок */}
-          <div className="pt-6 border-t border-[#111111]/10 dark:border-white/10">
-            <div className="flex flex-wrap items-center gap-x-4 sm:gap-x-6 gap-y-1.5 text-xs sm:text-sm">
-              <span className="text-[#111111]/46 dark:text-[#F4F3EF]/46 font-medium whitespace-nowrap shrink-0">
-                Отраслевой фокус
-              </span>
-              {VALID_PERSONAS.map((personaKey) => {
-                const pSlot = LAYA_CONTENT_DICTIONARY[personaKey];
-                const isSelected = decision.choice === personaKey;
-                return (
-                  <button
-                    key={personaKey}
-                    type="button"
-                    onClick={() => selectPersonaProfile(personaKey)}
-                    aria-pressed={isSelected}
-                    className={`min-h-[38px] sm:min-h-[42px] inline-flex items-center font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 border-b-2 ${
-                      isSelected
-                        ? 'text-[#111111] dark:text-[#F4F3EF] border-[#FF4820]'
-                        : 'text-[#111111]/55 dark:text-[#F4F3EF]/55 border-transparent hover:text-[#111111] dark:hover:text-[#F4F3EF]'
-                    }`}
-                  >
-                    {pSlot.profileLabel}
-                  </button>
-                );
-              })}
-            </div>
           </div>
         </div>
       </section>

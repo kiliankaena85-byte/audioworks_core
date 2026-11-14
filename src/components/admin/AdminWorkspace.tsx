@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Save,
   ShieldCheck,
+  SlidersHorizontal,
   Sun,
   Type,
 } from 'lucide-react';
@@ -19,11 +20,13 @@ import { useMemo, useState } from 'react';
 import { useSiteTextBlocks } from '../../cms/SiteTextBlocksContext';
 import { useStudioCms } from '../../cms/StudioCmsContext';
 import { BrandDomainVariant } from '../../data/brandKitData';
+import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
 import {
   auditEditorialCopyGuardrails,
   BANNED_EDITORIAL_TERMS,
 } from '../../data/studioCmsTypes';
 import { BrandLogo } from '../BrandLogo';
+import { LayaSimulationConsole } from '../LayaSimulationConsole';
 import { AdminDuelPanel } from './AdminDuelPanel';
 import { AdminLoginScreen } from './AdminLoginScreen';
 import { AdminOrdersCrmPanel } from './AdminOrdersCrmPanel';
@@ -39,10 +42,13 @@ export type AdminSectionTab =
   | 'text_blocks'
   | 'duel'
   | 'copy'
+  | 'laya_brand'
   | 'security';
 
 interface AdminWorkspaceProps {
   brandVariant: BrandDomainVariant;
+  onSelectBrandVariant?: (variant: BrandDomainVariant) => void;
+  onOpenBrandKit?: () => void;
   isDark: boolean;
   onToggleTheme: () => void;
   onNavigateHome: () => void;
@@ -63,6 +69,8 @@ function formatUpdatedTimestamp(iso: string): string {
 
 export function AdminWorkspace({
   brandVariant,
+  onSelectBrandVariant,
+  onOpenBrandKit,
   isDark,
   onToggleTheme,
   onNavigateHome,
@@ -180,8 +188,9 @@ export function AdminWorkspace({
   > = {
     orders_crm: {
       label: 'Заказы и воронка (CRM)',
-      subtitle:
-        'Приём резервов эфира с таймером 4ч, генератор счёта-спецификации ЭДО и шлюзы доставки в Telegram и внешние CRM',
+      subtitle: AIRTIME_SALES_ENABLED
+        ? 'Приём резервов эфира с таймером 4ч, генератор счёта-спецификации ЭДО и шлюзы доставки в Telegram и внешние CRM'
+        : 'Приём студийных заказов аудиороликов, контроль SLA ответа продюсера, генератор счёта ЭДО и шлюзы в Telegram и CRM',
     },
     science_plan: {
       label: 'Научный план развития',
@@ -208,6 +217,11 @@ export function AdminWorkspace({
       subtitle:
         'Цифры исследований ЦНС, расценки тарифов в рублях, частые вопросы и резервные копии .json',
     },
+    laya_brand: {
+      label: 'Персонализация Laya AI и Brand Kit',
+      subtitle:
+        'Симуляция профилей аудитории, локальный тест шоурила и управление фирменным стилем FMWorks без вывода на клиентскую витрину',
+    },
     security: {
       label: 'Защита от спама и заявки',
       subtitle:
@@ -218,7 +232,9 @@ export function AdminWorkspace({
   const formattedTime = formatUpdatedTimestamp(snapshot.updatedAt);
   const isLiveTextTab = activeTab === 'text_blocks';
   const isOrdersOrScienceTab =
-    activeTab === 'orders_crm' || activeTab === 'science_plan';
+    activeTab === 'orders_crm' ||
+    activeTab === 'science_plan' ||
+    activeTab === 'laya_brand';
 
   return (
     <div className="min-h-screen bg-[#F7F6F2] text-[#111111] dark:bg-[#0D0D0F] dark:text-[#F4F3EF] flex flex-col lg:flex-row">
@@ -360,6 +376,23 @@ export function AdminWorkspace({
             >
               <FileText className="w-4 h-4 shrink-0" aria-hidden="true" />
               <span>Исследования, FAQ и архив</span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="admin-nav-laya-brand"
+              onClick={() => {
+                setActiveTab('laya_brand');
+                setSaveBanner(null);
+              }}
+              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center gap-2.5 transition-colors cursor-pointer whitespace-nowrap ${
+                activeTab === 'laya_brand'
+                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+              }`}
+            >
+              <SlidersHorizontal className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span>Персонализация и бренд</span>
             </button>
 
             <button
@@ -627,9 +660,18 @@ export function AdminWorkspace({
             </div>
           )}
 
-          {isOrdersOrScienceTab && (
+          {(activeTab === 'orders_crm' || activeTab === 'science_plan') && (
             <AdminOrdersCrmPanel
               initialSubView={activeTab === 'science_plan' ? 'science' : 'funnel'}
+            />
+          )}
+
+          {activeTab === 'laya_brand' && (
+            <LayaSimulationConsole
+              mode="embedded"
+              activeBrandVariant={brandVariant}
+              onSelectBrandVariant={onSelectBrandVariant}
+              onOpenBrandKit={onOpenBrandKit}
             />
           )}
 

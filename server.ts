@@ -1,20 +1,28 @@
 import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
-import type { StudioCmsSnapshot } from './src/data/studioCmsTypes.ts';
+import {
+  validateAndNormalizeCmsSnapshot,
+  type StudioCmsSnapshot,
+} from './src/data/studioCmsTypes.ts';
 import {
   buildWebhookOrderEnvelope,
   createSeedCrmOrders,
   CRM_ORDER_STAGES,
+  ensureCrmOrderSlaFields,
+  formatEdoInvoiceSpecificationDocument,
   formatTelegramOrderDispatchMessage,
+  SLA_BREACH_COMPENSATION_NOTE,
 } from './src/data/orderCrmTypes.ts';
 import type {
+  CrmDispatchEvent,
   CrmOrderRecord,
   CrmOrderStage,
   DispatchAttemptLog,
@@ -24,6 +32,20 @@ import type {
   OrderMediaPlanSnapshot,
 } from './src/data/orderCrmTypes.ts';
 import {
+  CALLBACK_PREFERENCE_OPTIONS,
+  computeSlaDeadlineWindow,
+  computeSmartHoldExpirationMs,
+  DEFAULT_STUDIO_WORK_SCHEDULE,
+  evaluateOrderSlaStatus,
+  extendHoldByWorkingHoursMs,
+  resolveStudioOperatingRegime,
+  sanitizeWorkScheduleConfig,
+} from './src/data/slaWorkCalendar.ts';
+import type {
+  ClientCallbackPreference,
+  StudioWorkScheduleConfig,
+} from './src/data/slaWorkCalendar.ts';
+import {
   computeLeadPayloadFingerprint,
   evaluateLeadSubmissionSecurity,
   inspectBriefForSpamSignals,
@@ -32,6 +54,16 @@ import {
   SECURITY_DEFENSE_LAYERS,
   verifyLeadChallengePow,
 } from './src/security/leadShield.ts';
+import { VERIFIED_LIVE_REGIONAL_STATIONS } from './src/data/broadcastAircheckData.ts';
+import {
+  createDefaultStudioLegalProfiles,
+  sanitizeOrderDocumentMeta,
+  sanitizeStudioLegalProfilesConfig,
+} from './src/data/studioDocumentsCore.ts';
+import type {
+  OrderDocumentMeta,
+  StudioLegalProfilesConfig,
+} from './src/data/studioDocumentsCore.ts';
 
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
@@ -42,7 +74,24 @@ const PUBLIC_AUDIO_DIR = path.join(__dirname, 'public', 'assets', 'aistudio');
 const DIST_AUDIO_DIR = path.join(__dirname, 'dist', 'assets', 'aistudio');
 const PUBLIC_CMS_MEDIA_DIR = path.join(__dirname, 'public', 'assets', 'cms');
 const DIST_CMS_MEDIA_DIR = path.join(__dirname, 'dist', 'assets', 'cms');
-const CMS_DATA_DIR = path.join(__dirname, '.data');
+function resolveWritableDataDir(): string {
+  const localDir = path.join(__dirname, '.data');
+  try {
+    fs.mkdirSync(localDir, { recursive: true });
+    fs.accessSync(localDir, fs.constants.W_OK);
+    return localDir;
+  } catch {
+    const tmpFallback = path.join(os.tmpdir(), 'fmworks-studio-data');
+    try {
+      fs.mkdirSync(tmpFallback, { recursive: true });
+    } catch {
+      // Ignore if tmpdir creation fails
+    }
+    return tmpFallback;
+  }
+}
+
+const CMS_DATA_DIR = resolveWritableDataDir();
 const CMS_SNAPSHOT_FILE = path.join(CMS_DATA_DIR, 'studio-cms.json');
 const CMS_BACKUP_FILE = path.join(CMS_DATA_DIR, 'studio-cms.last-reset.bak.json');
 const SECURITY_LEADS_FILE = path.join(CMS_DATA_DIR, 'studio-security-leads.json');
@@ -194,8 +243,14 @@ function readPersistedCmsSnapshot(): StudioCmsSnapshot | null {
       parsed.schemaVersion === 1 &&
       Array.isArray(parsed.portfolioCases)
     ) {
-      cachedCmsSnapshot = parsed;
-      return parsed;
+      const normalized = validateAndNormalizeCmsSnapshot(parsed);
+      const sanitized = normalized.ok ? normalized.data : parsed;
+      if (rawText.includes('images.unsplash.com') && normalized.ok) {
+        writePersistedCmsSnapshot(sanitized);
+      } else {
+        cachedCmsSnapshot = sanitized;
+      }
+      return sanitized;
     }
     cachedCmsSnapshot = null;
     return null;
@@ -449,6 +504,7 @@ interface PersistedOrdersCrmStore {
   orders: CrmOrderRecord[];
   settings: OrderDispatchSettings;
   dispatchLogs: DispatchAttemptLog[];
+  legalProfiles: StudioLegalProfilesConfig;
 }
 
 let cachedOrdersCrmStore: PersistedOrdersCrmStore | null = null;
@@ -474,6 +530,7 @@ function createDefaultDispatchSettings(): OrderDispatchSettings {
       notifyOnNewOrder: true,
       notifyOnStageChange: true,
     },
+    workSchedule: sanitizeWorkScheduleConfig(DEFAULT_STUDIO_WORK_SCHEDULE),
   };
 }
 
@@ -481,10 +538,12 @@ function readOrdersCrmStore(): PersistedOrdersCrmStore {
   if (cachedOrdersCrmStore) return cachedOrdersCrmStore;
   try {
     if (!fs.existsSync(ORDERS_CRM_FILE)) {
+      const defaults = createDefaultDispatchSettings();
       cachedOrdersCrmStore = {
         orders: createSeedCrmOrders(),
-        settings: createDefaultDispatchSettings(),
+        settings: defaults,
         dispatchLogs: [],
+        legalProfiles: createDefaultStudioLegalProfiles(),
       };
       return cachedOrdersCrmStore;
     }
@@ -492,11 +551,15 @@ function readOrdersCrmStore(): PersistedOrdersCrmStore {
       fs.readFileSync(ORDERS_CRM_FILE, 'utf8')
     ) as Partial<PersistedOrdersCrmStore>;
     const defaults = createDefaultDispatchSettings();
+    const workSchedule = sanitizeWorkScheduleConfig(
+      raw.settings?.workSchedule ?? defaults.workSchedule
+    );
+    const rawOrders =
+      Array.isArray(raw.orders) && raw.orders.length > 0
+        ? raw.orders
+        : createSeedCrmOrders();
     cachedOrdersCrmStore = {
-      orders:
-        Array.isArray(raw.orders) && raw.orders.length > 0
-          ? raw.orders
-          : createSeedCrmOrders(),
+      orders: rawOrders.map((ord) => ensureCrmOrderSlaFields(ord, workSchedule)),
       settings: {
         telegram: {
           ...defaults.telegram,
@@ -506,8 +569,10 @@ function readOrdersCrmStore(): PersistedOrdersCrmStore {
           ...defaults.webhook,
           ...(raw.settings?.webhook ?? {}),
         },
+        workSchedule,
       },
       dispatchLogs: Array.isArray(raw.dispatchLogs) ? raw.dispatchLogs : [],
+      legalProfiles: sanitizeStudioLegalProfilesConfig(raw.legalProfiles),
     };
     return cachedOrdersCrmStore;
   } catch {
@@ -515,6 +580,7 @@ function readOrdersCrmStore(): PersistedOrdersCrmStore {
       orders: createSeedCrmOrders(),
       settings: createDefaultDispatchSettings(),
       dispatchLogs: [],
+      legalProfiles: createDefaultStudioLegalProfiles(),
     };
     return cachedOrdersCrmStore;
   }
@@ -542,9 +608,26 @@ function maskSecretForAdmin(secret: string): string {
   return `••••••••${trimmed.slice(-4)}`;
 }
 
+function issueOrderRescueToken(orderNumber: string): string {
+  return crypto
+    .createHmac('sha256', getSessionSecret())
+    .update(`client-rescue-v1:${orderNumber}`)
+    .digest('base64url')
+    .slice(0, 28);
+}
+
+function verifyOrderRescueToken(
+  orderNumber: string,
+  providedToken: string | undefined | null
+): boolean {
+  if (!providedToken || typeof providedToken !== 'string') return false;
+  const expected = issueOrderRescueToken(orderNumber);
+  return safeCompareStrings(providedToken.trim(), expected);
+}
+
 async function dispatchOrderToExternalChannels(
   orderId: string,
-  event: 'order.created' | 'order.stage_changed' | 'dispatch.test'
+  event: CrmDispatchEvent
 ): Promise<{
   telegramResult: CrmOrderRecord['delivery']['telegram'];
   webhookResult: CrmOrderRecord['delivery']['webhook'];
@@ -572,10 +655,13 @@ async function dispatchOrderToExternalChannels(
   };
 
   let telegramResult: CrmOrderRecord['delivery']['telegram'];
+  const isPriorityEscalation =
+    event === 'order.sla_breached' || event === 'order.client_rescue';
   const shouldSendTg =
     event === 'dispatch.test' ||
     (telegram.enabled &&
-      ((event === 'order.created' && telegram.notifyOnNewOrder) ||
+      (isPriorityEscalation ||
+        (event === 'order.created' && telegram.notifyOnNewOrder) ||
         (event === 'order.stage_changed' && telegram.notifyOnStageChange)));
 
   if (!shouldSendTg || !telegram.botToken.trim() || !telegram.chatId.trim()) {
@@ -673,7 +759,8 @@ async function dispatchOrderToExternalChannels(
   const shouldSendWh =
     event === 'dispatch.test' ||
     (webhook.enabled &&
-      ((event === 'order.created' && webhook.notifyOnNewOrder) ||
+      (isPriorityEscalation ||
+        (event === 'order.created' && webhook.notifyOnNewOrder) ||
         (event === 'order.stage_changed' && webhook.notifyOnStageChange)));
 
   if (!shouldSendWh || !webhook.endpointUrl.trim()) {
@@ -831,11 +918,92 @@ function createSlidingWindowRateLimiter(
   };
 }
 
+function runSlaEscalationSweep(nowMs = Date.now()): CrmOrderRecord[] {
+  const crmStore = readOrdersCrmStore();
+  const schedule = sanitizeWorkScheduleConfig(crmStore.settings.workSchedule);
+  const escalatedIds: string[] = [];
+  const nowIso = new Date(nowMs).toISOString();
+
+  crmStore.orders = crmStore.orders.map((rawOrd) => {
+    const ord = ensureCrmOrderSlaFields(rawOrd, schedule);
+    if (
+      ord.stage !== 'new_hold' ||
+      ord.slaState?.firstContactedAt ||
+      ord.slaState?.escalatedAt
+    ) {
+      return ord;
+    }
+
+    const evalRes = evaluateOrderSlaStatus(
+      {
+        stage: ord.stage,
+        createdAtIso: ord.createdAt,
+        callbackPreference: ord.callbackPreference,
+        slaWindowStartIso: ord.slaState?.slaWindowStartAt,
+        slaDeadlineIso: ord.slaState?.slaDeadlineAt,
+        firstContactedAtIso: ord.slaState?.firstContactedAt,
+        escalatedAtIso: ord.slaState?.escalatedAt,
+      },
+      nowMs,
+      schedule
+    );
+
+    if (evalRes.state !== 'breached_late') {
+      return ord;
+    }
+
+    escalatedIds.push(ord.id);
+    const currentHoldExpMs = Date.parse(ord.holdExpiresAt);
+    const safeHoldExpMs =
+      !Number.isFinite(currentHoldExpMs) || currentHoldExpMs - nowMs < 2 * 3600_000
+        ? extendHoldByWorkingHoursMs(currentHoldExpMs, nowMs, 2, schedule)
+        : currentHoldExpMs;
+
+    return {
+      ...ord,
+      updatedAt: nowIso,
+      holdExpiresAt: new Date(safeHoldExpMs).toISOString(),
+      slaState: {
+        ...ord.slaState!,
+        escalatedAt: nowIso,
+        compensationNote:
+          ord.slaState?.compensationNote ?? SLA_BREACH_COMPENSATION_NOTE,
+      },
+    };
+  });
+
+  if (escalatedIds.length > 0) {
+    writeOrdersCrmStore(crmStore);
+    for (const id of escalatedIds) {
+      const slaLog: DispatchAttemptLog = {
+        id: `log-sla-${nowMs}-${id.slice(-4)}`,
+        timestamp: nowIso,
+        orderNumber:
+          crmStore.orders.find((o) => o.id === id)?.orderNumber ?? id,
+        channel: 'telegram',
+        event: 'order.sla_breached',
+        state: 'ready_simulated',
+        httpStatus: null,
+        latencyMs: 1,
+        summary:
+          'Автоматический сторожевой таймер SLA: зафиксировано опоздание контакта, сделка эскалирована старшему продюсеру',
+      };
+      crmStore.dispatchLogs = [slaLog, ...crmStore.dispatchLogs].slice(0, 35);
+      writeOrdersCrmStore(crmStore);
+      void dispatchOrderToExternalChannels(id, 'order.sla_breached');
+    }
+  }
+
+  return crmStore.orders;
+}
+
 const loginFailureLimiter = createSlidingWindowRateLimiter(8, 15 * 60 * 1000, 0);
 const orderSubmitLimiter = createSlidingWindowRateLimiter(5, 10 * 60 * 1000, 1000);
 const orderValidationBurstLimiter = createSlidingWindowRateLimiter(15, 5 * 60 * 1000, 0);
+const clientRescueLimiter = createSlidingWindowRateLimiter(8, 10 * 60 * 1000, 500);
 const aiRecommendLimiter = createSlidingWindowRateLimiter(15, 5 * 60 * 1000, 0);
 const duelUploadLimiter = createSlidingWindowRateLimiter(12, 10 * 60 * 1000, 0);
+const radioStreamLimiter = createSlidingWindowRateLimiter(40, 5 * 60 * 1000, 0);
 
 const LEAD_CHALLENGE_TTL_MS = 2 * 60 * 60 * 1000;
 const LEAD_POW_DIFFICULTY = 3;
@@ -1247,16 +1415,36 @@ async function startServer() {
     });
   });
 
+  app.get('/api/public/work-schedule', (_req, res) => {
+    const crmStore = readOrdersCrmStore();
+    const workSchedule = sanitizeWorkScheduleConfig(crmStore.settings.workSchedule);
+    res.json({
+      ok: true,
+      workSchedule,
+      operatingRegime: resolveStudioOperatingRegime(Date.now(), workSchedule),
+    });
+  });
+
+  app.get('/api/public/legal-profile', (_req, res) => {
+    const crmStore = readOrdersCrmStore();
+    res.json({
+      ok: true,
+      legalProfiles: sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles),
+    });
+  });
+
   app.post('/api/orders/submit', express.json({ limit: '64kb' }), (req, res) => {
     const clientIp = resolveClientIp(req);
     const body = (req.body ?? {}) as {
       source?: OrderEntrySource;
       checkoutMode?: 'air_plus_production' | 'production_only';
+      paymentChannel?: 'edo_invoice' | 'card_online';
       orderNumberCandidate?: string;
       formatLabel?: string;
       totalBudgetRub?: number;
       contactLine?: string;
       companyLine?: string;
+      callbackPreference?: ClientCallbackPreference;
       briefText?: string;
       hasVoiceRecording?: boolean;
       voiceDurationSec?: number;
@@ -1265,6 +1453,7 @@ async function startServer() {
       mediaPlanSnapshot?: OrderMediaPlanSnapshot | null;
       isReturningFastTrack?: boolean;
       requireBriefOrVoice?: boolean;
+      pdnConsentAccepted?: boolean;
       websiteTrap?: string;
       dwellMs?: number;
       pointerMoves?: number;
@@ -1484,10 +1673,24 @@ async function startServer() {
     store.verifiedLeads = [newVerifiedRecord, ...store.verifiedLeads].slice(0, 150);
     writeSecurityStore(store);
 
-    // Атомарная регистрация сделки в CRM-пульте продюсеров + асинхронный Outbox в Telegram и Webhook
+    // Атомарная регистрация сделки в CRM-пульте продюсеров + умный расчёт 4ч рабочего холда и SLA
     const crmStore = readOrdersCrmStore();
+    const workSchedule = sanitizeWorkScheduleConfig(crmStore.settings.workSchedule);
     const nowIso = new Date(now).toISOString();
-    const holdExpiresIso = new Date(now + 4 * 3600 * 1000).toISOString();
+
+    const validCallbackPrefs = new Set(CALLBACK_PREFERENCE_OPTIONS.map((o) => o.id));
+    const resolvedCallbackPref: ClientCallbackPreference =
+      body.callbackPreference && validCallbackPrefs.has(body.callbackPreference)
+        ? body.callbackPreference
+        : 'call_15m';
+
+    const smartHoldExpiresMs = computeSmartHoldExpirationMs(now, workSchedule);
+    const holdExpiresIso = new Date(smartHoldExpiresMs).toISOString();
+    const regimeAtCreation = resolveStudioOperatingRegime(now, workSchedule);
+    const slaWindow = computeSlaDeadlineWindow(now, resolvedCallbackPref, workSchedule);
+    const slaWindowStartIso = new Date(slaWindow.slaWindowStartMs).toISOString();
+    const slaDeadlineIso = new Date(slaWindow.slaDeadlineMs).toISOString();
+
     const validSources: readonly OrderEntrySource[] = [
       'order_page',
       'quick_order_drawer',
@@ -1506,6 +1709,9 @@ async function startServer() {
         ? body.mediaPlanSnapshot
         : null;
 
+    const resolvedPaymentChannel: 'edo_invoice' | 'card_online' =
+      body.paymentChannel === 'card_online' ? 'card_online' : 'edo_invoice';
+
     const newCrmOrder: CrmOrderRecord = {
       id: `crm-${now}-${crypto.randomBytes(3).toString('hex')}`,
       orderNumber,
@@ -1514,11 +1720,13 @@ async function startServer() {
       holdExpiresAt: holdExpiresIso,
       source: resolvedSource,
       checkoutMode,
+      paymentChannel: resolvedPaymentChannel,
       stage: 'new_hold',
       formatLabel: newVerifiedRecord.formatLabel,
       totalBudgetRub: resolvedBudgetRub,
       contact: evaluation.normalizedContact,
       detectedChannel: evaluation.detectedChannel ?? 'phone',
+      callbackPreference: resolvedCallbackPref,
       companyOrInn: evaluation.normalizedCompany,
       innVerified: evaluation.innVerified,
       briefText: evaluation.sanitizedBrief.slice(0, 1500),
@@ -1539,6 +1747,17 @@ async function startServer() {
         edoAndOrdRegistered: false,
       },
       mediaPlanSnapshot: sanitizedMediaSnap,
+      pdnConsentAcceptedAt: body.pdnConsentAccepted !== false ? nowIso : null,
+      slaState: {
+        createdRegime: regimeAtCreation.regime,
+        slaWindowStartAt: slaWindowStartIso,
+        slaDeadlineAt: slaDeadlineIso,
+        promisedWindowLabel: slaWindow.promisedWindowLabel,
+        firstContactedAt: null,
+        escalatedAt: null,
+        clientRescueCount: 0,
+        compensationNote: null,
+      },
       delivery: {
         crmRegistry: 'saved',
         telegram: {
@@ -1567,6 +1786,7 @@ async function startServer() {
       .update(`verified:${orderNumber}:${now}`)
       .digest('hex')
       .slice(0, 24);
+    const rescueToken = issueOrderRescueToken(orderNumber);
 
     res.json({
       ok: true,
@@ -1577,6 +1797,12 @@ async function startServer() {
       verifiedConversionSeal,
       innVerified: evaluation.innVerified,
       detectedChannel: evaluation.detectedChannel,
+      holdExpiresAt: holdExpiresIso,
+      slaWindowStartAt: slaWindowStartIso,
+      slaDeadlineAt: slaDeadlineIso,
+      promisedWindowLabel: slaWindow.promisedWindowLabel,
+      operatingRegime: regimeAtCreation,
+      rescueToken,
       rateLimit: {
         remainingAttempts: rate.remainingAttempts,
         maxAttempts: rate.maxAttempts,
@@ -1585,6 +1811,217 @@ async function startServer() {
       nextChallenge: issueLeadChallenge(),
     });
   });
+
+  // =========================================================================
+  // Client Live SLA Tracker, Autonomous EDO Specification & Rescue Protocol
+  // =========================================================================
+
+  app.get('/api/orders/:orderNumber/status', (req, res) => {
+    const orderNumber = String(req.params.orderNumber || '').trim();
+    const token =
+      typeof req.query.token === 'string' ? req.query.token.trim() : '';
+
+    if (!orderNumber || !verifyOrderRescueToken(orderNumber, token)) {
+      res.status(403).json({
+        ok: false,
+        error: 'Недействительный токен доступа к карточке статуса заказа',
+      });
+      return;
+    }
+
+    runSlaEscalationSweep();
+    const crmStore = readOrdersCrmStore();
+    const workSchedule = sanitizeWorkScheduleConfig(crmStore.settings.workSchedule);
+    const found = crmStore.orders.find((o) => o.orderNumber === orderNumber);
+
+    if (!found) {
+      res.status(404).json({ ok: false, error: 'Заказ не найден в реестре' });
+      return;
+    }
+
+    const slaEval = evaluateOrderSlaStatus(
+      {
+        stage: found.stage,
+        createdAtIso: found.createdAt,
+        callbackPreference: found.callbackPreference,
+        slaWindowStartIso: found.slaState?.slaWindowStartAt,
+        slaDeadlineIso: found.slaState?.slaDeadlineAt,
+        firstContactedAtIso: found.slaState?.firstContactedAt,
+        escalatedAtIso: found.slaState?.escalatedAt,
+      },
+      Date.now(),
+      workSchedule
+    );
+
+    res.json({
+      ok: true,
+      orderNumber: found.orderNumber,
+      stage: found.stage,
+      holdExpiresAt: found.holdExpiresAt,
+      callbackPreference: found.callbackPreference ?? 'call_15m',
+      slaState: found.slaState ?? null,
+      slaEvaluation: slaEval,
+      operatingRegime: resolveStudioOperatingRegime(Date.now(), workSchedule),
+      edoSpecificationText: formatEdoInvoiceSpecificationDocument(found),
+      documentMeta: found.documentMeta ?? null,
+      legalProfiles: sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles),
+    });
+  });
+
+  app.post(
+    '/api/orders/:orderNumber/rescue',
+    express.json({ limit: '32kb' }),
+    (req, res) => {
+      const clientIp = resolveClientIp(req);
+      const orderNumber = String(req.params.orderNumber || '').trim();
+      const body = (req.body ?? {}) as {
+        rescueToken?: string;
+        action?:
+          | 'extend_hold_and_escalate'
+          | 'switch_to_async'
+          | 'reschedule_callback';
+        callbackPreference?: ClientCallbackPreference;
+      };
+
+      if (!orderNumber || !verifyOrderRescueToken(orderNumber, body.rescueToken)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Недействительный ключ подтверждения брони',
+        });
+        return;
+      }
+
+      const rescueRate = clientRescueLimiter.consume(`${clientIp}:${orderNumber}`);
+      if (!rescueRate.allowed) {
+        res.status(429).json({
+          ok: false,
+          error: `Слишком частые запросы обновления. Подождите ${rescueRate.retryAfterSec} сек.`,
+        });
+        return;
+      }
+
+      const crmStore = readOrdersCrmStore();
+      const workSchedule = sanitizeWorkScheduleConfig(crmStore.settings.workSchedule);
+      const idx = crmStore.orders.findIndex((o) => o.orderNumber === orderNumber);
+
+      if (idx === -1) {
+        res.status(404).json({ ok: false, error: 'Заказ не найден в реестре CRM' });
+        return;
+      }
+
+      const existing = ensureCrmOrderSlaFields(crmStore.orders[idx], workSchedule);
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const action = body.action ?? 'extend_hold_and_escalate';
+
+      let nextHoldExpiresAt = existing.holdExpiresAt;
+      let nextCallbackPref: ClientCallbackPreference =
+        existing.callbackPreference ?? 'call_15m';
+      let nextSlaState = { ...existing.slaState! };
+      let noteAppend = '';
+
+      if (action === 'extend_hold_and_escalate') {
+        const currentExpMs = Date.parse(existing.holdExpiresAt);
+        const extendedMs = extendHoldByWorkingHoursMs(
+          currentExpMs,
+          nowMs,
+          4,
+          workSchedule
+        );
+        nextHoldExpiresAt = new Date(extendedMs).toISOString();
+        nextSlaState = {
+          ...nextSlaState,
+          escalatedAt: nextSlaState.escalatedAt ?? nowIso,
+          clientRescueCount: (nextSlaState.clientRescueCount ?? 0) + 1,
+          compensationNote:
+            nextSlaState.compensationNote ?? SLA_BREACH_COMPENSATION_NOTE,
+        };
+        noteAppend = `[Клиент активировал защиту SLA: холд продлён +4 рабочих часа, запрос передан старшему продюсеру]`;
+      } else if (action === 'switch_to_async') {
+        nextCallbackPref = 'async_no_call';
+        const recomputed = computeSlaDeadlineWindow(nowMs, 'async_no_call', workSchedule);
+        nextSlaState = {
+          ...nextSlaState,
+          slaWindowStartAt: new Date(recomputed.slaWindowStartMs).toISOString(),
+          slaDeadlineAt: new Date(recomputed.slaDeadlineMs).toISOString(),
+          promisedWindowLabel: recomputed.promisedWindowLabel,
+          clientRescueCount: (nextSlaState.clientRescueCount ?? 0) + 1,
+        };
+        noteAppend = `[Клиент выбрал режим без звонка: отправить расписание и счёт письменно]`;
+      } else if (action === 'reschedule_callback') {
+        const validPrefs = new Set(CALLBACK_PREFERENCE_OPTIONS.map((p) => p.id));
+        nextCallbackPref =
+          body.callbackPreference && validPrefs.has(body.callbackPreference)
+            ? body.callbackPreference
+            : 'morning_0930';
+        const recomputed = computeSlaDeadlineWindow(nowMs, nextCallbackPref, workSchedule);
+        const ensuredHoldMs = Math.max(
+          Date.parse(existing.holdExpiresAt) || nowMs,
+          recomputed.slaDeadlineMs + 2 * 3600_000
+        );
+        nextHoldExpiresAt = new Date(ensuredHoldMs).toISOString();
+        nextSlaState = {
+          ...nextSlaState,
+          slaWindowStartAt: new Date(recomputed.slaWindowStartMs).toISOString(),
+          slaDeadlineAt: new Date(recomputed.slaDeadlineMs).toISOString(),
+          promisedWindowLabel: recomputed.promisedWindowLabel,
+        };
+        noteAppend = `[Клиент перенёс удобное окно связи: ${recomputed.promisedWindowLabel}]`;
+      }
+
+      const updatedOrder: CrmOrderRecord = {
+        ...existing,
+        updatedAt: nowIso,
+        holdExpiresAt: nextHoldExpiresAt,
+        callbackPreference: nextCallbackPref,
+        slaState: nextSlaState,
+        producerNotes: existing.producerNotes
+          ? `${existing.producerNotes}\n${noteAppend}`.slice(0, 2000)
+          : noteAppend,
+      };
+
+      crmStore.orders[idx] = updatedOrder;
+      const rescueLog: DispatchAttemptLog = {
+        id: `log-rescue-${nowMs}`,
+        timestamp: nowIso,
+        orderNumber: updatedOrder.orderNumber,
+        channel: 'telegram',
+        event: 'order.client_rescue',
+        state: 'ready_simulated',
+        httpStatus: null,
+        latencyMs: 1,
+        summary: noteAppend,
+      };
+      crmStore.dispatchLogs = [rescueLog, ...crmStore.dispatchLogs].slice(0, 35);
+      writeOrdersCrmStore(crmStore);
+
+      void dispatchOrderToExternalChannels(updatedOrder.id, 'order.client_rescue');
+
+      const slaEval = evaluateOrderSlaStatus(
+        {
+          stage: updatedOrder.stage,
+          createdAtIso: updatedOrder.createdAt,
+          callbackPreference: updatedOrder.callbackPreference,
+          slaWindowStartIso: updatedOrder.slaState?.slaWindowStartAt,
+          slaDeadlineIso: updatedOrder.slaState?.slaDeadlineAt,
+          firstContactedAtIso: updatedOrder.slaState?.firstContactedAt,
+          escalatedAtIso: updatedOrder.slaState?.escalatedAt,
+        },
+        nowMs,
+        workSchedule
+      );
+
+      res.json({
+        ok: true,
+        orderNumber: updatedOrder.orderNumber,
+        holdExpiresAt: updatedOrder.holdExpiresAt,
+        callbackPreference: updatedOrder.callbackPreference,
+        slaState: updatedOrder.slaState,
+        slaEvaluation: slaEval,
+        edoSpecificationText: formatEdoInvoiceSpecificationDocument(updatedOrder),
+      });
+    }
+  );
 
   // =========================================================================
   // Studio CRM Orders Funnel & Outbox Dispatch Endpoints
@@ -1603,13 +2040,17 @@ async function startServer() {
   });
 
   app.get('/api/cms/orders', requireStudioAuth, (_req, res) => {
+    runSlaEscalationSweep();
     const crmStore = readOrdersCrmStore();
     const { telegram, webhook } = crmStore.settings;
+    const workSchedule = sanitizeWorkScheduleConfig(crmStore.settings.workSchedule);
 
     res.json({
       ok: true,
       orders: crmStore.orders,
       dispatchLogs: crmStore.dispatchLogs.slice(0, 25),
+      operatingRegime: resolveStudioOperatingRegime(Date.now(), workSchedule),
+      legalProfiles: sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles),
       settings: {
         telegram: {
           enabled: telegram.enabled,
@@ -1627,9 +2068,40 @@ async function startServer() {
           notifyOnNewOrder: webhook.notifyOnNewOrder,
           notifyOnStageChange: webhook.notifyOnStageChange,
         },
+        workSchedule,
       },
     });
   });
+
+  app.put(
+    '/api/cms/legal-profiles',
+    requireStudioAuth,
+    express.json({ limit: '64kb' }),
+    (req, res) => {
+      const incoming = (req.body ?? {}) as Partial<StudioLegalProfilesConfig>;
+      const sanitized = sanitizeStudioLegalProfilesConfig(incoming);
+      const serializedLower = JSON.stringify(sanitized).toLowerCase();
+      const hitBanned = SERVER_BANNED_TERMS.find((term) =>
+        serializedLower.includes(term)
+      );
+      if (hitBanned) {
+        res.status(400).json({
+          ok: false,
+          error: `Реквизиты содержат стоп-фрагмент редакционной политики («${hitBanned}»). Укажите нейтральные региональные данные (например, г. Тверь).`,
+        });
+        return;
+      }
+
+      const crmStore = readOrdersCrmStore();
+      crmStore.legalProfiles = sanitized;
+      writeOrdersCrmStore(crmStore);
+
+      res.json({
+        ok: true,
+        legalProfiles: crmStore.legalProfiles,
+      });
+    }
+  );
 
   app.patch(
     '/api/cms/orders/:orderId',
@@ -1641,25 +2113,88 @@ async function startServer() {
         stage?: CrmOrderStage;
         producerNotes?: string;
         compliance?: Partial<OrderComplianceChecklist>;
+        documentMeta?: Partial<OrderDocumentMeta>;
+        totalBudgetRub?: number;
+        markContacted?: boolean;
+        extendHoldHours?: number;
+        callbackPreference?: ClientCallbackPreference;
       };
 
       const crmStore = readOrdersCrmStore();
+      const workSchedule = sanitizeWorkScheduleConfig(crmStore.settings.workSchedule);
       const idx = crmStore.orders.findIndex((o) => o.id === orderId);
       if (idx === -1) {
         res.status(404).json({ ok: false, error: 'Заказ не найден в реестре CRM' });
         return;
       }
 
-      const existing = crmStore.orders[idx];
+      const existing = ensureCrmOrderSlaFields(crmStore.orders[idx], workSchedule);
       const validStageIds = new Set(CRM_ORDER_STAGES.map((s) => s.id));
       const nextStage: CrmOrderStage =
         body.stage && validStageIds.has(body.stage) ? body.stage : existing.stage;
       const stageChanged = nextStage !== existing.stage;
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+
+      let nextHoldExpiresAt = existing.holdExpiresAt;
+      if (
+        typeof body.extendHoldHours === 'number' &&
+        Number.isFinite(body.extendHoldHours) &&
+        body.extendHoldHours > 0
+      ) {
+        const clampedHours = Math.min(24, Math.max(1, Math.round(body.extendHoldHours)));
+        const extendedMs = extendHoldByWorkingHoursMs(
+          Date.parse(existing.holdExpiresAt),
+          nowMs,
+          clampedHours,
+          workSchedule
+        );
+        nextHoldExpiresAt = new Date(extendedMs).toISOString();
+      }
+
+      const validPrefs = new Set(CALLBACK_PREFERENCE_OPTIONS.map((p) => p.id));
+      const nextCallbackPref: ClientCallbackPreference =
+        body.callbackPreference && validPrefs.has(body.callbackPreference)
+          ? body.callbackPreference
+          : existing.callbackPreference ?? 'call_15m';
+
+      const shouldCloseSlaContact =
+        body.markContacted === true ||
+        (stageChanged && nextStage !== 'new_hold');
+
+      const nextSlaState = {
+        ...existing.slaState!,
+        firstContactedAt:
+          existing.slaState?.firstContactedAt ??
+          (shouldCloseSlaContact ? nowIso : null),
+      };
+
+      const nextDocumentMeta: OrderDocumentMeta | undefined = body.documentMeta
+        ? sanitizeOrderDocumentMeta({
+            ...(existing.documentMeta ?? {}),
+            ...body.documentMeta,
+          })
+        : existing.documentMeta;
+
+      const nextTotalBudgetRub =
+        typeof body.totalBudgetRub === 'number' &&
+        Number.isFinite(body.totalBudgetRub) &&
+        body.totalBudgetRub >= 0
+          ? Math.round(body.totalBudgetRub)
+          : typeof nextDocumentMeta?.customPriceRub === 'number' &&
+              nextDocumentMeta.customPriceRub > 0
+            ? nextDocumentMeta.customPriceRub
+            : existing.totalBudgetRub;
 
       const updatedOrder: CrmOrderRecord = {
         ...existing,
         stage: nextStage,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowIso,
+        holdExpiresAt: nextHoldExpiresAt,
+        callbackPreference: nextCallbackPref,
+        slaState: nextSlaState,
+        totalBudgetRub: nextTotalBudgetRub,
+        documentMeta: nextDocumentMeta,
         producerNotes:
           typeof body.producerNotes === 'string'
             ? body.producerNotes.slice(0, 2000)
@@ -1741,11 +2276,13 @@ async function startServer() {
           notifyOnNewOrder?: boolean;
           notifyOnStageChange?: boolean;
         };
+        workSchedule?: Partial<StudioWorkScheduleConfig>;
       };
 
       const crmStore = readOrdersCrmStore();
       const prevTg = crmStore.settings.telegram;
       const prevWh = crmStore.settings.webhook;
+      const prevSchedule = sanitizeWorkScheduleConfig(crmStore.settings.workSchedule);
 
       const incomingTgToken = body.telegram?.botToken;
       const nextBotToken =
@@ -1758,6 +2295,13 @@ async function startServer() {
         incomingWhSecret === undefined || incomingWhSecret.startsWith('••••')
           ? prevWh.hmacSecret
           : incomingWhSecret.trim().slice(0, 180);
+
+      const nextWorkSchedule = body.workSchedule
+        ? sanitizeWorkScheduleConfig({
+            ...prevSchedule,
+            ...body.workSchedule,
+          })
+        : prevSchedule;
 
       crmStore.settings = {
         telegram: {
@@ -1798,12 +2342,14 @@ async function startServer() {
               ? body.webhook.notifyOnStageChange
               : prevWh.notifyOnStageChange,
         },
+        workSchedule: nextWorkSchedule,
       };
 
       writeOrdersCrmStore(crmStore);
 
       res.json({
         ok: true,
+        operatingRegime: resolveStudioOperatingRegime(Date.now(), nextWorkSchedule),
         settings: {
           telegram: {
             enabled: crmStore.settings.telegram.enabled,
@@ -1821,6 +2367,7 @@ async function startServer() {
             notifyOnNewOrder: crmStore.settings.webhook.notifyOnNewOrder,
             notifyOnStageChange: crmStore.settings.webhook.notifyOnStageChange,
           },
+          workSchedule: nextWorkSchedule,
         },
       });
     }
@@ -2079,6 +2626,115 @@ async function startServer() {
   );
 
   // =========================================================================
+  // Live Regional FM Broadcast Proxy & Curated Station Directory
+  // =========================================================================
+
+  app.get('/api/radio/stations', (_req, res) => {
+    res.json({
+      ok: true,
+      stations: VERIFIED_LIVE_REGIONAL_STATIONS.map((st) => ({
+        id: st.id,
+        title: st.title,
+        frequencyBadge: st.frequencyBadge,
+        formatSummary: st.formatSummary,
+        liveProxyUrl: `/api/radio/live-stream?station=${encodeURIComponent(st.id)}`,
+        fallbackAircheckUrl: st.fallbackAircheckUrl,
+      })),
+    });
+  });
+
+  app.get('/api/radio/live-stream', async (req, res) => {
+    const rate = radioStreamLimiter.consume(resolveClientIp(req));
+    if (!rate.allowed) {
+      res.setHeader('Retry-After', String(rate.retryAfterSec));
+      res.status(429).json({ error: 'Слишком частые подключения к эфиру. Подождите немного.' });
+      return;
+    }
+
+    const requestedId =
+      typeof req.query.station === 'string' ? req.query.station.trim() : 'kp_reg_91';
+    const station =
+      VERIFIED_LIVE_REGIONAL_STATIONS.find((s) => s.id === requestedId) ??
+      VERIFIED_LIVE_REGIONAL_STATIONS[0];
+
+    const serveFallbackAircheck = () => {
+      if (res.headersSent) return;
+      const relPath = station.fallbackAircheckUrl.replace(/^\//, '');
+      const absPublic = path.join(__dirname, 'public', relPath);
+      const absDist = path.join(__dirname, 'dist', relPath);
+      const targetFile = fs.existsSync(absPublic)
+        ? absPublic
+        : fs.existsSync(absDist)
+          ? absDist
+          : null;
+      if (targetFile) {
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('X-FMWorks-Radio-Mode', 'fallback-aircheck');
+        fs.createReadStream(targetFile).pipe(res);
+      } else {
+        res.status(502).end();
+      }
+    };
+
+    const ac = new AbortController();
+    const connectTimeout = setTimeout(() => ac.abort(), 5500);
+    const maxSessionTimer = setTimeout(() => ac.abort(), 45_000);
+
+    const cleanup = () => {
+      clearTimeout(connectTimeout);
+      clearTimeout(maxSessionTimer);
+      ac.abort();
+    };
+    req.on('close', cleanup);
+
+    try {
+      const upstream = await fetch(station.streamUrl, {
+        headers: {
+          'User-Agent': 'FMWorksBroadcastBench/1.0',
+          Accept: 'audio/mpeg, audio/*;q=0.9, */*;q=0.5',
+        },
+        signal: ac.signal,
+      });
+      clearTimeout(connectTimeout);
+
+      if (!upstream.ok || !upstream.body) {
+        cleanup();
+        serveFallbackAircheck();
+        return;
+      }
+
+      const contentType = upstream.headers.get('content-type') || 'audio/mpeg';
+      res.status(200);
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Cache-Control', 'no-store, no-transform');
+      res.setHeader('X-FMWorks-Radio-Mode', 'live-regional-stream');
+
+      const reader = upstream.body.getReader();
+      while (!ac.signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done || !value) break;
+        if (res.writableEnded || res.destroyed) break;
+        const canContinue = res.write(Buffer.from(value));
+        if (!canContinue) {
+          await new Promise<void>((resolve) => res.once('drain', resolve));
+        }
+      }
+      if (!res.writableEnded) {
+        res.end();
+      }
+    } catch {
+      if (!res.headersSent) {
+        serveFallbackAircheck();
+      } else if (!res.writableEnded) {
+        res.end();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  // =========================================================================
   // Existing 15-Second Duel Direct Audio Endpoints (preserved)
   // =========================================================================
 
@@ -2176,9 +2832,23 @@ async function startServer() {
     }
   );
 
+  const srcAssetsImagesPath = path.join(__dirname, 'src', 'assets', 'images');
+  if (fs.existsSync(srcAssetsImagesPath)) {
+    app.use(
+      '/src/assets/images',
+      express.static(srcAssetsImagesPath, { maxAge: '7d', fallthrough: false })
+    );
+  }
+
+  const publicAssetsRoot = path.join(__dirname, 'public', 'assets');
+  if (fs.existsSync(publicAssetsRoot)) {
+    app.use('/assets', express.static(publicAssetsRoot, { maxAge: '1d' }));
+  }
+
   const isProd =
     process.env.NODE_ENV === 'production' ||
-    process.env.npm_lifecycle_event === 'start';
+    process.env.npm_lifecycle_event === 'start' ||
+    Boolean(process.env.K_SERVICE);
 
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
@@ -2195,9 +2865,25 @@ async function startServer() {
     });
   }
 
+  // Фоновый сторожевой таймер SLA (проверка опозданий звонка каждые 30 секунд)
+  const slaSweepInterval = setInterval(() => {
+    try {
+      runSlaEscalationSweep();
+    } catch {
+      // Не прерываем цикл сервера при фоновой сверке SLA
+    }
+  }, 30_000);
+  if (typeof slaSweepInterval.unref === 'function') {
+    slaSweepInterval.unref();
+  }
+
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`FMWorks server listening on http://0.0.0.0:${PORT}`);
   });
 }
 
-void startServer();
+startServer().catch((err) => {
+  console.error('Failed to start FMWorks server:', err);
+  process.exit(1);
+});
+

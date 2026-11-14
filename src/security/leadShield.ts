@@ -566,6 +566,33 @@ export function validateCompanyOrInnField(rawValue: string): CompanyOrInnValidat
     };
   }
 
+  // Комбинированная строка вида «ООО "Альфа" · ИНН 7707083893»
+  const embeddedInnMatch = cleaned.match(/(?:^|[\s·,;(/])инн[\s:№-]*(\d[\d\s-]{6,18}\d)/i);
+  if (embeddedInnMatch) {
+    const innDigits = embeddedInnMatch[1].replace(/\D/g, '');
+    if (innDigits.length !== 10 && innDigits.length !== 12) {
+      return {
+        valid: false,
+        normalizedValue: cleaned,
+        innVerified: false,
+        error: 'ИНН должен содержать 10 цифр (юрлицо) или 12 цифр (ИП)',
+      };
+    }
+    if (!verifyRussianInnChecksum(innDigits)) {
+      return {
+        valid: false,
+        normalizedValue: cleaned,
+        innVerified: false,
+        error: 'Контрольное число ИНН ФНС не совпадает — проверьте цифры ИНН',
+      };
+    }
+    return {
+      valid: true,
+      normalizedValue: cleaned,
+      innVerified: true,
+    };
+  }
+
   return {
     valid: true,
     normalizedValue: cleaned,

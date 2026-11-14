@@ -13,6 +13,7 @@ import {
   formatAudioTime,
 } from '../data/audioworksCommercial';
 import { DuelCmsSpotSpec } from '../data/studioCmsTypes';
+import { PremiumAcousticWaveform } from './PremiumAcousticWaveform';
 
 export function FifteenSecDuel() {
   const { snapshot } = useStudioCms();
@@ -287,23 +288,27 @@ export function FifteenSecDuel() {
     }
   };
 
-  const renderWaveformStrip = (side: DuelTrackKind, progressRatio: number, isActive: boolean) => {
+  const renderWaveformStrip = (
+    side: DuelTrackKind,
+    progressRatio: number,
+    isActive: boolean
+  ) => {
     const isRadio = side === 'radio';
 
     return (
       <div
-        aria-hidden="true"
-        className={`h-1 w-full rounded-full overflow-hidden ${
+        className={
           isRadio
-            ? 'bg-[#111111]/12 dark:bg-white/14'
-            : 'bg-white/16'
-        }`}
+            ? 'text-[#111111] dark:text-[#F4F3EF]'
+            : 'text-white'
+        }
       >
-        <div
-          style={{ transform: `scaleX(${isActive ? Math.max(0.02, progressRatio) : 0})` }}
-          className={`h-full w-full origin-left transition-transform duration-100 ${
-            isRadio ? 'bg-[#111111] dark:bg-white' : 'bg-[#FF4820]'
-          }`}
+        <PremiumAcousticWaveform
+          seedKey={`duel-${side}`}
+          isActive={isActive}
+          progressRatio={isActive ? progressRatio : 0}
+          variant={isRadio ? 'adaptive' : 'dark-surface'}
+          heightClass="h-8"
         />
       </div>
     );
@@ -380,7 +385,7 @@ export function FifteenSecDuel() {
           <button
             type="button"
             onClick={() => toggleSide(side)}
-            className={`min-h-[46px] px-5 py-2.5 rounded-full inline-flex items-center gap-2.5 text-xs sm:text-sm font-semibold tracking-tight transition-colors cursor-pointer whitespace-nowrap ${
+            className={`w-full sm:w-auto min-h-[46px] px-5 py-2.5 rounded-full inline-flex items-center justify-center sm:justify-start gap-2.5 text-xs sm:text-sm font-semibold tracking-tight transition-colors cursor-pointer sm:whitespace-nowrap ${
               isRadio
                 ? isActive
                   ? 'bg-[#111111] text-white dark:bg-white dark:text-[#111111]'
@@ -416,7 +421,7 @@ export function FifteenSecDuel() {
               : 'border-white/12'
           }`}
         >
-          <p className="text-[15px] sm:text-[17px] leading-relaxed font-medium">
+          <p className="text-[15px] sm:text-[17px] leading-[1.8] font-medium">
             {spec.phrases.map((phrase, idx) => {
               const isPhraseNow =
                 isActive &&
@@ -426,8 +431,8 @@ export function FifteenSecDuel() {
               let phraseClass = '';
               if (isPhraseNow) {
                 phraseClass = isRadio
-                  ? 'bg-[#111111] text-white dark:bg-white dark:text-[#111111] px-1.5 py-0.5 rounded transition-colors'
-                  : 'bg-[#FF4820] text-white px-1.5 py-0.5 rounded transition-colors';
+                  ? 'bg-[#111111] text-white dark:bg-white dark:text-[#111111] px-1 rounded [box-decoration-break:clone] transition-colors'
+                  : 'bg-[#FF4820] text-white px-1 rounded [box-decoration-break:clone] transition-colors';
               } else if (!isRadio && phrase.isAccent) {
                 phraseClass = 'text-white font-semibold';
               } else {
@@ -437,8 +442,9 @@ export function FifteenSecDuel() {
               }
 
               return (
-                <span key={`${spec.id}-p-${idx}`}>
-                  <span className={phraseClass}>{phrase.text}</span>{' '}
+                <span key={`${spec.id}-p-${idx}`} className={phraseClass}>
+                  {phrase.text}
+                  {idx < spec.phrases.length - 1 ? ' ' : ''}
                 </span>
               );
             })}

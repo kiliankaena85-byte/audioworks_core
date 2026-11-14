@@ -1,5 +1,5 @@
-import { LayaPersona } from '../engine/layaTypes';
-import { AUDIOWORKS_TOTAL_DURATION_SEC, AUDIOWORKS_WAV_URL } from './audioworksCommercial';
+import type { LayaPersona } from '../engine/layaTypes.ts';
+import { AUDIOWORKS_TOTAL_DURATION_SEC, AUDIOWORKS_WAV_URL } from './audioworksCommercial.ts';
 
 export type CanonicalCaseId =
   | 'audioworks-reel'
@@ -59,7 +59,7 @@ export const FLAGSHIP_STUDIO_REEL: BrandCasePoster = {
   previewStartSec: 7.2,
   previewDurationSec: 4,
   coverImageUrl:
-    'https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?auto=format&fit=crop&w=1600&q=85',
+    '/src/assets/images/hero_broadcast_booth_wide_1794605231279.jpg',
   coverImageAlt: 'Студийная консоль и микрофон продакшна FMWorks в мягком свете',
   editorialSurfaceBg: 'bg-[#151417]',
   posterGradientClass: 'bg-gradient-to-br from-[#18181C] via-[#121216] to-[#0B0B0D]',
@@ -82,8 +82,8 @@ export const BRAND_CASES: BrandCasePoster[] = [
     previewStartSec: 15.6,
     previewDurationSec: 4,
     coverImageUrl:
-      'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?auto=format&fit=crop&w=1600&q=85',
-    coverImageAlt: 'Утренний горячий кофе и ремесленная гастрономическая подача для кейса Дмитрогорский продукт',
+      '/src/assets/images/hero_artisan_bakery_taste_1794605229940.jpg',
+    coverImageAlt: 'Свежий горячий ремесленный хлеб с паром в утреннем луче для кейса Дмитрогорский продукт',
     editorialSurfaceBg: 'bg-[#2A1410]',
     posterGradientClass: 'bg-gradient-to-br from-[#3D1D16] via-[#2A1410] to-[#170B08]',
     posterGlowClass: 'bg-[#FF6B3D]/20',
@@ -103,7 +103,7 @@ export const BRAND_CASES: BrandCasePoster[] = [
     previewStartSec: 37.0,
     previewDurationSec: 4,
     coverImageUrl:
-      'https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?auto=format&fit=crop&w=1400&q=85',
+      '/src/assets/images/case_estate_cinema_1794399406227.jpg',
     coverImageAlt: 'Современная фасадная архитектура жилого квартала бизнес-класса',
     editorialSurfaceBg: 'bg-[#12231D]',
     posterGradientClass: 'bg-gradient-to-br from-[#143D30] via-[#0E2B22] to-[#071712]',
@@ -122,7 +122,7 @@ export const BRAND_CASES: BrandCasePoster[] = [
     previewStartSec: 0,
     previewDurationSec: 4,
     coverImageUrl:
-      'https://images.unsplash.com/photo-1629909613654-28e377c37b09?auto=format&fit=crop&w=1400&q=85',
+      '/src/assets/images/industry_medicine_clinic_1794514558724.jpg',
     coverImageAlt: 'Светлый скандинавский интерьер многопрофильной клиники',
     editorialSurfaceBg: 'bg-[#132036]',
     posterGradientClass: 'bg-gradient-to-br from-[#162747] via-[#101C35] to-[#080F1E]',
@@ -447,7 +447,7 @@ export const APPROACH_NEURO_STUDIES: NeuroStudyProofCard[] = [
 
 export const APPROACH_STUDIO_PHOTO = {
   imageUrl:
-    'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?auto=format&fit=crop&w=1000&q=85',
+    '/src/assets/images/approach_condenser_mic_portrait_1794605230714.jpg',
   imageAlt: 'Крупный план студийного конденсаторного микрофона в мягком тёплом свете',
   caption: 'Собственный контроль качества на каждом этапе — от текста до паспорта ролика',
 } as const;

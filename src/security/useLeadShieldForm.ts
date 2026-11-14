@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { OrderMediaPlanSnapshot } from '../data/orderCrmTypes';
+import type { StudioPaymentChannel } from '../data/orderDraftStore';
+import { ClientCallbackPreference } from '../data/slaWorkCalendar';
 import {
   DEFAULT_LEAD_MAX_ATTEMPTS,
   DEFAULT_LEAD_MIN_INTERVAL_MS,
@@ -22,11 +24,13 @@ export interface ServerLeadChallenge {
 export interface SubmitProtectedLeadInput {
   source: 'order_page' | 'standalone_hold_modal' | 'quick_order_drawer';
   checkoutMode: 'air_plus_production' | 'production_only';
+  paymentChannel?: StudioPaymentChannel;
   orderNumberCandidate: string;
   formatLabel: string;
   totalBudgetRub?: number;
   contactLine: string;
   companyLine: string;
+  callbackPreference?: ClientCallbackPreference;
   briefText: string;
   hasVoiceRecording: boolean;
   voiceDurationSec?: number;
@@ -35,6 +39,7 @@ export interface SubmitProtectedLeadInput {
   mediaPlanSnapshot?: OrderMediaPlanSnapshot | null;
   isReturningFastTrack: boolean;
   requireBriefOrVoice: boolean;
+  pdnConsentAccepted?: boolean;
   /** Если вызывающий компонент (например, OrderPage) уже зафиксировал попытку через useRateLimit */
   skipClientRateConsume?: boolean;
 }
@@ -46,6 +51,11 @@ export interface SubmitProtectedLeadResult {
   conversionAllowed: boolean;
   verifiedConversionSeal: string | null;
   innVerified: boolean;
+  holdExpiresAtMs?: number;
+  slaWindowStartAtMs?: number;
+  slaDeadlineAtMs?: number;
+  promisedWindowLabel?: string;
+  rescueToken?: string | null;
   remainingAttempts?: number;
   retryAfterSec?: number;
   contactError?: string;
@@ -267,6 +277,11 @@ export function useLeadShieldForm(
           conversionAllowed?: boolean;
           verifiedConversionSeal?: string | null;
           innVerified?: boolean;
+          holdExpiresAt?: string;
+          slaWindowStartAt?: string;
+          slaDeadlineAt?: string;
+          promisedWindowLabel?: string;
+          rescueToken?: string | null;
           contactError?: string;
           companyError?: string;
           taskError?: string;
@@ -338,6 +353,16 @@ export function useLeadShieldForm(
           );
         }
 
+        const parsedHoldExp = payload.holdExpiresAt
+          ? Date.parse(payload.holdExpiresAt)
+          : NaN;
+        const parsedSlaStart = payload.slaWindowStartAt
+          ? Date.parse(payload.slaWindowStartAt)
+          : NaN;
+        const parsedSlaDead = payload.slaDeadlineAt
+          ? Date.parse(payload.slaDeadlineAt)
+          : NaN;
+
         return {
           ok: true,
           verdict: finalVerdict,
@@ -345,6 +370,11 @@ export function useLeadShieldForm(
           conversionAllowed,
           verifiedConversionSeal: payload.verifiedConversionSeal ?? null,
           innVerified: Boolean(payload.innVerified),
+          holdExpiresAtMs: Number.isFinite(parsedHoldExp) ? parsedHoldExp : undefined,
+          slaWindowStartAtMs: Number.isFinite(parsedSlaStart) ? parsedSlaStart : undefined,
+          slaDeadlineAtMs: Number.isFinite(parsedSlaDead) ? parsedSlaDead : undefined,
+          promisedWindowLabel: payload.promisedWindowLabel,
+          rescueToken: payload.rescueToken ?? null,
           remainingAttempts:
             payload.rateLimit?.remainingAttempts ??
             consumedLocalRate.remainingAttempts ??

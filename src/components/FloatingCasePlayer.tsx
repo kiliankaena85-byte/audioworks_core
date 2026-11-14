@@ -2,19 +2,12 @@ import { Pause, SkipForward, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { CasePlayerSnapshot } from '../audio/casePlayerEngine';
 import { formatAudioTime } from '../data/audioworksCommercial';
+import { PremiumAcousticWaveform } from './PremiumAcousticWaveform';
 
 interface FloatingCasePlayerProps {
   playerSnap: CasePlayerSnapshot;
   onStop: () => void;
   onNext: () => void;
-}
-
-function getCapsuleBarHeightClass(level: number): string {
-  if (level >= 0.78) return 'h-4';
-  if (level >= 0.58) return 'h-3.5';
-  if (level >= 0.42) return 'h-2.5';
-  if (level >= 0.28) return 'h-2';
-  return 'h-1.5';
 }
 
 export function FloatingCasePlayer({
@@ -52,15 +45,15 @@ export function FloatingCasePlayer({
                 <Pause className="w-4 h-4 fill-current" aria-hidden="true" />
               </button>
 
-              <div aria-hidden="true" className="hidden sm:flex items-end gap-0.5 h-5 shrink-0">
-                {playerSnap.waveBars.map((val, idx) => (
-                  <span
-                    key={idx}
-                    className={`w-0.5 bg-[#FF4820] rounded-full transition-all duration-100 ${getCapsuleBarHeightClass(
-                      val
-                    )}`}
-                  />
-                ))}
+              <div aria-hidden="true" className="hidden sm:block w-14 shrink-0">
+                <PremiumAcousticWaveform
+                  seedKey={active.id}
+                  isActive={true}
+                  progressRatio={playerSnap.progress}
+                  spectrumBands={playerSnap.spectrumBands}
+                  variant="dark-surface"
+                  heightClass="h-6"
+                />
               </div>
 
               <div className="min-w-0">

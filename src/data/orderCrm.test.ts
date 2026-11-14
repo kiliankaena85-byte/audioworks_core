@@ -8,6 +8,8 @@ import {
   exportCrmOrdersToCsv,
   formatEdoInvoiceSpecificationDocument,
   formatTelegramOrderDispatchMessage,
+  getCrmStageMetaForOrder,
+  STUDIO_PRODUCTION_CRM_STAGES,
 } from './orderCrmTypes';
 import {
   buildAttributionAndSearchLiftProtocol,
@@ -25,6 +27,15 @@ test('CRM_ORDER_STAGES содержит все 6 операционных эта
   assert.equal(CRM_ORDER_STAGES[0].nextStage, 'quota_locked');
   assert.equal(CRM_ORDER_STAGES[5].id, 'completed_ltv');
   assert.equal(CRM_ORDER_STAGES[5].nextStage, null);
+  assert.equal(STUDIO_PRODUCTION_CRM_STAGES.length, 6);
+  assert.equal(
+    getCrmStageMetaForOrder('new_hold', 'production_only').shortLabel,
+    'Проверка заявки и реквизитов'
+  );
+  assert.equal(
+    getCrmStageMetaForOrder('new_hold', 'air_plus_production').shortLabel,
+    'Новый резерв (4ч)'
+  );
 });
 
 test('computeOrderHoldStatus корректно различает активный 4ч холд, истекающий (<45м), истёкший и закреплённую квоту', () => {
@@ -67,7 +78,8 @@ test('Форматтеры счёта ЭДО, Telegram-уведомления, W
   assert.ok(edoDoc.includes(seedOrder.orderNumber));
   assert.ok(edoDoc.includes('Business FM'));
   assert.ok(edoDoc.includes('Серебряный Дождь'));
-  assert.ok(edoDoc.includes('7707083893'));
+  assert.ok(edoDoc.includes('Заказчик (организация / ИП): ООО «Квартал Инвест»'));
+  assert.ok(edoDoc.includes('ИНН Заказчика: 7707083893 (ИНН подтверждён по ключу ФНС)'));
 
   const tgText = formatTelegramOrderDispatchMessage(seedOrder, 'order.created');
   assert.ok(tgText.includes('НОВЫЙ ПРИОРИТЕТНЫЙ ХОЛД 4Ч'));
@@ -85,6 +97,33 @@ test('Форматтеры счёта ЭДО, Telegram-уведомления, W
   const csv = exportCrmOrdersToCsv([seedOrder]);
   assert.ok(csv.includes('Номер заказа;Дата создания;Этап воронки'));
   assert.ok(csv.includes(seedOrder.orderNumber));
+});
+
+test('Форматтеры ЭДО и Telegram корректно обрабатывают договорную цену (custom_consult) и оплату картой физлица (54-ФЗ)', () => {
+  const [seedOrder] = createSeedCrmOrders(1_760_000_000_000);
+  const consultCardOrder = {
+    ...seedOrder,
+    orderNumber: 'FM-2999',
+    checkoutMode: 'production_only' as const,
+    paymentChannel: 'card_online' as const,
+    formatLabel: 'Индивидуальный проект · Консультация',
+    totalBudgetRub: 0,
+    companyOrInn: '',
+    mediaPlanSnapshot: null,
+  };
+
+  const edoDoc = formatEdoInvoiceSpecificationDocument(consultCardOrder);
+  assert.ok(edoDoc.includes('РАМОЧНЫЙ ДОГОВОР-ОФЕРТА, СПЕЦИФИКАЦИЯ И СЧЁТ-ОФЕРТА ДЛЯ ЭДО'));
+  assert.ok(edoDoc.includes('Договорная цена'));
+  assert.ok(edoDoc.includes('54-ФЗ'));
+  assert.ok(edoDoc.includes('100% предоплаты'));
+  assert.ok(edoDoc.includes('Проверка заявки и реквизитов'));
+  assert.ok(!edoDoc.includes('Новый резерв (4ч)'));
+
+  const tgText = formatTelegramOrderDispatchMessage(consultCardOrder, 'order.created');
+  assert.ok(tgText.includes('Договорная цена (по оценке продюсера)'));
+  assert.ok(tgText.includes('ЮKassa / Робокасса, 54-ФЗ'));
+  assert.ok(tgText.includes('01. Проверка заявки и реквизитов'));
 });
 
 test('Научный контур I: аудит 5+ касаний и 12-недельная кривая памяти доказывают кратное преимущество пульсирующих волн', () => {
@@ -167,3 +206,27 @@ test('Тексты CRM-сделок, счёта ЭДО и Научного пл�
     );
   }
 });
+
+test('Cloud Run prod startup: серверные модули orderCrmTypes.ts и leadShield.ts загружаются чистым Node ESM без tsx', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const out = execFileSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `import { createSeedCrmOrders, CRM_ORDER_STAGES } from './src/data/orderCrmTypes.ts';
+       import { SECURITY_DEFENSE_LAYERS } from './src/security/leadShield.ts';
+       console.log(JSON.stringify({ stages: CRM_ORDER_STAGES.length, seeds: createSeedCrmOrders().length, layers: SECURITY_DEFENSE_LAYERS.length }));`,
+    ],
+    { encoding: 'utf8' }
+  );
+  const parsed = JSON.parse(out.trim()) as {
+    stages: number;
+    seeds: number;
+    layers: number;
+  };
+  assert.equal(parsed.stages, 6);
+  assert.equal(parsed.seeds, 3);
+  assert.ok(parsed.layers >= 4);
+});
+

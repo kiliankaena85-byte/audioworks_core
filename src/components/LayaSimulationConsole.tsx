@@ -16,10 +16,14 @@ import {
   ContrastStageSnapshot,
 } from '../audio/contrastAudioEngine';
 import { duelAudioStore, DuelStoreSnapshot } from '../audio/duelAudioStore';
+import { BRAND_DOMAIN_OPTIONS, BrandDomainVariant } from '../data/brandKitData';
 import { LAYA_SIMULATION_TRACES } from '../engine/layaEngine';
 import { useLayaDecision } from '../engine/LayaContext';
 
 interface LayaSimulationConsoleProps {
+  mode?: 'floating' | 'embedded';
+  activeBrandVariant?: BrandDomainVariant;
+  onSelectBrandVariant?: (variant: BrandDomainVariant) => void;
   isCasePlayerVisible?: boolean;
   hasStickyBottomBar?: boolean;
   onOpenBrandKit?: () => void;
@@ -27,6 +31,9 @@ interface LayaSimulationConsoleProps {
 }
 
 export function LayaSimulationConsole({
+  mode = 'floating',
+  activeBrandVariant = 'fmworks_reg',
+  onSelectBrandVariant,
   isCasePlayerVisible = false,
   hasStickyBottomBar = false,
   onOpenBrandKit,
@@ -55,6 +62,7 @@ export function LayaSimulationConsole({
   }, []);
 
   useEffect(() => {
+    if (mode === 'embedded') return;
     let scrollTimer: number | null = null;
     const onScroll = () => {
       setIsScrolling(true);
@@ -73,7 +81,7 @@ export function LayaSimulationConsole({
         window.clearTimeout(scrollTimer);
       }
     };
-  }, []);
+  }, [mode]);
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -82,11 +90,11 @@ export function LayaSimulationConsole({
     const objectUrl = URL.createObjectURL(file);
     casePlayerEngine.stop();
 
-    if (typeof window !== 'undefined') {
+    if (mode === 'floating' && typeof window !== 'undefined') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    contrastAudioEngine.loadCustomShowreel(objectUrl, file.name, true);
+    contrastAudioEngine.loadCustomShowreel(objectUrl, file.name, mode === 'floating');
     event.target.value = '';
   };
 
@@ -96,6 +104,206 @@ export function LayaSimulationConsole({
     await duelAudioStore.attachPairOrList(files);
     event.target.value = '';
   };
+
+  if (mode === 'embedded') {
+    return (
+      <section
+        data-testid="laya-admin-embedded-console"
+        aria-label="Пульт персонализации Laya AI и фирменного стиля FMWorks"
+        className="space-y-6"
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".mp3,.wav,audio/mpeg,audio/wav,audio/*"
+          onChange={handleFileChange}
+          aria-label="Выбрать локальный аудиофайл шоурила (.mp3 или .wav)"
+          data-testid="laya-custom-audio-input"
+          className="sr-only"
+        />
+        <input
+          ref={duelPairInputRef}
+          type="file"
+          multiple
+          accept=".mp3,.wav,audio/mpeg,audio/wav,audio/*"
+          onChange={handleDuelPairChange}
+          aria-label="Выбрать пару роликов 15 секунд для сравнения"
+          className="sr-only"
+        />
+
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+          {/* Левая колонка: Симуляция профилей аудитории Laya AI */}
+          <div className="min-w-0 xl:col-span-7 rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-6 space-y-5">
+            <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-[#111111]/10 dark:border-white/10">
+              <div className="space-y-1">
+                <h2 className="text-lg font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF]">
+                  Симуляция профилей аудитории (Laya AI)
+                </h2>
+                <p className="text-xs text-[#111111]/62 dark:text-[#F4F3EF]/62">
+                  Переключайте цифровой след гостя, чтобы проверить адаптацию первого экрана, порядка кейсов и рекомендуемого тарифа на витрине.
+                </p>
+              </div>
+
+              <div className="text-xs font-medium text-[#111111]/68 dark:text-[#F4F3EF]/68 tabular-nums">
+                Активный профиль:{' '}
+                <strong className="text-[#FF4820]">
+                  {decision.profileBadgeLabel ?? decision.choice}
+                </strong>{' '}
+                · {Math.round(decision.confidence * 100)}%
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              {LAYA_SIMULATION_TRACES.map((trace) => {
+                const isSelected =
+                  activeTraceId === trace.id ||
+                  (!activeTraceId &&
+                    trace.id === 'guest_low_conf' &&
+                    decision.choice === 'default');
+
+                return (
+                  <button
+                    key={trace.id}
+                    type="button"
+                    data-testid={`laya-trace-btn-${trace.id}`}
+                    onClick={() => selectSimulationTrace(trace)}
+                    aria-pressed={isSelected}
+                    className={`w-full text-left px-4 py-3 rounded-xl text-xs transition-colors cursor-pointer border ${
+                      isSelected
+                        ? 'bg-[#111111] text-[#F7F6F2] border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:border-[#F4F3EF] font-semibold'
+                        : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] hover:border-[#FF4820] text-[#111111] dark:text-[#F4F3EF] border-[#111111]/10 dark:border-white/10'
+                    }`}
+                  >
+                    <span className="block text-sm font-semibold">
+                      {trace.buttonLabel}
+                    </span>
+                    <span
+                      className={`block text-xs mt-0.5 ${
+                        isSelected
+                          ? 'text-[#F7F6F2]/72 dark:text-[#0D0D0F]/72 font-normal'
+                          : 'text-[#111111]/58 dark:text-[#F4F3EF]/58'
+                      }`}
+                    >
+                      {trace.traceSummary}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Правая колонка: Brand Kit и локальный тест аудиодорожек */}
+          <div className="min-w-0 xl:col-span-5 space-y-6">
+            <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-6 space-y-4">
+              <div className="space-y-1">
+                <h3 className="text-base font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF]">
+                  Фирменный знак и Brand Kit
+                </h3>
+                <p className="text-xs text-[#111111]/62 dark:text-[#F4F3EF]/62">
+                  Выберите активное начертание логотипа в шапке и подвале сайта или откройте векторный пакет для скачивания SVG и PNG.
+                </p>
+              </div>
+
+              {onSelectBrandVariant && (
+                <div
+                  role="group"
+                  aria-label="Вариант логотипа на сайте"
+                  className="grid grid-cols-1 gap-2"
+                >
+                  {BRAND_DOMAIN_OPTIONS.map((opt) => {
+                    const active = activeBrandVariant === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        data-testid={`admin-brand-variant-${opt.id}`}
+                        onClick={() => onSelectBrandVariant(opt.id)}
+                        aria-pressed={active}
+                        className={`px-3.5 py-2.5 rounded-xl text-left text-xs border transition-colors cursor-pointer flex items-center justify-between gap-2 ${
+                          active
+                            ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:border-[#F4F3EF] font-semibold'
+                            : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111] dark:text-[#F4F3EF] border-[#111111]/10 dark:border-white/10 hover:border-[#FF4820]'
+                        }`}
+                      >
+                        <span>{opt.label}</span>
+                        <span className="opacity-65 truncate">{opt.description}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {onOpenBrandKit && (
+                <button
+                  type="button"
+                  data-testid="laya-open-brand-kit-btn"
+                  onClick={onOpenBrandKit}
+                  className="w-full min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#FF4820] hover:bg-[#E63E19] text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <Palette className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span>Открыть Brand Kit (SVG / PNG)</span>
+                </button>
+              )}
+            </div>
+
+            <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-6 space-y-4">
+              <div className="space-y-1">
+                <h3 className="text-base font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF]">
+                  Быстрая проверка локальных аудиофайлов
+                </h3>
+                <p className="text-xs text-[#111111]/62 dark:text-[#F4F3EF]/62">
+                  Подключите свой локальный файл в браузерной сессии, чтобы послушать пульсацию волны на первом экране или в секции дуэли без записи на сервер.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#111111] hover:bg-[#27272A] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-white text-xs font-semibold leading-snug text-center transition-colors cursor-pointer"
+              >
+                <Music className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span>Загрузить тестовый шоурил (.mp3 / .wav)</span>
+              </button>
+
+              {stageSnap.hasCustomAudio && stageSnap.customAudioName && (
+                <div
+                  data-testid="custom-audio-active-banner"
+                  className="flex items-center justify-between gap-2 text-xs text-[#FF4820] font-medium"
+                >
+                  <span className="inline-flex items-center gap-1.5 min-w-0">
+                    <Check className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    <span className="truncate">Подключён: {stageSnap.customAudioName}</span>
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => contrastAudioEngine.resetCustomShowreel()}
+                    className="inline-flex items-center gap-1 text-[#111111]/65 dark:text-[#F4F3EF]/65 hover:text-[#111111] dark:hover:text-white shrink-0 cursor-pointer"
+                  >
+                    <RotateCcw className="w-3 h-3" aria-hidden="true" />
+                    <span>Сброс</span>
+                  </button>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => duelPairInputRef.current?.click()}
+                className="w-full min-h-[40px] inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-[#111111] dark:text-[#F4F3EF] text-xs font-semibold leading-snug text-center transition-colors cursor-pointer"
+              >
+                <Upload className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
+                <span>
+                  {duelSnap.radioTrack && duelSnap.audioworksTrack
+                    ? 'Обновить 2 WAV дуэли «Зерно и Свет»'
+                    : 'Подключить 2 WAV дуэли «Зерно и Свет»'}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   const bottomOffsetClass = hasStickyBottomBar
     ? isCasePlayerVisible
@@ -111,7 +319,6 @@ export function LayaSimulationConsole({
         isScrolling && !isOpen ? 'max-md:opacity-40' : 'opacity-100'
       }`}
     >
-      {/* Hidden File Picker for Local .mp3 / .wav Studio Showreel */}
       <input
         ref={fileInputRef}
         type="file"
@@ -141,7 +348,6 @@ export function LayaSimulationConsole({
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             className="mb-3 w-[calc(100vw-1.75rem)] max-w-sm rounded-3xl bg-[#121216]/96 text-[#F4F3EF] border border-white/14 shadow-2xl p-4 sm:p-5 space-y-4 max-h-[78vh] overflow-y-auto no-scrollbar overscroll-contain"
           >
-            {/* Console Header */}
             <div className="flex items-start justify-between gap-3">
               <div className="space-y-1">
                 <p className="text-sm font-bold tracking-tight text-white">
@@ -166,12 +372,7 @@ export function LayaSimulationConsole({
               </button>
             </div>
 
-            {/* Custom Studio Showreel Uploader */}
             <div className="pt-3.5 border-t border-white/10 space-y-2.5">
-              <p className="text-xs font-medium text-white/68">
-                Приветственный ролик первого экрана
-              </p>
-
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
@@ -181,48 +382,6 @@ export function LayaSimulationConsole({
                 <span>Загрузить свой шоурил (.mp3 / .wav)</span>
               </button>
 
-              {stageSnap.hasCustomAudio && stageSnap.customAudioName ? (
-                <div
-                  data-testid="custom-audio-active-banner"
-                  className="flex items-center justify-between gap-2 pt-1 text-xs text-[#FFB36B]"
-                >
-                  <span className="inline-flex items-center gap-1.5 min-w-0">
-                    <Check className="w-3.5 h-3.5 shrink-0 text-[#FF4820]" aria-hidden="true" />
-                    <span className="truncate">
-                      В эфире: {stageSnap.customAudioName}
-                    </span>
-                  </span>
-
-                  <button
-                    type="button"
-                    onClick={() => contrastAudioEngine.resetCustomShowreel()}
-                    className="inline-flex items-center gap-1 text-white/65 hover:text-white shrink-0 cursor-pointer"
-                  >
-                    <RotateCcw className="w-3 h-3" aria-hidden="true" />
-                    <span>Сброс</span>
-                  </button>
-                </div>
-              ) : (
-                <p className="text-[11px] leading-relaxed text-white/50">
-                  Файл сразу зазвучит на главной сцене, а звуковая волна будет пульсировать под голос диктора.
-                </p>
-              )}
-
-              {/* Пара роликов «Зерно и Свет» (под радио vs AudioWorks) */}
-              <button
-                type="button"
-                onClick={() => duelPairInputRef.current?.click()}
-                className="w-full inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl bg-white/8 hover:bg-white/14 border border-white/12 text-white/90 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
-              >
-                <Upload className="w-3.5 h-3.5 text-[#FF4820]" aria-hidden="true" />
-                <span>
-                  {duelSnap.radioTrack && duelSnap.audioworksTrack
-                    ? 'Обновить 2 WAV дуэли «Зерно и Свет»'
-                    : 'Подключить 2 WAV дуэли «Зерно и Свет»'}
-                </span>
-              </button>
-
-              {/* Brand Kit FMWorks: скачивание векторного логотипа SVG и прозрачного PNG */}
               {onOpenBrandKit && (
                 <button
                   type="button"
@@ -238,7 +397,6 @@ export function LayaSimulationConsole({
                 </button>
               )}
 
-              {/* Админ-панель загрузки эфирных сеток радиостанций */}
               {onOpenRadioAdmin && (
                 <button
                   type="button"
@@ -250,17 +408,12 @@ export function LayaSimulationConsole({
                   className="w-full inline-flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-[#FF4820]/18 hover:bg-[#FF4820]/28 border border-[#FF4820]/40 text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
                 >
                   <Radio className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
-                  <span>📻 База эфира (Админ)</span>
+                  <span>База эфира (Админ)</span>
                 </button>
               )}
             </div>
 
-            {/* 5 Digital Footprint Simulation Traces */}
             <div className="pt-3.5 border-t border-white/10 space-y-2">
-              <p className="text-xs font-medium text-white/68">
-                Симуляция цифрового следа гостя
-              </p>
-
               <div className="space-y-1.5">
                 {LAYA_SIMULATION_TRACES.map((trace) => {
                   const isSelected =
@@ -298,7 +451,6 @@ export function LayaSimulationConsole({
         )}
       </AnimatePresence>
 
-      {/* Неброская круглая кнопка пульта владельца (не перетягивает внимание с основного контента) */}
       <button
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}

@@ -15,10 +15,16 @@ import {
   FLAGSHIP_STUDIO_REEL,
   getOrderedCasesForPersona,
 } from '../data/casesData';
-import { EDITORIAL_FAQ_ITEMS, toggleFaqItem } from '../data/faqData';
+import {
+  EDITORIAL_FAQ_ITEMS,
+  HOME_PROCESS_FAQ_ITEMS,
+  resolveFaqIconKey,
+  toggleFaqItem,
+} from '../data/faqData';
 import {
   EDITORIAL_PRICING_ROWS,
   generateOrderNumber,
+  getStudioFormatDisplayMeta,
   QUICK_ORDER_PILLS,
   readSavedVipProfile,
   validateQuickOrder,
@@ -112,10 +118,10 @@ test('Wave 2 Showcase Sorting & Photographic Posters: real_estate puts Developer
   const defaultOrder = getOrderedCasesForPersona('default');
   assert.equal(defaultOrder[0].id, 'dmitrogorsky');
 
-  // Verify all 3 brand case photographic covers
-  assert.ok(BRAND_CASES[0].coverImageUrl.includes('photo-1495474472287-4d71bcdd2085'));
-  assert.ok(BRAND_CASES[1].coverImageUrl.includes('photo-1545324418-cc1a3fa10c00'));
-  assert.ok(BRAND_CASES[2].coverImageUrl.includes('photo-1629909613654-28e377c37b09'));
+  // Verify all 3 brand case photographic covers use local high-res assets
+  assert.ok(BRAND_CASES[0].coverImageUrl.startsWith('/src/assets/images/'));
+  assert.ok(BRAND_CASES[1].coverImageUrl.startsWith('/src/assets/images/'));
+  assert.ok(BRAND_CASES[2].coverImageUrl.startsWith('/src/assets/images/'));
 });
 
 test('Wave 3 Editorial Pricing & Quick Order logic: tiers, VIP storage, and validation', () => {
@@ -128,8 +134,13 @@ test('Wave 3 Editorial Pricing & Quick Order logic: tiers, VIP storage, and vali
     ]
   );
   assert.equal(EDITORIAL_PRICING_ROWS[1].badgeHit, 'Основной формат');
-  assert.equal(QUICK_ORDER_PILLS.length, 4);
+  assert.equal(QUICK_ORDER_PILLS.length, 5);
   assert.equal(QUICK_ORDER_PILLS[3].id, 'adaptation');
+  assert.equal(QUICK_ORDER_PILLS[4].id, 'custom_consult');
+  const consultMeta = getStudioFormatDisplayMeta('custom_consult');
+  assert.equal(consultMeta.priceRub, 0);
+  assert.equal(consultMeta.priceFormatted, 'Договорная цена');
+  assert.equal(consultMeta.isNegotiable, true);
 
   // Mock localStorage round-trip for returning client 2-click flow
   const memory = new Map<string, string>();
@@ -200,6 +211,49 @@ test('Editorial FAQ logic & content: 4 questions, smooth toggle state, and respe
   assert.equal(toggleFaqItem(firstId, firstId), null);
   assert.equal(toggleFaqItem(null, secondId), secondId);
   assert.equal(toggleFaqItem(secondId, firstId), firstId);
+
+  assert.equal(HOME_PROCESS_FAQ_ITEMS.length, 6);
+  assert.deepEqual(
+    HOME_PROCESS_FAQ_ITEMS.map((item) => item.indexLabel),
+    ['01', '02', '03', '04', '05', '06']
+  );
+  assert.ok(HOME_PROCESS_FAQ_ITEMS[0].answer.includes('Без договора и предоплаты сценарии не пишутся'));
+  assert.ok(HOME_PROCESS_FAQ_ITEMS[3].question.includes('24–48'));
+  assert.ok(HOME_PROCESS_FAQ_ITEMS[4].answer.includes('Индивидуальный проект'));
+  assert.ok(HOME_PROCESS_FAQ_ITEMS[5].answer.includes('Только сценарий'.slice(6)) || HOME_PROCESS_FAQ_ITEMS[5].question.includes('только сценарий'));
+  assert.equal(
+    toggleFaqItem(HOME_PROCESS_FAQ_ITEMS[0].id, HOME_PROCESS_FAQ_ITEMS[0].id),
+    null
+  );
+  assert.equal(
+    toggleFaqItem(null, HOME_PROCESS_FAQ_ITEMS[2].id),
+    HOME_PROCESS_FAQ_ITEMS[2].id
+  );
+  assert.deepEqual(
+    HOME_PROCESS_FAQ_ITEMS.map((item) => resolveFaqIconKey(item)),
+    ['waveform', 'shield', 'receipt', 'clock', 'sliders', 'mic']
+  );
+  assert.equal(
+    resolveFaqIconKey({
+      id: 'custom-1',
+      question: 'Сколько дней займёт оплата по ЭДО?',
+    }),
+    'clock'
+  );
+  assert.equal(
+    resolveFaqIconKey({
+      id: 'custom-2',
+      question: 'Как проверяются авторские права и договор?',
+    }),
+    'shield'
+  );
+  assert.equal(
+    resolveFaqIconKey({
+      id: 'custom-3',
+      question: 'Можно ли оплатить картой физлица?',
+    }),
+    'receipt'
+  );
 });
 
 test('Studio Commercial WAV integration: chapters, timecode formatting, and showcase wiring', () => {
@@ -324,7 +378,7 @@ test('Waves 1-4 & HeroKoto Guardrails: verifies Koto 4-frame showreel, manifesto
   );
   assert.equal(HERO_KOTO_FRAMES[1].kind, 'kinetic_poster');
   assert.equal(HERO_KOTO_FRAMES[1].title, 'ON AIR');
-  assert.ok(KOTO_MIC_WIDGET_IMAGE.includes('photo-1590602847861-f357a9332bbc'));
+  assert.ok(KOTO_MIC_WIDGET_IMAGE.startsWith('/src/assets/images/'));
 
   // Verify Case share deep-link URL generation & parsing
   assert.equal(
@@ -339,7 +393,7 @@ test('Waves 1-4 & HeroKoto Guardrails: verifies Koto 4-frame showreel, manifesto
     APPROACH_PILLARS.map((p) => p.number),
     ['01', '02', '03']
   );
-  assert.ok(APPROACH_STUDIO_PHOTO.imageUrl.includes('photo-1590602847861-f357a9332bbc'));
+  assert.ok(APPROACH_STUDIO_PHOTO.imageUrl.startsWith('/src/assets/images/'));
   assert.equal(
     APPROACH_STUDIO_PHOTO.caption,
     'Собственный контроль качества на каждом этапе — от текста до паспорта ролика'
@@ -413,6 +467,7 @@ test('Waves 1-4 & HeroKoto Guardrails: verifies Koto 4-frame showreel, manifesto
     EDITORIAL_PRICING_ROWS,
     QUICK_ORDER_PILLS,
     EDITORIAL_FAQ_ITEMS,
+    HOME_PROCESS_FAQ_ITEMS,
     CLIENT_TESTIMONIALS,
     TESTIMONIAL_FILTERS,
   }).toLowerCase();
@@ -849,7 +904,7 @@ test('AdminWorkspace Real-Time Site Text Blocks: provides static content array f
   assert.equal(filterSiteTextBlocks(STATIC_SITE_TEXT_BLOCKS, 'approach').length, 4);
   assert.equal(filterSiteTextBlocks(STATIC_SITE_TEXT_BLOCKS, 'pricing').length, 4);
   assert.equal(
-    filterSiteTextBlocks(STATIC_SITE_TEXT_BLOCKS, 'all', 'фиксированная смета').length,
+    filterSiteTextBlocks(STATIC_SITE_TEXT_BLOCKS, 'all', 'индивидуальный разбор').length,
     1
   );
 

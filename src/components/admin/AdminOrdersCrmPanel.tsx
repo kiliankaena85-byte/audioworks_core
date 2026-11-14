@@ -24,9 +24,10 @@ import {
   ExternalDeliveryState,
   formatEdoInvoiceSpecificationDocument,
   formatTelegramOrderDispatchMessage,
-  getCrmStageMeta,
+  getCrmStageMetaForOrder,
   OrderComplianceChecklist,
 } from '../../data/orderCrmTypes';
+import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
 import { formatNumberSpaced, formatRubCompact } from '../../data/radioInventory';
 import { AdminScientificPlanView } from './AdminScientificPlanView';
 
@@ -761,21 +762,30 @@ export function AdminOrdersCrmPanel({
                 Все этапы ({stageCounts.all ?? 0})
               </button>
 
-              {CRM_ORDER_STAGES.map((st) => (
-                <button
-                  key={st.id}
-                  type="button"
-                  data-testid={`crm-stage-filter-${st.id}`}
-                  onClick={() => setStageFilter(st.id)}
-                  className={`min-h-[34px] px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                    stageFilter === st.id
-                      ? 'bg-[#FF4820] text-white'
-                      : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:text-[#111111] dark:hover:text-white'
-                  }`}
-                >
-                  {st.stepCode}. {st.shortLabel} ({stageCounts[st.id] ?? 0})
-                </button>
-              ))}
+              {CRM_ORDER_STAGES.map((st) => {
+                const filterStageMeta = getCrmStageMetaForOrder(
+                  st.id,
+                  AIRTIME_SALES_ENABLED && modeFilter !== 'production_only'
+                    ? 'air_plus_production'
+                    : 'production_only'
+                );
+                return (
+                  <button
+                    key={st.id}
+                    type="button"
+                    data-testid={`crm-stage-filter-${st.id}`}
+                    onClick={() => setStageFilter(st.id)}
+                    className={`min-h-[34px] px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                      stageFilter === st.id
+                        ? 'bg-[#FF4820] text-white'
+                        : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:text-[#111111] dark:hover:text-white'
+                    }`}
+                  >
+                    {filterStageMeta.stepCode}. {filterStageMeta.shortLabel} (
+                    {stageCounts[st.id] ?? 0})
+                  </button>
+                );
+              })}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-[#111111]/8 dark:border-white/8">
@@ -837,7 +847,7 @@ export function AdminOrdersCrmPanel({
               ) : (
                 filteredOrders.map((ord) => {
                   const isSelected = selectedOrder?.id === ord.id;
-                  const stageMeta = getCrmStageMeta(ord.stage);
+                  const stageMeta = getCrmStageMetaForOrder(ord.stage, ord.checkoutMode);
                   const holdInfo = computeOrderHoldStatus(ord, nowMs);
                   const snap = ord.mediaPlanSnapshot;
 
@@ -862,7 +872,9 @@ export function AdminOrdersCrmPanel({
                           </span>
                         </span>
                         <span className="text-sm font-bold text-[#111111] dark:text-[#F4F3EF]">
-                          {formatRubCompact(ord.totalBudgetRub)}
+                          {ord.totalBudgetRub > 0
+                            ? formatRubCompact(ord.totalBudgetRub)
+                            : 'Договорная'}
                         </span>
                       </div>
 
@@ -905,7 +917,10 @@ export function AdminOrdersCrmPanel({
             <div className="lg:col-span-7">
               {selectedOrder ? (
                 (() => {
-                  const stageMeta = getCrmStageMeta(selectedOrder.stage);
+                  const stageMeta = getCrmStageMetaForOrder(
+                    selectedOrder.stage,
+                    selectedOrder.checkoutMode
+                  );
                   const holdInfo = computeOrderHoldStatus(selectedOrder, nowMs);
                   const snap = selectedOrder.mediaPlanSnapshot;
                   const tgPres = getDeliveryStatePresentation(
@@ -948,10 +963,15 @@ export function AdminOrdersCrmPanel({
 
                           <div className="text-left sm:text-right space-y-0.5">
                             <p className="text-xs text-[#111111]/56 dark:text-[#F4F3EF]/56">
-                              Сумма единого договора
+                              Сумма договора ·{' '}
+                              {selectedOrder.paymentChannel === 'card_online'
+                                ? 'Карта / СБП (54-ФЗ)'
+                                : 'ЭДО / безнал'}
                             </p>
                             <p className="text-2xl font-bold text-[#111111] dark:text-[#F4F3EF]">
-                              {formatRubCompact(selectedOrder.totalBudgetRub)}
+                              {selectedOrder.totalBudgetRub > 0
+                                ? formatRubCompact(selectedOrder.totalBudgetRub)
+                                : 'Договорная цена'}
                             </p>
                             <p
                               className={`text-xs font-semibold ${
@@ -990,7 +1010,12 @@ export function AdminOrdersCrmPanel({
                             >
                               {CRM_ORDER_STAGES.map((st) => (
                                 <option key={st.id} value={st.id}>
-                                  {st.fullTitle}
+                                  {
+                                    getCrmStageMetaForOrder(
+                                      st.id,
+                                      selectedOrder.checkoutMode
+                                    ).fullTitle
+                                  }
                                 </option>
                               ))}
                             </select>

@@ -18,15 +18,14 @@ export interface HeroCinemaScene {
 }
 
 export const HERO_STREAM_BG_IMAGE =
-  'https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?auto=format&fit=crop&w=1800&q=85';
+  '/src/assets/images/hero_grey_traffic_clutter_1794605229421.jpg';
 
 export const HERO_CINEMA_SCENES: HeroCinemaScene[] = [
   {
     id: 'studio',
     indexLabel: '01',
     tabLabel: '01 Студия ON AIR',
-    imageUrl:
-      'https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?auto=format&fit=crop&w=1800&q=85',
+    imageUrl: '/src/assets/images/hero_broadcast_booth_wide_1794605231279.jpg',
     imageAlt: 'Тёплый контровой свет звуковой студии FMWorks и студийного микрофона',
     caption: 'Сильная реклама не кричит в ухо — она включает кино в голове',
     subcaption: 'Режиссёрская запись редких актёров дубляжа и выверенная драматургия паузы',
@@ -37,8 +36,7 @@ export const HERO_CINEMA_SCENES: HeroCinemaScene[] = [
     id: 'taste',
     indexLabel: '02',
     tabLabel: '02 Вкус бренда',
-    imageUrl:
-      'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=1800&q=85',
+    imageUrl: '/src/assets/images/hero_artisan_bakery_taste_1794605229940.jpg',
     imageAlt: 'Тёплый утренний свет и хрустящий ремесленный хлеб',
     caption: 'Звук, у которого есть вкус',
     subcaption: 'Тактильный саунд-дизайн для FMCG и ритейла — когда продукт узнают с первых секунд',
@@ -49,8 +47,7 @@ export const HERO_CINEMA_SCENES: HeroCinemaScene[] = [
     id: 'status',
     indexLabel: '03',
     tabLabel: '03 Тихий статус',
-    imageUrl:
-      'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1800&q=85',
+    imageUrl: '/src/assets/images/case_estate_cinema_1794399406227.jpg',
     imageAlt: 'Вечерний тёплый свет в панорамных окнах современной резиденции',
     caption: 'Тихий статус вместо кричащих скидок',
     subcaption: 'Камерная интонация и безупречный юридический дисклеймер для девелопмента',
@@ -94,10 +91,9 @@ export const HERO_KOTO_FRAMES: KotoShowreelFrame[] = [
     kicker: '01 · Аудиопродакшн полного цикла для бизнеса',
     title: 'Режиссура редких голосов кино и дубляжа',
     subtitle: 'Тёплая акустика, живая подача без рекламного крика',
-    imageUrl:
-      'https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?auto=format&fit=crop&w=2000&q=85',
+    imageUrl: '/src/assets/images/hero_broadcast_booth_wide_1794605231279.jpg',
     imageAlt: 'Тёплая атмосфера звуковой студии FMWorks в контровом свете',
-    exposureClass: 'brightness-[1.24] contrast-[1.06] saturate-[1.12]',
+    exposureClass: 'brightness-[1.04] contrast-[1.05] saturate-[1.06]',
   },
   {
     id: 'frame-onair',
@@ -114,10 +110,9 @@ export const HERO_KOTO_FRAMES: KotoShowreelFrame[] = [
     kicker: '03 · FMCG и федеральный ритейл',
     title: 'Звук, у которого есть фактура и вкус',
     subtitle: 'Тактильный саунд-дизайн, пробуждающий картинку в голове',
-    imageUrl:
-      'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=2000&q=85',
+    imageUrl: '/src/assets/images/hero_artisan_bakery_taste_1794605229940.jpg',
     imageAlt: 'Фактурный макро-кадр утреннего ремесленного продукта в солнечном луче',
-    exposureClass: 'brightness-[0.95] contrast-[1.04]',
+    exposureClass: 'brightness-[0.98] contrast-[1.04]',
   },
   {
     id: 'frame-architecture',
@@ -126,15 +121,14 @@ export const HERO_KOTO_FRAMES: KotoShowreelFrame[] = [
     kicker: '04 · Девелопмент и частные сервисы',
     title: 'Тихий статус вместо кричащих скидок',
     subtitle: 'Камерная интонация и ювелирно выверенный дисклеймер',
-    imageUrl:
-      'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=2000&q=85',
+    imageUrl: '/src/assets/images/case_estate_cinema_1794399406227.jpg',
     imageAlt: 'Вечерняя современная архитектура и тёплый панорамный свет',
-    exposureClass: 'brightness-[0.96] contrast-[1.05]',
+    exposureClass: 'brightness-[0.97] contrast-[1.05]',
   },
 ];
 
 export const KOTO_MIC_WIDGET_IMAGE =
-  'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?auto=format&fit=crop&w=600&q=80';
+  '/src/assets/images/approach_condenser_mic_portrait_1794605230714.jpg';
 
 export type CrashTestPhase = 'idle' | 'clutter' | 'stop_pause' | 'audioworks';
 
@@ -163,7 +157,7 @@ export function getCrashTestPhaseAtElapsed(elapsedSec: number): CrashTestPhase {
 }
 
 export const HERO_GREY_TRAFFIC_IMAGE =
-  'https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&w=2000&q=80';
+  '/src/assets/images/hero_grey_traffic_clutter_1794605229421.jpg';
 
 export const GREY_RADIO_MARQUEE_BASE = [
   'выгодные условия...',
@@ -196,11 +190,10 @@ export const HERO_LENS_FRAMES: LensShowreelFrame[] = [
     shortLabel: 'Вкус',
     kicker: '01 · Вкус продукта',
     title: 'Звук, который вызывает аппетит',
-    imageUrl:
-      'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=2000&q=85',
+    imageUrl: '/src/assets/images/hero_artisan_bakery_taste_1794605229940.jpg',
     imageAlt: 'Тёплый утренний свет и ремесленный хлеб — кадр «Вкус продукта»',
     fallbackGradient: 'bg-gradient-to-br from-[#3D1D14] via-[#26120C] to-[#120A08]',
-    exposureClass: 'brightness-[0.98] contrast-[1.05] saturate-[1.12]',
+    exposureClass: 'brightness-[0.98] contrast-[1.05] saturate-[1.08]',
   },
   {
     id: 'status',
@@ -208,8 +201,7 @@ export const HERO_LENS_FRAMES: LensShowreelFrame[] = [
     shortLabel: 'Квартал',
     kicker: '02 · Тихий статус',
     title: 'Пауза и достоинство вместо кричащих скидок',
-    imageUrl:
-      'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=2000&q=85',
+    imageUrl: '/src/assets/images/case_estate_cinema_1794399406227.jpg',
     imageAlt: 'Вечерняя современная архитектура с панорамным светом — кадр «Тихий статус»',
     fallbackGradient: 'bg-gradient-to-br from-[#132922] via-[#0D1D18] to-[#08110E]',
     exposureClass: 'brightness-[0.97] contrast-[1.06] saturate-[1.08]',
@@ -220,11 +212,10 @@ export const HERO_LENS_FRAMES: LensShowreelFrame[] = [
     shortLabel: 'Студия',
     kicker: '03 · Студия FMWorks',
     title: 'Режиссура каждой секунды',
-    imageUrl:
-      'https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?auto=format&fit=crop&w=2000&q=85',
+    imageUrl: '/src/assets/images/hero_broadcast_booth_wide_1794605231279.jpg',
     imageAlt: 'Звуковая студия FMWorks в тёплом контровом свете — кадр «Студия FMWorks»',
     fallbackGradient: 'bg-gradient-to-br from-[#2B1812] via-[#1B1210] to-[#0E0D10]',
-    exposureClass: 'brightness-[1.22] contrast-[1.06] saturate-[1.12]',
+    exposureClass: 'brightness-[1.05] contrast-[1.05] saturate-[1.08]',
   },
 ];
 

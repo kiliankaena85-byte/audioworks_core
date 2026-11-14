@@ -11,6 +11,7 @@ import {
   RADIO_MISTAKE_ARTICLES,
   RadioMistakeArticle,
 } from '../../data/multiPageContentData';
+import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
 import { PlatformRoute } from '../../data/platformRouter';
 import { ApproachSection } from '../ApproachSection';
 
@@ -464,14 +465,25 @@ export function ApproachPage({
               <ArrowRight className="w-4 h-4 shrink-0" aria-hidden="true" />
             </button>
 
-            <button
-              type="button"
-              onClick={() => onNavigate({ kind: 'hot-air' })}
-              className="min-h-[46px] px-5 py-3 rounded-full border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-sm font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
-            >
-              <span>Открыть медиапланер эфира</span>
-              <ArrowUpRight className="w-4 h-4 shrink-0" aria-hidden="true" />
-            </button>
+            {AIRTIME_SALES_ENABLED ? (
+              <button
+                type="button"
+                onClick={() => onNavigate({ kind: 'hot-air' })}
+                className="min-h-[46px] px-5 py-3 rounded-full border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-sm font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <span>Открыть медиапланер эфира</span>
+                <ArrowUpRight className="w-4 h-4 shrink-0" aria-hidden="true" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onNavigate({ kind: 'pricing' })}
+                className="min-h-[46px] px-5 py-3 rounded-full border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-sm font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <span>Тарифы и регламент выпуска</span>
+                <ArrowUpRight className="w-4 h-4 shrink-0" aria-hidden="true" />
+              </button>
+            )}
           </div>
         </div>
       </section>

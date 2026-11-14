@@ -6,12 +6,14 @@ import {
   computeRemainingHoldSeconds,
   ConfirmedReservationSummary,
 } from '../data/orderDraftStore';
+import { AIRTIME_SALES_ENABLED } from '../data/platformFeatures';
 import {
   formatBookingSpecificationText,
   formatHoldCountdown,
   formatNumberSpaced,
   formatRubCompact,
 } from '../data/radioInventory';
+import { ClientSlaAndRescuePanel } from './ClientSlaAndRescuePanel';
 
 interface ReservationConfirmedModalProps {
   isOpen: boolean;
@@ -55,14 +57,22 @@ export function ReservationConfirmedModal({
   if (!confirmed) return null;
 
   const isAirBooking =
+    AIRTIME_SALES_ENABLED &&
     confirmed.checkoutMode === 'air_plus_production' &&
     confirmed.lockedMediaReservation !== null &&
     confirmed.lockedTotals !== null;
 
   const stationsCount = confirmed.lockedMediaReservation?.stations.length ?? 0;
+  const isNegotiable =
+    confirmed.selectedFormatId === 'custom_consult' || confirmed.selectedBudgetRub === 0;
   const timelineSteps = buildClientNextStepsTimeline(
-    confirmed.checkoutMode,
-    stationsCount
+    isAirBooking ? 'air_plus_production' : 'production_only',
+    stationsCount,
+    {
+      callbackPreference: confirmed.callbackPreference,
+      paymentChannel: confirmed.paymentChannel,
+      isNegotiable,
+    }
   );
 
   const handleCopyBookingSpec = async () => {
@@ -118,7 +128,7 @@ export function ReservationConfirmedModal({
     <AnimatePresence>
       {isOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-[#111111]/65 dark:bg-black/80 overflow-y-auto"
+          className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-6 bg-[#111111]/65 dark:bg-black/80 overflow-y-auto"
           role="dialog"
           aria-modal="true"
           aria-labelledby="reservation-confirmed-modal-title"
@@ -151,7 +161,7 @@ export function ReservationConfirmedModal({
                       ·
                     </span>
                     <span className="text-emerald-700 dark:text-emerald-400">
-                      Ждите звонка продюсера (15–20 мин)
+                      {confirmed.promisedWindowLabel ?? 'Ответ продюсера за 15–20 мин'}
                     </span>
                   </div>
                   <h2
@@ -160,7 +170,11 @@ export function ReservationConfirmedModal({
                   >
                     {isAirBooking
                       ? 'Заявка принята! Квоты поставлены на 4-часовой резерв'
-                      : 'Заявка принята! Продюсер уже готовит расчёт и сценарии'}
+                      : isNegotiable
+                        ? 'Заявка принята! Продюсер изучает задачу для оценки и договора'
+                        : confirmed.paymentChannel === 'card_online'
+                          ? 'Заявка принята! Проверяем контрагента и готовим ссылку на оплату'
+                          : 'Заявка принята! Проверяем реквизиты и готовим рамочный договор'}
                   </h2>
                   <p className="text-xs sm:text-sm text-[#111111]/72 dark:text-[#F4F3EF]/72 tabular-nums">
                     Контакт для связи:{' '}
@@ -193,10 +207,13 @@ export function ReservationConfirmedModal({
                 </div>
                 <div className="flex items-center gap-2 text-white/78">
                   <PhoneCall className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
-                  <span>Свяжемся за 15–20 минут · Без предоплаты</span>
+                  <span>Свяжемся в выбранное окно · Договор и счёт ЭДО</span>
                 </div>
               </div>
             )}
+
+            {/* Живой пульт SLA, автономного счёта ЭДО и защиты клиента при задержке */}
+            <ClientSlaAndRescuePanel confirmed={confirmed} />
 
             {/* ГЛАВНЫЙ БЛОК: ЧТО ПРОИСХОДИТ ДАЛЬШЕ (3 ПОШАГОВЫХ ЭТАПА ДЛЯ КЛИЕНТА) */}
             <div
@@ -329,7 +346,7 @@ export function ReservationConfirmedModal({
                   </>
                 )}
 
-                {onNavigateHotAir && (
+                {AIRTIME_SALES_ENABLED && onNavigateHotAir && (
                   <button
                     type="button"
                     data-testid="modal-return-hot-air-btn"
@@ -350,7 +367,9 @@ export function ReservationConfirmedModal({
                 onClick={onClose}
                 className="min-h-[46px] px-6 py-2.5 rounded-full bg-[#FF4820] hover:bg-[#E63C17] text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center transition-colors cursor-pointer text-center leading-snug shrink-0"
               >
-                Понятно, жду звонка продюсера
+                {confirmed.callbackPreference === 'async_no_call'
+                  ? 'Понятно, жду письменный расчёт'
+                  : 'Понятно, статус заявки открыт'}
               </button>
             </div>
           </motion.div>

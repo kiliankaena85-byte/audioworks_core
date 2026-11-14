@@ -1,14 +1,14 @@
 import { ArrowRight, ArrowUpRight, Check, FileCheck2, ShieldCheck } from 'lucide-react';
-import { useEffect } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import {
   LEGAL_RIGHTS_DELIVERABLES,
   LOCAL_EDITORIAL_IMAGES,
   MODERATION_COMPLIANCE_RULES,
   PRODUCTION_STAGES_24_48H,
 } from '../../data/multiPageContentData';
+import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
 import { PlatformRoute } from '../../data/platformRouter';
 import { OrderFormatId } from '../../data/pricingData';
-import { FaqSection } from '../FaqSection';
 import { PricingSection } from '../PricingSection';
 
 interface PricingPageProps {
@@ -22,13 +22,19 @@ export function PricingPage({
   onSelectFormat,
   onNavigate,
 }: PricingPageProps) {
-  useEffect(() => {
+  const isFirstMountRef = useRef(true);
+
+  useLayoutEffect(() => {
+    const isInitialMount = isFirstMountRef.current;
+    isFirstMountRef.current = false;
     if (!scrollAnchor || typeof document === 'undefined') return;
-    const timer = window.setTimeout(() => {
-      const target = document.getElementById(scrollAnchor);
-      target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 80);
-    return () => window.clearTimeout(timer);
+    const target = document.getElementById(scrollAnchor);
+    if (target) {
+      target.scrollIntoView({
+        behavior: isInitialMount ? ('instant' as ScrollBehavior) : 'smooth',
+        block: 'start',
+      });
+    }
   }, [scrollAnchor]);
 
   const scrollToLocalId = (id: string) => {
@@ -51,7 +57,9 @@ export function PricingPage({
             <span aria-hidden="true" className="opacity-40">
               ·
             </span>
-            <span className="tabular-nums">Цикл 24–48 часов</span>
+            <span className="tabular-nums">
+              От 24–48 ч по готовому тексту · 3–4 дня под ключ
+            </span>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-12 items-end">
@@ -60,9 +68,9 @@ export function PricingPage({
                 Прозрачная стоимость ролика, чистые права и приёмка с первого дубля.
               </h1>
               <p className="text-base sm:text-xl text-[#111111]/70 dark:text-[#F4F3EF]/70 max-w-3xl editorial-pretty">
-                В каждый тариф уже включены три концепции сценария, запись актёров дубляжа,
-                выравнивание громкости под автомобильную акустику и полный паспорт ролика для
-                юридической службы радиостанций.
+                Работаем по рамочному договору и 100% предоплате: после проверки заявки вы сразу
+                скачиваете договор-оферту и счёт для ЭДО (либо оплачиваете картой по 54-ФЗ), а мы
+                готовим 3 концепции сценария, запись актёров дубляжа и паспорт прав РАО/ВОИС.
               </p>
             </div>
 
@@ -72,7 +80,7 @@ export function PricingPage({
                 onClick={() => scrollToLocalId('stages-24-48')}
                 className="min-h-[40px] inline-flex items-center hover:text-[#FF4820] transition-colors cursor-pointer whitespace-nowrap"
               >
-                Этапы 24–48ч ↓
+                Этапы производства ↓
               </button>
               <button
                 type="button"
@@ -83,10 +91,11 @@ export function PricingPage({
               </button>
               <button
                 type="button"
-                onClick={() => scrollToLocalId('faq')}
+                data-testid="pricing-faq-bridge-top-btn"
+                onClick={() => onNavigate({ kind: 'faq' })}
                 className="min-h-[40px] inline-flex items-center hover:text-[#FF4820] transition-colors cursor-pointer whitespace-nowrap"
               >
-                Частые вопросы ↓
+                Вопросы и договор →
               </button>
             </div>
           </div>
@@ -112,12 +121,12 @@ export function PricingPage({
                 id="stages-heading"
                 className="text-3xl sm:text-5xl font-bold tracking-tight leading-[1.08] text-[#111111] dark:text-[#F4F3EF] editorial-balance"
               >
-                Как устроен выпуск ролика за 24–48 часов без бесконечных переписок.
+                Как устроен выпуск ролика: от 24–48 ч по готовому тексту и 3–4 дня под ключ.
               </h2>
               <p className="text-base sm:text-lg text-[#111111]/70 dark:text-[#F4F3EF]/70 max-w-2xl editorial-pretty">
-                Ваше участие требуется всего дважды — на старте задачи и при выборе понравившегося
-                сценария с голосом. Всю режиссуру, запись и подготовку документов берёт на себя
-                студия.
+                Отсчёт сроков начинается строго после проверки реквизитов, заключения рамочного
+                договора и 100% предоплаты. Далее ваше участие требуется только при выборе
+                понравившегося сценария и голоса диктора.
               </p>
             </div>
 
@@ -299,39 +308,70 @@ export function PricingPage({
         </div>
       </section>
 
-      {/* Частые вопросы */}
-      <FaqSection />
+      {/* Мост к единому разделу частых вопросов (/faq) */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 pb-12">
+        <div className="pt-8 border-t border-[#111111]/10 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <p className="text-sm sm:text-base text-[#111111]/70 dark:text-[#F4F3EF]/70">
+            Вопросы по проверке контрагента, рамочному договору в ЭДО, оплате картой по 54-ФЗ и
+            этапу «Только сценарий» собраны на отдельной странице.
+          </p>
+          <button
+            type="button"
+            data-testid="pricing-faq-bridge-bottom-btn"
+            onClick={() => onNavigate({ kind: 'faq' })}
+            className="min-h-[44px] inline-flex items-center gap-2 text-sm font-semibold text-[#111111] dark:text-[#F4F3EF] hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+          >
+            <span>Открыть все ответы в разделе FAQ</span>
+            <ArrowRight className="w-4 h-4 shrink-0" aria-hidden="true" />
+          </button>
+        </div>
+      </div>
 
-      {/* Спокойная финальная полоса перехода к заказу или расчёту эфира */}
+      {/* Спокойная финальная полоса перехода к заказу ролика */}
       <section className="py-16 sm:py-20 border-t border-[#111111]/8 dark:border-[#F4F3EF]/10 px-4 sm:px-6 lg:px-12">
         <div className="max-w-7xl mx-auto rounded-3xl p-7 sm:p-10 lg:p-12 bg-[#141418] text-[#F4F3EF] border border-white/10 flex flex-col lg:flex-row lg:items-center justify-between gap-8">
           <div className="space-y-2.5 max-w-2xl">
             <p className="text-xs sm:text-sm font-medium text-white/60 tabular-nums">
-              Единый договор · ЭДО · Приоритетный выпуск при бронировании эфира от 220 000 ₽
+              {AIRTIME_SALES_ENABLED
+                ? 'Единый договор · ЭДО · Приоритетный выпуск при бронировании эфира от 220 000 ₽'
+                : 'Рамочный договор · Счёт в ЭДО или карта (54-ФЗ) · Паспорт прав РАО / ВОИС'}
             </p>
             <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-white editorial-balance">
-              Передайте задачу голосом за 30 секунд или соберите эфирную сетку с бонусным роликом.
+              {AIRTIME_SALES_ENABLED
+                ? 'Передайте задачу голосом за 30 секунд или соберите эфирную сетку с бонусным роликом.'
+                : 'Оставьте заявку с реквизитами или выберите индивидуальную консультацию по договорной цене.'}
             </h2>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 shrink-0">
+          <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 w-full sm:w-auto min-w-0">
             <button
               type="button"
               onClick={() => onSelectFormat('turnkey')}
-              className="min-h-[46px] px-6 py-3 rounded-full bg-[#FF4820] hover:bg-[#E63D18] text-white text-sm font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
+              className="w-full sm:w-auto min-h-[46px] px-5 sm:px-6 py-3 rounded-full bg-[#FF4820] hover:bg-[#E63D18] text-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer sm:whitespace-nowrap"
             >
-              <span>Оформить заказ ролика</span>
+              <span>Заказать аудиоролик</span>
               <ArrowRight className="w-4 h-4 shrink-0" aria-hidden="true" />
             </button>
 
-            <button
-              type="button"
-              onClick={() => onNavigate({ kind: 'hot-air' })}
-              className="min-h-[46px] px-5 py-3 rounded-full bg-white/8 hover:bg-white/14 text-white border border-white/16 text-sm font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
-            >
-              <span>Горящий эфир со скидкой до 45%</span>
-              <ArrowUpRight className="w-4 h-4 shrink-0" aria-hidden="true" />
-            </button>
+            {AIRTIME_SALES_ENABLED ? (
+              <button
+                type="button"
+                onClick={() => onNavigate({ kind: 'hot-air' })}
+                className="w-full sm:w-auto min-h-[46px] px-5 py-3 rounded-full bg-white/8 hover:bg-white/14 text-white border border-white/16 text-sm font-semibold inline-flex items-center justify-center gap-2 text-center leading-snug transition-colors cursor-pointer sm:whitespace-nowrap"
+              >
+                <span>Горящий эфир со скидкой до 45%</span>
+                <ArrowUpRight className="w-4 h-4 shrink-0" aria-hidden="true" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onSelectFormat('custom_consult')}
+                className="w-full sm:w-auto min-h-[46px] px-5 py-3 rounded-full bg-white/8 hover:bg-white/14 text-white border border-white/16 text-sm font-semibold inline-flex items-center justify-center gap-2 text-center leading-snug transition-colors cursor-pointer sm:whitespace-nowrap"
+              >
+                <span>Обсудить нестандартный проект</span>
+                <ArrowUpRight className="w-4 h-4 shrink-0" aria-hidden="true" />
+              </button>
+            )}
           </div>
         </div>
       </section>

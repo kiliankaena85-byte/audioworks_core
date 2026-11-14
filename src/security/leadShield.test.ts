@@ -73,6 +73,14 @@ test('Математическая проверка ИНН ФНС валидир
 
   const wrongLenInn = validateCompanyOrInnField('123456789');
   assert.equal(wrongLenInn.valid, false);
+
+  const combinedValid = validateCompanyOrInnField('ООО «Квартал Инвест» · ИНН 7707083893');
+  assert.equal(combinedValid.valid, true);
+  assert.equal(combinedValid.innVerified, true);
+
+  const combinedInvalid = validateCompanyOrInnField('ООО «Квартал Инвест» · ИНН 7707083894');
+  assert.equal(combinedInvalid.valid, false);
+  assert.equal(combinedInvalid.innVerified, false);
 });
 
 test('Браузерный микро-PoW решается детерминированно и проходит серверную верификацию', () => {

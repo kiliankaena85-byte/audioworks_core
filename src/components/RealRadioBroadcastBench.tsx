@@ -1,0 +1,1084 @@
+import {
+  AlertCircle,
+  ArrowRight,
+  Car,
+  CheckCircle2,
+  FastForward,
+  FileAudio,
+  MessageSquareText,
+  Pause,
+  Play,
+  Upload,
+  X,
+} from 'lucide-react';
+import {
+  ChangeEvent,
+  DragEvent,
+  FormEvent,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import {
+  broadcastAircheckEngine,
+  BroadcastAircheckSnapshot,
+} from '../audio/broadcastAircheckEngine';
+import { formatAudioTime } from '../data/audioworksCommercial';
+import {
+  BroadcastSourceMode,
+  buildAircheckAuditBriefSummary,
+  buildWaveformPhaseMarkers,
+  getCompetitorsAfterTargetCount,
+  getWaitBeforeTargetSpotSec,
+  InsertedSpotMode,
+  VERIFIED_LIVE_REGIONAL_STATIONS,
+  VerifiedRegionalStationSpec,
+} from '../data/broadcastAircheckData';
+import { orderDraftStore } from '../data/orderDraftStore';
+import { generateOrderNumber, OrderFormatId } from '../data/pricingData';
+import {
+  validateCompanyOrInnField,
+  validateHumanLeadContact,
+} from '../security/leadShield';
+import { useLeadShieldForm } from '../security/useLeadShieldForm';
+import { WaveformTimeline } from './WaveformTimeline';
+
+interface RealRadioBroadcastBenchProps {
+  onStartStudioOrder: (formatId?: OrderFormatId | null) => void;
+}
+
+const SOURCE_MODE_OPTIONS: readonly {
+  id: BroadcastSourceMode;
+  label: string;
+  shortLabel: string;
+}[] = [
+  {
+    id: 'captured_regional_host',
+    label: 'Ведущие 91.0 FM',
+    shortLabel: '91.0 FM',
+  },
+  {
+    id: 'captured_story_program',
+    label: 'История в эфире',
+    shortLabel: 'История',
+  },
+  {
+    id: 'live_regional_stream',
+    label: 'Live-поток',
+    shortLabel: 'Live',
+  },
+];
+
+export function RealRadioBroadcastBench({
+  onStartStudioOrder,
+}: RealRadioBroadcastBenchProps) {
+  const [snap, setSnap] = useState<BroadcastAircheckSnapshot>(() =>
+    broadcastAircheckEngine.getSnapshot()
+  );
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [isLeadDrawerOpen, setIsLeadDrawerOpen] = useState(false);
+
+  const [clientName, setClientName] = useState('');
+  const [clientContact, setClientContact] = useState('');
+  const [clientCompany, setClientCompany] = useState('');
+
+  const [nameError, setNameError] = useState<string | undefined>();
+  const [contactError, setContactError] = useState<string | undefined>();
+  const [companyError, setCompanyError] = useState<string | undefined>();
+  const [submitBannerError, setSubmitBannerError] = useState<string | undefined>();
+  const [submittedLead, setSubmittedLead] = useState<{
+    orderNumber: string;
+    promisedWindowLabel?: string;
+    fileName: string | null;
+  } | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const contactInputRef = useRef<HTMLInputElement | null>(null);
+  const companyInputRef = useRef<HTMLInputElement | null>(null);
+
+  const formUid = useId();
+
+  const {
+    websiteTrap,
+    setWebsiteTrap,
+    isSubmittingLead,
+    rateLimitCountdownSec,
+    registerPointerActivity,
+    registerKeyActivity,
+    registerFocusActivity,
+    submitProtectedLead,
+  } = useLeadShieldForm('production_only');
+
+  useEffect(() => {
+    const unsubscribe = broadcastAircheckEngine.subscribe(setSnap);
+    return () => {
+      unsubscribe();
+      broadcastAircheckEngine.stop();
+    };
+  }, []);
+
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSubmittedLead(null);
+      void broadcastAircheckEngine.loadClientAudioFile(file);
+    }
+    e.target.value = '';
+  };
+
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDraggingOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      setSubmittedLead(null);
+      void broadcastAircheckEngine.loadClientAudioFile(file);
+    }
+  };
+
+  const handleSelectSpotMode = (mode: InsertedSpotMode) => {
+    if (mode === 'client_upload' && !snap.clientAudioUrl) {
+      fileInputRef.current?.click();
+      return;
+    }
+    broadcastAircheckEngine.setSpotMode(mode);
+  };
+
+  const scrollToAndFocus = (el: HTMLElement | null) => {
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => {
+      el.focus({ preventScroll: true });
+    }, 120);
+  };
+
+  const openLeadDrawerAndFocus = () => {
+    setIsLeadDrawerOpen(true);
+    window.setTimeout(() => {
+      nameInputRef.current?.focus();
+    }, 80);
+  };
+
+  const handleLeadSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setSubmitBannerError(undefined);
+
+    const trimmedName = clientName.trim();
+    const trimmedContact = clientContact.trim();
+    const trimmedCompany = clientCompany.trim();
+
+    let nextNameErr: string | undefined;
+    let nextContactErr: string | undefined;
+    let nextCompanyErr: string | undefined;
+
+    const letterCount = (trimmedName.match(/[a-zA-Zа-яА-ЯёЁ]/g) ?? []).length;
+    if (!trimmedName || letterCount < 2) {
+      nextNameErr = 'Укажите имя (от 2 букв)';
+    }
+
+    if (!trimmedContact) {
+      nextContactErr = 'Укажите телефон или @Telegram';
+    } else if (!websiteTrap.trim()) {
+      const checkContact = validateHumanLeadContact(
+        `${trimmedName || 'Клиент'} · ${trimmedContact}`,
+        { isReturningFastTrack: false }
+      );
+      if (!checkContact.valid && !checkContact.isLikelyBotGarbage) {
+        nextContactErr =
+          checkContact.error ?? 'Проверьте корректность телефона или @Telegram';
+      }
+    }
+
+    if (trimmedCompany && !websiteTrap.trim()) {
+      const checkCompany = validateCompanyOrInnField(trimmedCompany);
+      if (!checkCompany.valid) {
+        nextCompanyErr = checkCompany.error ?? 'Проверьте название компании или ИНН';
+      }
+    }
+
+    setNameError(nextNameErr);
+    setContactError(nextContactErr);
+    setCompanyError(nextCompanyErr);
+
+    if (nextNameErr || nextContactErr || nextCompanyErr) {
+      if (nextNameErr) {
+        scrollToAndFocus(nameInputRef.current);
+      } else if (nextContactErr) {
+        scrollToAndFocus(contactInputRef.current);
+      } else if (nextCompanyErr) {
+        scrollToAndFocus(companyInputRef.current);
+      }
+      return;
+    }
+
+    const combinedContactLine = `${trimmedName} · ${trimmedContact}`;
+    const auditBrief = buildAircheckAuditBriefSummary({
+      clientName: trimmedName,
+      sourceMode: snap.sourceMode,
+      diagnostic: snap.uploadedDiagnostic,
+    });
+
+    const candidateOrderNum = generateOrderNumber();
+    const result = await submitProtectedLead({
+      source: 'quick_order_drawer',
+      checkoutMode: 'production_only',
+      paymentChannel: 'edo_invoice',
+      orderNumberCandidate: candidateOrderNum,
+      formatLabel: snap.uploadedDiagnostic
+        ? 'Разбор ролика в реальном радиоэфире'
+        : 'Пример в реальном эфире · Консультация',
+      totalBudgetRub: 0,
+      contactLine: combinedContactLine,
+      companyLine: trimmedCompany,
+      callbackPreference: 'call_15m',
+      briefText: auditBrief,
+      hasVoiceRecording: false,
+      voiceDurationSec: 0,
+      hasAttachedFile: Boolean(snap.clientFileName),
+      attachedFileName: snap.clientFileName,
+      mediaPlanSnapshot: null,
+      isReturningFastTrack: false,
+      requireBriefOrVoice: true,
+    });
+
+    if (!result.ok) {
+      if (result.contactError) {
+        setContactError(result.contactError);
+        scrollToAndFocus(contactInputRef.current);
+      }
+      if (result.companyError) {
+        setCompanyError(result.companyError);
+        if (!result.contactError) {
+          scrollToAndFocus(companyInputRef.current);
+        }
+      }
+      if (result.rateLimitError || result.taskError) {
+        setSubmitBannerError(result.rateLimitError ?? result.taskError);
+      }
+      return;
+    }
+
+    orderDraftStore.updateDraft({
+      contactLine: combinedContactLine,
+      companyName: trimmedCompany,
+      briefText: auditBrief,
+      spotDurationSec: snap.uploadedDiagnostic?.nearestStandardSec ?? 15,
+    });
+
+    setSubmittedLead({
+      orderNumber: result.orderNumber,
+      promisedWindowLabel: result.promisedWindowLabel,
+      fileName: snap.clientFileName,
+    });
+  };
+
+  const handleProceedToFullOrder = () => {
+    const trimmedName = clientName.trim();
+    const trimmedContact = clientContact.trim();
+    const auditBrief = buildAircheckAuditBriefSummary({
+      clientName: trimmedName || 'Клиент со стенда эфира',
+      sourceMode: snap.sourceMode,
+      diagnostic: snap.uploadedDiagnostic,
+    });
+
+    if (trimmedName && trimmedContact) {
+      orderDraftStore.updateDraft({
+        contactLine: `${trimmedName} · ${trimmedContact}`,
+        companyName: clientCompany.trim(),
+      });
+    }
+
+    orderDraftStore.prepareProductionOrder({
+      formatId: 'turnkey',
+      spotDurationSec: snap.uploadedDiagnostic?.nearestStandardSec ?? 15,
+      briefHint: auditBrief,
+      returnPath: '/',
+    });
+    onStartStudioOrder('turnkey');
+  };
+
+  const activeSegment =
+    snap.segments.find((s) => s.id === snap.activeSegmentId) ?? snap.segments[0];
+  const targetSegment =
+    snap.segments.find((s) => s.isTargetSlot) ?? snap.segments[3] ?? snap.segments[0];
+
+  const waitBeforeTargetSec = getWaitBeforeTargetSpotSec(snap.segments);
+  const competitorsAfterCount = getCompetitorsAfterTargetCount(snap.segments);
+
+  const phaseMarkers = useMemo(
+    () =>
+      buildWaveformPhaseMarkers(
+        snap.segments,
+        snap.activeSegmentId,
+        snap.spotMode
+      ),
+    [snap.segments, snap.activeSegmentId, snap.spotMode]
+  );
+
+  const desktopMarkerFlexWeights = useMemo(() => {
+    // Выравниваем кнопки фаз над реальными сегментами звуковой дорожки без обрезки подписей
+    const raw = phaseMarkers.map((m) =>
+      m.id === 'phase_splice'
+        ? Math.max(7.8, m.widthPercent)
+        : Math.max(12.4, m.widthPercent)
+    );
+    const sum = raw.reduce((acc, v) => acc + v, 0) || 100;
+    return raw.map((v) => (v / sum) * 100);
+  }, [phaseMarkers]);
+
+  const activeStation =
+    VERIFIED_LIVE_REGIONAL_STATIONS.find((s) => s.id === snap.selectedStationId) ??
+    VERIFIED_LIVE_REGIONAL_STATIONS[0];
+
+  const liveMomentHint = useMemo(() => {
+    if (snap.elapsedSec < targetSegment.startSec) {
+      const secLeft = Math.max(1, Math.ceil(targetSegment.startSec - snap.elapsedSec));
+      return `До вашего выхода ${formatAudioTime(secLeft)}`;
+    }
+    if (snap.activeSegmentId === 'target_spot') {
+      return `Впереди ещё ${competitorsAfterCount} чужих ролика подряд`;
+    }
+    if (
+      snap.activeSegmentId === 'competitor_after_1' ||
+      snap.activeSegmentId === 'competitor_after_2' ||
+      snap.activeSegmentId === 'competitor_after_3'
+    ) {
+      return 'Плотный хвост блока после вашего ролика';
+    }
+    return 'Возврат станции к передаче';
+  }, [snap.elapsedSec, snap.activeSegmentId, targetSegment.startSec, competitorsAfterCount]);
+
+  return (
+    <section
+      id="broadcast-aircheck"
+      data-testid="real-radio-broadcast-bench"
+      aria-labelledby="broadcast-aircheck-heading"
+      onPointerMove={registerPointerActivity}
+      onKeyDown={registerKeyActivity}
+      onFocusCapture={registerFocusActivity}
+      className="scroll-mt-20 pb-14 sm:pb-20 px-4 sm:px-6 lg:px-12"
+    >
+      <div className="max-w-7xl mx-auto space-y-3.5 sm:space-y-4">
+        {/* Компактная однорядная шапка модуля */}
+        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-3 border-t border-[#111111]/10 dark:border-white/10 pt-8 sm:pt-10">
+          <div className="space-y-1 min-w-0">
+            <p className="text-xs font-medium text-[#111111]/56 dark:text-[#F4F3EF]/56 tabular-nums">
+              Реальный радиоэфир · Блок {formatAudioTime(snap.totalDurationSec)} · До вашего слота {Math.round(waitBeforeTargetSec)} сек эфира и конкурент, следом ещё {competitorsAfterCount} объявления
+            </p>
+            <h2
+              id="broadcast-aircheck-heading"
+              className="text-xl sm:text-2xl lg:text-[1.75rem] font-bold tracking-tight leading-[1.14] text-[#111111] dark:text-[#F4F3EF] editorial-balance"
+            >
+              Проверьте ролик внутри полного регионального эфира и рекламной склейки
+            </h2>
+          </div>
+
+          {/* Сегментный выбор радиоконтекста */}
+          <div
+            role="group"
+            aria-label="Выбор радиоэфира перед рекламным блоком"
+            className="grid grid-cols-3 w-full sm:w-auto sm:flex items-center gap-1 p-1 rounded-xl bg-[#111111]/[0.05] dark:bg-white/[0.06] border border-[#111111]/10 dark:border-white/10 self-start lg:self-auto max-w-full"
+          >
+            {SOURCE_MODE_OPTIONS.map((opt) => {
+              const active = snap.sourceMode === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  data-testid={`aircheck-source-${opt.id}`}
+                  aria-pressed={active}
+                  onClick={() => broadcastAircheckEngine.setSourceMode(opt.id)}
+                  className={`min-h-[44px] lg:min-h-[38px] px-2 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap text-center ${
+                    active
+                      ? 'bg-[#121216] text-white dark:bg-white dark:text-[#111111]'
+                      : 'text-[#111111]/70 dark:text-white/70 hover:text-[#111111] dark:hover:text-white'
+                  }`}
+                >
+                  <span className="sm:hidden">{opt.shortLabel}</span>
+                  <span className="hidden sm:inline">{opt.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Единая минималистичная студийная полоса со звуковой волной */}
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            if (!isDraggingOver) setIsDraggingOver(true);
+          }}
+          onDragLeave={() => setIsDraggingOver(false)}
+          onDrop={handleDrop}
+          className={`rounded-2xl sm:rounded-3xl bg-[#121216] text-[#F4F3EF] p-4 sm:px-6 sm:py-5 border transition-colors space-y-3 min-w-0 ${
+            isDraggingOver ? 'border-[#FF4820]' : 'border-white/10'
+          }`}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".mp3,.wav,.m4a,.ogg,.aac,audio/*"
+            data-testid="aircheck-client-upload-input"
+            aria-label="Загрузить свой аудиоролик для проверки в радиоэфире"
+            onChange={handleFileChange}
+            className="sr-only"
+          />
+
+          {/* Выбор станции прямого вещания (показывается только в режиме Live) */}
+          {snap.sourceMode === 'live_regional_stream' && (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-white/10 min-w-0">
+              <label
+                htmlFor={`${formUid}-station-select`}
+                className="text-xs text-white/68 shrink-0"
+              >
+                Волна прямого эфира:
+              </label>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 flex-1 max-w-xl min-w-0">
+                <select
+                  id={`${formUid}-station-select`}
+                  data-testid="aircheck-live-station-select"
+                  value={snap.selectedStationId}
+                  onChange={(e) =>
+                    broadcastAircheckEngine.setSelectedStation(
+                      e.target.value as VerifiedRegionalStationSpec['id']
+                    )
+                  }
+                  className="w-full min-w-0 min-h-[44px] sm:min-h-[38px] px-3 py-1.5 rounded-xl bg-white/[0.07] border border-white/14 text-xs font-medium text-white focus:outline-none focus:border-[#FF4820]"
+                >
+                  {VERIFIED_LIVE_REGIONAL_STATIONS.map((st) => (
+                    <option key={st.id} value={st.id} className="bg-[#141418] text-white">
+                      {st.title} · {st.frequencyBadge}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-xs text-white/62 tabular-nums whitespace-nowrap shrink-0">
+                  {snap.liveStreamStatus === 'live_air'
+                    ? 'Поток подключён'
+                    : snap.liveStreamStatus === 'connecting'
+                      ? 'Подключение…'
+                      : snap.liveStreamStatus === 'fallback_aircheck'
+                        ? 'Запись эфира'
+                        : activeStation.frequencyBadge}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Пропорциональные кликабельные метки этапов прямо вдоль звуковой волны */}
+          <div className="space-y-1.5 min-w-0">
+            {/* Десктопная пропорциональная линейка этапов */}
+            <div
+              role="group"
+              aria-label="Этапы реального радиоэфира на звуковой волне"
+              className="hidden lg:flex items-stretch gap-1 w-full min-w-0"
+            >
+              {phaseMarkers.map((marker, idx) => {
+                const flexPct = desktopMarkerFlexWeights[idx] ?? marker.widthPercent;
+                return (
+                  <button
+                    key={marker.id}
+                    type="button"
+                    data-testid={`aircheck-phase-${marker.id}`}
+                    onClick={() =>
+                      broadcastAircheckEngine.playFromSegment(marker.targetSegmentId)
+                    }
+                    style={{ width: `${flexPct.toFixed(2)}%` }}
+                    className={`min-h-[40px] px-2.5 py-1.5 rounded-xl border text-left transition-colors cursor-pointer flex items-center justify-between gap-1.5 min-w-0 ${
+                      marker.isActive
+                        ? marker.isTarget
+                          ? 'bg-[#FF4820] border-[#FF4820] text-white'
+                          : 'bg-white/14 border-white/35 text-white'
+                        : marker.isTarget
+                          ? 'bg-[#FF4820]/14 border-[#FF4820]/50 hover:border-[#FF4820] text-white'
+                          : 'bg-white/[0.04] border-white/10 hover:border-white/25 text-white/76 hover:text-white'
+                    }`}
+                  >
+                    <span className="text-xs font-semibold truncate">
+                      {marker.label}
+                    </span>
+                    {marker.id !== 'phase_program' && marker.id !== 'phase_splice' && (
+                      <span
+                        className={`text-[11px] tabular-nums shrink-0 ${
+                          marker.isActive ? 'text-white/90' : 'text-white/46'
+                        }`}
+                      >
+                        {marker.durationLabel}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Мобильная и планшетная горизонтальная лента фаз без вылета за 320px */}
+            <div
+              role="group"
+              aria-label="Этапы эфира"
+              className="flex lg:hidden items-center gap-1.5 overflow-x-auto max-w-full pb-1 min-w-0 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+            >
+              {phaseMarkers.map((marker) => (
+                <button
+                  key={marker.id}
+                  type="button"
+                  onClick={() =>
+                    broadcastAircheckEngine.playFromSegment(marker.targetSegmentId)
+                  }
+                  className={`min-h-[44px] px-3 py-1.5 rounded-xl border text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer tabular-nums ${
+                    marker.isActive
+                      ? marker.isTarget
+                        ? 'bg-[#FF4820] border-[#FF4820] text-white'
+                        : 'bg-white/16 border-white/38 text-white'
+                      : marker.isTarget
+                        ? 'bg-[#FF4820]/14 border-[#FF4820]/50 text-white'
+                        : 'bg-white/[0.04] border-white/10 text-white/76'
+                  }`}
+                >
+                  {marker.shortMobileLabel} · {marker.durationLabel}
+                </button>
+              ))}
+            </div>
+
+            {/* Минималистичная посегментная звуковая дорожка эфирного блока (цвет + амплитуда) */}
+            <WaveformTimeline
+              segments={snap.segments}
+              totalDurationSec={snap.totalDurationSec}
+              elapsedSec={snap.elapsedSec}
+              activeSegmentId={snap.activeSegmentId}
+              spotMode={snap.spotMode}
+              isPlaying={snap.isPlaying}
+              seedKey={`${snap.sourceMode}-${snap.spotMode}-${snap.clientFileName ?? 'ref'}`}
+              onSeekRatio={(ratio) => broadcastAircheckEngine.seekToRatio(ratio)}
+              onSelectSegment={(segmentId) =>
+                broadcastAircheckEngine.playFromSegment(segmentId)
+              }
+              seekAriaLabel="Перемотка реального радиоэфира по секундам"
+              spectrumBands={
+                snap.isPlaying
+                  ? Array.from({ length: 36 }, (_, idx) => {
+                      const phase = snap.elapsedSec * 7.1 + idx * 0.52;
+                      const isTarget = snap.activeSegmentId === 'target_spot';
+                      const base = isTarget ? 0.34 : 0.27;
+                      const swing = isTarget ? 0.54 : 0.44;
+                      return Math.min(
+                        0.95,
+                        Math.max(
+                          0.12,
+                          base +
+                            swing *
+                              (0.5 + 0.5 * Math.sin(phase)) *
+                              (0.6 + 0.4 * Math.cos(idx * 0.37 - snap.elapsedSec * 4.0))
+                        )
+                      );
+                    })
+                  : undefined
+              }
+              heightClass="h-12 sm:h-14"
+              visualizerTestId="aircheck-broadcast-waveform"
+              progressBarTestId="aircheck-waveform-scrubber"
+            />
+
+            {/* Компактная строка живого эфирного статуса (1 линия вместо сетки карточек) */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs text-white/64 tabular-nums min-w-0">
+              <p className="truncate">
+                <span className="text-white/90 font-medium">
+                  {activeSegment.shortStepLabel}:
+                </span>{' '}
+                <span>{activeSegment.title}</span>
+              </p>
+              <span className="text-white/48 shrink-0">{liveMomentHint}</span>
+            </div>
+          </div>
+
+          {/* Нижняя студийная панель управления в один компактный ряд */}
+          <div className="pt-3 border-t border-white/10 flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 min-w-0">
+            {/* Левая группа: транспорт */}
+            <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 min-w-0">
+              <button
+                type="button"
+                data-testid="aircheck-play-toggle-btn"
+                onClick={() => broadcastAircheckEngine.togglePlayPause()}
+                className="min-h-[44px] px-4 py-2 rounded-full bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap tabular-nums"
+              >
+                {snap.isPlaying ? (
+                  <>
+                    <Pause className="w-4 h-4 fill-current shrink-0" aria-hidden="true" />
+                    <span>
+                      Пауза · {formatAudioTime(snap.elapsedSec)} /{' '}
+                      {formatAudioTime(snap.totalDurationSec)}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-4 h-4 fill-current shrink-0" aria-hidden="true" />
+                    <span>
+                      Слушать эфир · {formatAudioTime(snap.elapsedSec)} /{' '}
+                      {formatAudioTime(snap.totalDurationSec)}
+                    </span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                data-testid="aircheck-jump-splice-btn"
+                onClick={() => broadcastAircheckEngine.jumpToSpliceTransition()}
+                className="min-h-[44px] px-3.5 py-2 rounded-full bg-white/[0.08] hover:bg-white/[0.14] border border-white/14 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <FastForward className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>К склейке рекламы</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="aircheck-road-noise-btn"
+                aria-pressed={snap.roadNoiseEnabled}
+                onClick={() => broadcastAircheckEngine.toggleRoadNoise()}
+                className={`min-h-[44px] px-3.5 py-2 rounded-full border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                  snap.roadNoiseEnabled
+                    ? 'bg-[#FF4820]/22 border-[#FF4820] text-white'
+                    : 'bg-transparent border-white/14 text-white/74 hover:text-white hover:border-white/30'
+                }`}
+              >
+                <Car className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>Шум дороги</span>
+              </button>
+            </div>
+
+            {/* Правая группа: выбор целевого ролика + загрузка своего + разбор по запросу */}
+            <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 min-w-0">
+              <div
+                role="group"
+                aria-label="Выбор ролика в целевом слоте №2"
+                className="grid grid-cols-2 sm:flex items-center gap-1 p-1 rounded-full bg-white/[0.06] border border-white/10"
+              >
+                <button
+                  type="button"
+                  data-testid="aircheck-spot-fmworks"
+                  aria-pressed={snap.spotMode === 'fmworks_example'}
+                  onClick={() => handleSelectSpotMode('fmworks_example')}
+                  className={`min-h-[40px] px-3 py-1.5 rounded-full text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                    snap.spotMode === 'fmworks_example'
+                      ? 'bg-[#FF4820] text-white'
+                      : 'text-white/72 hover:text-white'
+                  }`}
+                >
+                  Эталон FMWorks
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="aircheck-spot-cliche"
+                  aria-pressed={snap.spotMode === 'typical_cliche'}
+                  onClick={() => handleSelectSpotMode('typical_cliche')}
+                  className={`min-h-[40px] px-3 py-1.5 rounded-full text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                    snap.spotMode === 'typical_cliche'
+                      ? 'bg-white text-[#111111]'
+                      : 'text-white/72 hover:text-white'
+                  }`}
+                >
+                  Обычный шаблон
+                </button>
+
+                {snap.clientAudioUrl && (
+                  <button
+                    type="button"
+                    data-testid="aircheck-spot-client"
+                    aria-pressed={snap.spotMode === 'client_upload'}
+                    onClick={() => handleSelectSpotMode('client_upload')}
+                    className={`col-span-2 sm:col-span-1 min-h-[40px] px-3 py-1.5 rounded-full text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                      snap.spotMode === 'client_upload'
+                        ? 'bg-[#FF4820] text-white'
+                        : 'text-white/72 hover:text-white'
+                    }`}
+                  >
+                    Ваш ролик
+                  </button>
+                )}
+              </div>
+
+              <button
+                type="button"
+                data-testid="aircheck-upload-trigger-btn"
+                disabled={snap.isAnalyzingUpload}
+                onClick={() => fileInputRef.current?.click()}
+                className="min-h-[44px] px-3.5 py-2 rounded-full bg-white text-[#111111] hover:bg-[#FF4820] hover:text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <Upload className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>
+                  {snap.isAnalyzingUpload
+                    ? 'Встраиваем…'
+                    : snap.clientAudioUrl
+                      ? 'Заменить файл'
+                      : 'Вставить свой ролик'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="aircheck-open-lead-btn"
+                aria-expanded={isLeadDrawerOpen || Boolean(submittedLead)}
+                onClick={() => setIsLeadDrawerOpen((prev) => !prev)}
+                className={`min-h-[44px] px-3.5 py-2 rounded-full border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                  isLeadDrawerOpen || submittedLead
+                    ? 'bg-white/16 border-white/40 text-white'
+                    : 'bg-transparent border-white/18 text-white/85 hover:text-white hover:border-white/36'
+                }`}
+              >
+                <MessageSquareText className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>Разбор с продюсером</span>
+              </button>
+            </div>
+          </div>
+
+          {snap.uploadError && (
+            <div
+              role="alert"
+              className="pt-2 border-t border-white/10 text-xs font-medium text-[#F87171] flex items-start gap-2"
+            >
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+              <span>{snap.uploadError}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Раскрываемая панель №1: Компактная диагностика загруженного ролика внутри блока из 4 конкурентов */}
+        {snap.uploadedDiagnostic && (
+          <div
+            data-testid="aircheck-uploaded-diagnostic"
+            className="rounded-2xl bg-[#EFECE5] dark:bg-[#17171D] text-[#111111] dark:text-[#F4F3EF] border border-[#111111]/12 dark:border-white/12 p-4 sm:px-6 sm:py-4 space-y-3 min-w-0"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileAudio className="w-4 h-4 text-[#FF4820] shrink-0" aria-hidden="true" />
+                <span className="text-xs sm:text-sm font-bold truncate">
+                  Ваш файл в слоте №2: {snap.uploadedDiagnostic.fileName}
+                </span>
+                <span className="text-xs text-[#111111]/55 dark:text-[#F4F3EF]/55 tabular-nums shrink-0">
+                  · {snap.uploadedDiagnostic.meanRmsDb} дБ
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => broadcastAircheckEngine.jumpToTargetTransition()}
+                  className="min-h-[36px] text-xs font-semibold text-[#FF4820] hover:underline cursor-pointer whitespace-nowrap"
+                >
+                  Прослушать стык в блоке
+                </button>
+                <button
+                  type="button"
+                  aria-label="Удалить загруженный ролик"
+                  onClick={() => broadcastAircheckEngine.clearClientAudio()}
+                  className="min-h-[36px] min-w-[36px] rounded-full inline-flex items-center justify-center text-[#111111]/58 dark:text-[#F4F3EF]/58 hover:text-[#111111] dark:hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+
+            <dl className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2.5 border-t border-[#111111]/10 dark:border-white/10 text-xs tabular-nums">
+              <div className="space-y-0.5 min-w-0">
+                <dt className="text-[#111111]/54 dark:text-[#F4F3EF]/54">
+                  Сетка станции и громкость
+                </dt>
+                <dd className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
+                  {snap.uploadedDiagnostic.timingHumanLabel} ·{' '}
+                  {snap.uploadedDiagnostic.loudnessHumanLabel}
+                </dd>
+              </div>
+
+              <div className="space-y-0.5 min-w-0">
+                <dt className="text-[#111111]/54 dark:text-[#F4F3EF]/54">
+                  Вход после конкурента №1
+                </dt>
+                <dd className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
+                  {snap.uploadedDiagnostic.introHumanLabel}
+                </dd>
+              </div>
+
+              <div className="space-y-0.5 min-w-0">
+                <dt className="text-[#111111]/54 dark:text-[#F4F3EF]/54">
+                  Финал перед 3 конкурентами
+                </dt>
+                <dd className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
+                  {snap.uploadedDiagnostic.outroHumanLabel}
+                </dd>
+              </div>
+            </dl>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-2.5 border-t border-[#111111]/10 dark:border-white/10">
+              <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72 leading-relaxed">
+                {snap.uploadedDiagnostic.recommendationSummary}
+              </p>
+
+              {!isLeadDrawerOpen && !submittedLead && (
+                <button
+                  type="button"
+                  onClick={openLeadDrawerAndFocus}
+                  className="min-h-[40px] px-4 py-2 rounded-full bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer shrink-0 whitespace-nowrap"
+                >
+                  <span>Получить правки продюсера</span>
+                  <ArrowRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Раскрываемая панель №2: Минималистичная форма связи с продюсером (появляется строго по запросу) */}
+        {(isLeadDrawerOpen || submittedLead) && (
+          <div
+            data-testid="aircheck-lead-capture-card"
+            className="rounded-2xl bg-[#EFECE5] dark:bg-[#17171D] text-[#111111] dark:text-[#F4F3EF] border border-[#111111]/12 dark:border-white/12 p-4 sm:px-6 sm:py-5 space-y-3.5 min-w-0"
+          >
+            {submittedLead ? (
+              <div
+                role="status"
+                data-testid="aircheck-lead-success"
+                className="flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+              >
+                <div className="flex items-start gap-2.5 min-w-0">
+                  <CheckCircle2
+                    className="w-5 h-5 text-[#16A34A] dark:text-[#4ADE80] shrink-0 mt-0.5"
+                    aria-hidden="true"
+                  />
+                  <div className="space-y-0.5 min-w-0">
+                    <p className="text-sm font-bold tabular-nums">
+                      Заявка #{submittedLead.orderNumber} передана продюсеру
+                    </p>
+                    <p className="text-xs text-[#111111]/70 dark:text-[#F4F3EF]/70 leading-relaxed">
+                      {submittedLead.fileName
+                        ? `Подготовим рекомендации по выделению файла «${submittedLead.fileName}» среди соседних объявлений.`
+                        : 'Покажем решения, которые отделяют бренд от 4 соседних объявлений в блоке.'}{' '}
+                      {submittedLead.promisedWindowLabel
+                        ? `Окно ответа: ${submittedLead.promisedWindowLabel}.`
+                        : ''}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    data-testid="aircheck-proceed-order-btn"
+                    onClick={handleProceedToFullOrder}
+                    className="min-h-[44px] px-4 py-2 rounded-full bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    <span>Оформить ролик под ключ</span>
+                    <ArrowRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Свернуть панель подтверждения"
+                    onClick={() => {
+                      setSubmittedLead(null);
+                      setIsLeadDrawerOpen(false);
+                    }}
+                    className="min-h-[44px] px-3.5 py-2 rounded-full border border-[#111111]/16 dark:border-white/16 text-xs font-semibold hover:border-[#FF4820] transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    Свернуть
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form
+                onSubmit={(e) => void handleLeadSubmit(e)}
+                noValidate
+                className="space-y-3 min-w-0"
+              >
+                <div aria-hidden="true" className="sr-only relative">
+                  <label htmlFor={`${formUid}-website-trap`}>
+                    Корпоративный сайт (не заполнять)
+                  </label>
+                  <input
+                    id={`${formUid}-website-trap`}
+                    name="company_portal_trap"
+                    type="text"
+                    tabIndex={-1}
+                    autoComplete="off"
+                    value={websiteTrap}
+                    onChange={(e) => setWebsiteTrap(e.target.value)}
+                    className="w-px h-px"
+                  />
+                </div>
+
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-0.5 min-w-0">
+                    <h3 className="text-sm sm:text-base font-bold">
+                      {snap.uploadedDiagnostic
+                        ? 'Разбор вашего ролика с продюсером FMWorks'
+                        : 'Бесплатный разбор ролика или идея сценария под реальный эфир'}
+                    </h3>
+                    <p className="text-xs text-[#111111]/64 dark:text-[#F4F3EF]/64">
+                      Покажем, как отстроиться от 4 конкурентов в рекламной паузе · выпуск от 24–48 ч по тексту · 3–4 дня под ключ
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    aria-label="Закрыть форму разбора"
+                    onClick={() => setIsLeadDrawerOpen(false)}
+                    className="min-h-[40px] min-w-[40px] rounded-full inline-flex items-center justify-center text-[#111111]/55 dark:text-[#F4F3EF]/55 hover:text-[#111111] dark:hover:text-white cursor-pointer shrink-0"
+                  >
+                    <X className="w-4 h-4" aria-hidden="true" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-2.5 items-start min-w-0">
+                  <div className="lg:col-span-3 space-y-1 min-w-0">
+                    <label
+                      htmlFor={`${formUid}-lead-name`}
+                      className="block text-xs font-medium text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                    >
+                      Ваше имя *
+                    </label>
+                    <input
+                      ref={nameInputRef}
+                      id={`${formUid}-lead-name`}
+                      data-testid="aircheck-lead-name"
+                      type="text"
+                      value={clientName}
+                      aria-invalid={Boolean(nameError)}
+                      onChange={(e) => {
+                        setClientName(e.target.value);
+                        if (nameError) setNameError(undefined);
+                      }}
+                      placeholder="Алексей"
+                      className={`w-full min-w-0 min-h-[44px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#121216] border text-sm text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/36 dark:placeholder:text-white/32 focus:outline-none transition-colors ${
+                        nameError
+                          ? 'border-[#DC2626] ring-2 ring-[#DC2626]/20'
+                          : 'border-[#111111]/14 dark:border-white/14 focus:border-[#FF4820]'
+                      }`}
+                    />
+                    {nameError && (
+                      <p
+                        role="alert"
+                        data-testid="aircheck-lead-name-error"
+                        className="text-[11px] font-medium text-[#DC2626] dark:text-[#F87171]"
+                      >
+                        {nameError}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="lg:col-span-4 space-y-1 min-w-0">
+                    <label
+                      htmlFor={`${formUid}-lead-contact`}
+                      className="block text-xs font-medium text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                    >
+                      Телефон или @Telegram *
+                    </label>
+                    <input
+                      ref={contactInputRef}
+                      id={`${formUid}-lead-contact`}
+                      data-testid="aircheck-lead-contact"
+                      type="text"
+                      value={clientContact}
+                      aria-invalid={Boolean(contactError)}
+                      onChange={(e) => {
+                        setClientContact(e.target.value);
+                        if (contactError) setContactError(undefined);
+                      }}
+                      placeholder="+7 999 123-45-67 или @ivanov"
+                      className={`w-full min-w-0 min-h-[44px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#121216] border text-sm text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/36 dark:placeholder:text-white/32 focus:outline-none transition-colors ${
+                        contactError
+                          ? 'border-[#DC2626] ring-2 ring-[#DC2626]/20'
+                          : 'border-[#111111]/14 dark:border-white/14 focus:border-[#FF4820]'
+                      }`}
+                    />
+                    {contactError && (
+                      <p
+                        role="alert"
+                        data-testid="aircheck-lead-contact-error"
+                        className="text-[11px] font-medium text-[#DC2626] dark:text-[#F87171]"
+                      >
+                        {contactError}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="lg:col-span-3 space-y-1 min-w-0">
+                    <label
+                      htmlFor={`${formUid}-lead-company`}
+                      className="block text-xs font-medium text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                    >
+                      Компания (по желанию)
+                    </label>
+                    <input
+                      ref={companyInputRef}
+                      id={`${formUid}-lead-company`}
+                      data-testid="aircheck-lead-company"
+                      type="text"
+                      value={clientCompany}
+                      aria-invalid={Boolean(companyError)}
+                      onChange={(e) => {
+                        setClientCompany(e.target.value);
+                        if (companyError) setCompanyError(undefined);
+                      }}
+                      placeholder="Клиника «МедСфера»"
+                      className={`w-full min-w-0 min-h-[44px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#121216] border text-sm text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/36 dark:placeholder:text-white/32 focus:outline-none transition-colors ${
+                        companyError
+                          ? 'border-[#DC2626] ring-2 ring-[#DC2626]/20'
+                          : 'border-[#111111]/14 dark:border-white/14 focus:border-[#FF4820]'
+                      }`}
+                    />
+                    {companyError && (
+                      <p
+                        role="alert"
+                        className="text-[11px] font-medium text-[#DC2626] dark:text-[#F87171]"
+                      >
+                        {companyError}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="sm:col-span-2 lg:col-span-2 lg:pt-[22px]">
+                    <button
+                      type="submit"
+                      data-testid="aircheck-lead-submit-btn"
+                      disabled={isSubmittingLead || rateLimitCountdownSec > 0}
+                      className="w-full min-h-[44px] px-4 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] disabled:opacity-55 text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+                    >
+                      <span>
+                        {rateLimitCountdownSec > 0
+                          ? `Ждите ${rateLimitCountdownSec}с`
+                          : isSubmittingLead
+                            ? 'Отправка…'
+                            : 'Получить разбор'}
+                      </span>
+                      <ArrowRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
+
+                {submitBannerError && (
+                  <p
+                    role="alert"
+                    className="text-xs font-medium text-[#DC2626] dark:text-[#F87171]"
+                  >
+                    {submitBannerError}
+                  </p>
+                )}
+
+                <div className="flex items-center justify-between gap-2 text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58">
+                  <span>Без спама и рассылок · ответит живой продюсер</span>
+                  <button
+                    type="button"
+                    onClick={handleProceedToFullOrder}
+                    className="font-semibold text-[#111111] dark:text-[#F4F3EF] hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    Сразу к расчёту заказа →
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}

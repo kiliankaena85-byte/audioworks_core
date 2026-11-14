@@ -161,7 +161,7 @@ export function buildBrandLogoSvgMarkup({
   const inkHex = colorTheme === 'dark' ? '#111111' : '#FFFFFF';
   const accentHex = '#FF4820';
   const fontStack =
-    "'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif";
+    "'Manrope', 'Golos Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
   const wavePath = computeBadgeWaveWPath(0, 0);
 

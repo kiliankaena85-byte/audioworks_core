@@ -1,3 +1,8 @@
+import {
+  formatStructuredCompanyLine,
+  parseCompanyNameAndInn,
+} from '../components/order/companyDetailsHelpers';
+import { AIRTIME_SALES_ENABLED, isAirtimeSalesEnabled } from './platformFeatures';
 import { IndustryVerticalSlug, isValidIndustrySlug } from './platformRouter';
 import { OrderFormatId } from './pricingData';
 import {
@@ -5,8 +10,15 @@ import {
   MediaGridReservationPayload,
   ReservationProductionSelection,
 } from './radioInventory';
+import {
+  buildRegimeAwareClientTimeline,
+  ClientCallbackPreference,
+  StudioWorkScheduleConfig,
+} from './slaWorkCalendar';
 
 export type OrderCheckoutMode = 'production_only' | 'air_plus_production';
+
+export type StudioPaymentChannel = 'edo_invoice' | 'card_online';
 
 export type ReservationLifecycleStatus =
   | 'none'
@@ -18,8 +30,18 @@ export interface ConfirmedReservationSummary {
   confirmedAtMs: number;
   holdExpiresAtMs: number;
   checkoutMode: OrderCheckoutMode;
+  paymentChannel?: StudioPaymentChannel;
+  selectedFormatId?: OrderFormatId;
+  selectedBudgetRub?: number | null;
   contactLine: string;
   companyLine: string;
+  callbackPreference?: ClientCallbackPreference;
+  slaWindowStartAtMs?: number;
+  slaDeadlineAtMs?: number;
+  promisedWindowLabel?: string;
+  rescueToken?: string | null;
+  compensationNote?: string | null;
+  firstContactedAtIso?: string | null;
   formatLabel: string;
   spotDurationSec: number;
   industryLabel: string | null;
@@ -43,15 +65,26 @@ export interface ClientNextStepItem {
 export interface OrderDraftSnapshot {
   mode: OrderCheckoutMode;
   selectedFormat: OrderFormatId;
+  isFormatPreselected: boolean;
+  paymentChannel: StudioPaymentChannel;
   spotDurationSec: number;
   industryPreset: IndustryVerticalSlug | null;
   briefText: string;
   contactLine: string;
   companyLine: string;
+  companyName: string;
+  companyInn: string;
+  callbackPreference: ClientCallbackPreference;
   mediaReservation: MediaGridReservationPayload | null;
   holdExpiresAtMs: number | null;
   reservationProdSelection: ReservationProductionSelection;
   confirmedReservation: ConfirmedReservationSummary | null;
+  /**
+   * Управляет тем, открыт ли экран квитанции отправленной заявки.
+   * При клике на любую кнопку «Заказать ролик» всегда сбрасывается в `false`,
+   * чтобы прошлая бронь или заказ никогда не блокировали новую студийную заявку.
+   */
+  isViewingSubmittedReceipt: boolean;
   returnPath: string;
 }
 
@@ -63,6 +96,12 @@ const VALID_ORDER_FORMATS: readonly OrderFormatId[] = [
   'turnkey',
   'cinema',
   'adaptation',
+  'custom_consult',
+];
+
+const VALID_PAYMENT_CHANNELS: readonly StudioPaymentChannel[] = [
+  'edo_invoice',
+  'card_online',
 ];
 
 const VALID_PROD_SELECTIONS: readonly ReservationProductionSelection[] = [
@@ -74,8 +113,13 @@ const VALID_PROD_SELECTIONS: readonly ReservationProductionSelection[] = [
 ];
 
 export function resolveReservationLifecycleStatus(
-  snapshot: Pick<OrderDraftSnapshot, 'mediaReservation' | 'confirmedReservation'>
+  snapshot: Pick<OrderDraftSnapshot, 'mediaReservation' | 'confirmedReservation'>,
+  options?: { airtimeEnabled?: boolean }
 ): ReservationLifecycleStatus {
+  const airtimeEnabled = isAirtimeSalesEnabled(options?.airtimeEnabled);
+  if (!airtimeEnabled) {
+    return 'none';
+  }
   if (snapshot.confirmedReservation !== null) {
     return 'confirmed_hold';
   }
@@ -89,77 +133,55 @@ export function resolveReservationLifecycleStatus(
   return 'none';
 }
 
+const VALID_CALLBACK_PREFS: readonly ClientCallbackPreference[] = [
+  'call_15m',
+  'async_no_call',
+  'morning_0930',
+  'day_1300',
+  'evening_1730',
+];
+
 export function buildClientNextStepsTimeline(
   checkoutMode: OrderCheckoutMode,
-  stationsCount = 0
-): readonly ClientNextStepItem[] {
-  if (checkoutMode === 'air_plus_production') {
-    const stationsPhrase =
-      stationsCount === 1
-        ? 'выбранной радиостанции'
-        : `выбранных радиостанциях (${stationsCount} ст.)`;
-    return [
-      {
-        stepNumber: '01',
-        timingLabel: 'Сейчас · 0–15 минут',
-        title: 'Блокировка эфирных окон в трафик-службе',
-        description: `Сейлз-продюсер сверяет сетку на ${stationsPhrase} и ставит слоты на закрытый 4-часовой резерв, чтобы квота со скидкой не ушла в открытую продажу.`,
-      },
-      {
-        stepNumber: '02',
-        timingLabel: 'Через 15–20 минут',
-        title: 'Звонок или сообщение продюсера в Telegram',
-        description:
-          'Персональный продюсер свяжется по вашему контакту, подтвердит точное расписание выходов и при необходимости примет задачу для сценариста устно.',
-      },
-      {
-        stepNumber: '03',
-        timingLabel: 'В течение 4 часов',
-        title: 'Единый договор-счёт в ЭДО и старт ролика',
-        description:
-          'Вы получите единую спецификацию и счёт в ЭДО без предоплаты за воздух. Если в пакете заказан ролик — студия подготовит 3 концепции сценария и кастинг дикторов.',
-      },
-    ];
+  stationsCount = 0,
+  options?: {
+    nowMs?: number;
+    callbackPreference?: ClientCallbackPreference;
+    scheduleConfig?: Partial<StudioWorkScheduleConfig> | null;
+    paymentChannel?: StudioPaymentChannel;
+    isNegotiable?: boolean;
   }
-
-  return [
-    {
-      stepNumber: '01',
-      timingLabel: 'Сейчас · 0–15 минут',
-      title: 'Разбор задачи и юридический пре-чек ФЗ-38',
-      description:
-        'Исполнительный продюсер фиксирует ваш бриф или голосовое ТЗ, проверяет отраслевые требования радиостанций и подбирает голоса из базы федеральных дикторов.',
-    },
-    {
-      stepNumber: '02',
-      timingLabel: 'Через 15–30 минут',
-      title: 'Связь продюсера, тайминг и счёт в ЭДО',
-      description:
-        'Свяжемся по указанному контакту, согласуем точный хронометраж ролика и направим договор-счёт в ЭДО.',
-    },
-    {
-      stepNumber: '03',
-      timingLabel: 'За 24–48 часов',
-      title: '3 концепции сценария, запись и паспорт прав',
-      description:
-        'Пришлём 3 варианта сценария на выбор, запишем утверждённый ролик со сведением по ГОСТ радиоэфира и выдадим полный паспорт прав РАО/ВОИС.',
-    },
-  ];
+): readonly ClientNextStepItem[] {
+  return buildRegimeAwareClientTimeline({
+    checkoutMode,
+    stationsCount,
+    nowMs: options?.nowMs,
+    callbackPreference: options?.callbackPreference,
+    scheduleConfig: options?.scheduleConfig,
+    paymentChannel: options?.paymentChannel,
+    isNegotiable: options?.isNegotiable,
+  });
 }
 
 export function createDefaultOrderDraft(): OrderDraftSnapshot {
   return {
     mode: 'production_only',
     selectedFormat: 'turnkey',
+    isFormatPreselected: false,
+    paymentChannel: 'edo_invoice',
     spotDurationSec: 20,
     industryPreset: null,
     briefText: '',
     contactLine: '',
     companyLine: '',
+    companyName: '',
+    companyInn: '',
+    callbackPreference: 'call_15m',
     mediaReservation: null,
     holdExpiresAtMs: null,
     reservationProdSelection: 'turnkey',
     confirmedReservation: null,
+    isViewingSubmittedReceipt: false,
     returnPath: '/',
   };
 }
@@ -172,7 +194,7 @@ export function computeRemainingHoldSeconds(
     return DEFAULT_HOLD_WINDOW_SECONDS;
   }
   const diffSec = Math.floor((holdExpiresAtMs - nowMs) / 1000);
-  return Math.max(0, Math.min(4 * 3600, diffSec));
+  return Math.max(0, Math.min(21 * 24 * 3600, diffSec));
 }
 
 function sanitizeConfirmedReservation(
@@ -203,8 +225,45 @@ function sanitizeConfirmedReservation(
       obj.checkoutMode === 'air_plus_production'
         ? 'air_plus_production'
         : 'production_only',
+    paymentChannel: VALID_PAYMENT_CHANNELS.includes(
+      obj.paymentChannel as StudioPaymentChannel
+    )
+      ? (obj.paymentChannel as StudioPaymentChannel)
+      : 'edo_invoice',
+    selectedFormatId: VALID_ORDER_FORMATS.includes(obj.selectedFormatId as OrderFormatId)
+      ? (obj.selectedFormatId as OrderFormatId)
+      : undefined,
+    selectedBudgetRub:
+      typeof obj.selectedBudgetRub === 'number' && Number.isFinite(obj.selectedBudgetRub)
+        ? Math.max(0, Math.round(obj.selectedBudgetRub))
+        : obj.selectedBudgetRub === null
+          ? null
+          : undefined,
     contactLine: obj.contactLine.slice(0, 240),
     companyLine: typeof obj.companyLine === 'string' ? obj.companyLine.slice(0, 240) : '',
+    callbackPreference: VALID_CALLBACK_PREFS.includes(
+      obj.callbackPreference as ClientCallbackPreference
+    )
+      ? (obj.callbackPreference as ClientCallbackPreference)
+      : 'call_15m',
+    slaWindowStartAtMs:
+      typeof obj.slaWindowStartAtMs === 'number' && Number.isFinite(obj.slaWindowStartAtMs)
+        ? obj.slaWindowStartAtMs
+        : undefined,
+    slaDeadlineAtMs:
+      typeof obj.slaDeadlineAtMs === 'number' && Number.isFinite(obj.slaDeadlineAtMs)
+        ? obj.slaDeadlineAtMs
+        : undefined,
+    promisedWindowLabel:
+      typeof obj.promisedWindowLabel === 'string'
+        ? obj.promisedWindowLabel.slice(0, 240)
+        : undefined,
+    rescueToken:
+      typeof obj.rescueToken === 'string' ? obj.rescueToken.slice(0, 120) : null,
+    compensationNote:
+      typeof obj.compensationNote === 'string' ? obj.compensationNote.slice(0, 320) : null,
+    firstContactedAtIso:
+      typeof obj.firstContactedAtIso === 'string' ? obj.firstContactedAtIso.slice(0, 64) : null,
     formatLabel:
       typeof obj.formatLabel === 'string' ? obj.formatLabel.slice(0, 240) : 'Под ключ',
     spotDurationSec:
@@ -227,21 +286,25 @@ function sanitizeConfirmedReservation(
   };
 }
 
-function sanitizeDraftFromStorage(raw: unknown): OrderDraftSnapshot {
+function sanitizeDraftFromStorage(
+  raw: unknown,
+  airtimeEnabled = AIRTIME_SALES_ENABLED
+): OrderDraftSnapshot {
   const base = createDefaultOrderDraft();
   if (!raw || typeof raw !== 'object') return base;
   const obj = raw as Partial<OrderDraftSnapshot>;
-
-  const mode: OrderCheckoutMode =
-    obj.mode === 'air_plus_production' && obj.mediaReservation
-      ? 'air_plus_production'
-      : 'production_only';
 
   const selectedFormat: OrderFormatId = VALID_ORDER_FORMATS.includes(
     obj.selectedFormat as OrderFormatId
   )
     ? (obj.selectedFormat as OrderFormatId)
     : base.selectedFormat;
+
+  const paymentChannel: StudioPaymentChannel = VALID_PAYMENT_CHANNELS.includes(
+    obj.paymentChannel as StudioPaymentChannel
+  )
+    ? (obj.paymentChannel as StudioPaymentChannel)
+    : base.paymentChannel;
 
   const spotDurationSec =
     typeof obj.spotDurationSec === 'number' && Number.isFinite(obj.spotDurationSec)
@@ -261,12 +324,18 @@ function sanitizeDraftFromStorage(raw: unknown): OrderDraftSnapshot {
       : base.reservationProdSelection;
 
   const hasValidReservation =
+    airtimeEnabled &&
     obj.mediaReservation &&
     typeof obj.mediaReservation === 'object' &&
     Array.isArray(obj.mediaReservation.stations) &&
     obj.mediaReservation.stations.length > 0;
 
   const mediaReservation = hasValidReservation ? obj.mediaReservation! : null;
+
+  const mode: OrderCheckoutMode =
+    airtimeEnabled && obj.mode === 'air_plus_production' && mediaReservation
+      ? 'air_plus_production'
+      : 'production_only';
 
   const holdExpiresAtMs =
     mediaReservation &&
@@ -277,24 +346,60 @@ function sanitizeDraftFromStorage(raw: unknown): OrderDraftSnapshot {
         ? Date.now() + DEFAULT_HOLD_WINDOW_SECONDS * 1000
         : null;
 
-  const confirmedReservation = sanitizeConfirmedReservation(obj.confirmedReservation);
+  const rawConfirmed = sanitizeConfirmedReservation(obj.confirmedReservation);
+  const confirmedReservation =
+    !airtimeEnabled && rawConfirmed?.checkoutMode === 'air_plus_production'
+      ? null
+      : rawConfirmed;
+
+  const rawReturnPath =
+    typeof obj.returnPath === 'string' && obj.returnPath.startsWith('/')
+      ? obj.returnPath
+      : '/';
+  const returnPath =
+    !airtimeEnabled && rawReturnPath.startsWith('/hot-air') ? '/' : rawReturnPath;
 
   return {
     mode: mediaReservation ? mode : 'production_only',
     selectedFormat,
+    isFormatPreselected: Boolean(obj.isFormatPreselected),
+    paymentChannel,
     spotDurationSec,
     industryPreset,
     briefText: typeof obj.briefText === 'string' ? obj.briefText.slice(0, 2000) : '',
     contactLine: typeof obj.contactLine === 'string' ? obj.contactLine.slice(0, 240) : '',
-    companyLine: typeof obj.companyLine === 'string' ? obj.companyLine.slice(0, 240) : '',
+    ...(() => {
+      const rawLine = typeof obj.companyLine === 'string' ? obj.companyLine.slice(0, 240) : '';
+      const rawName = typeof obj.companyName === 'string' ? obj.companyName.slice(0, 120) : '';
+      const rawInn =
+        typeof obj.companyInn === 'string'
+          ? obj.companyInn.replace(/\D/g, '').slice(0, 12)
+          : '';
+      if (rawName || rawInn) {
+        return {
+          companyName: rawName,
+          companyInn: rawInn,
+          companyLine: formatStructuredCompanyLine(rawName, rawInn) || rawLine,
+        };
+      }
+      const parsed = parseCompanyNameAndInn(rawLine);
+      return {
+        companyLine: rawLine,
+        companyName: parsed.companyName,
+        companyInn: parsed.companyInn,
+      };
+    })(),
+    callbackPreference: VALID_CALLBACK_PREFS.includes(
+      obj.callbackPreference as ClientCallbackPreference
+    )
+      ? (obj.callbackPreference as ClientCallbackPreference)
+      : 'call_15m',
     mediaReservation,
     holdExpiresAtMs,
     reservationProdSelection,
     confirmedReservation,
-    returnPath:
-      typeof obj.returnPath === 'string' && obj.returnPath.startsWith('/')
-        ? obj.returnPath
-        : '/',
+    isViewingSubmittedReceipt: Boolean(obj.isViewingSubmittedReceipt && confirmedReservation),
+    returnPath,
   };
 }
 
@@ -303,7 +408,12 @@ export interface StorageAdapter {
   setItem(key: string, value: string): void;
 }
 
-export function createOrderDraftStore(customStorage?: StorageAdapter) {
+export function createOrderDraftStore(
+  customStorage?: StorageAdapter,
+  options?: { airtimeEnabled?: boolean }
+) {
+  const airtimeEnabled = isAirtimeSalesEnabled(options?.airtimeEnabled);
+
   const getStorage = (): StorageAdapter | undefined => {
     if (customStorage) return customStorage;
     if (typeof window !== 'undefined' && window.localStorage) {
@@ -318,7 +428,7 @@ export function createOrderDraftStore(customStorage?: StorageAdapter) {
     try {
       const raw = store.getItem(ORDER_DRAFT_STORAGE_KEY);
       if (!raw) return createDefaultOrderDraft();
-      return sanitizeDraftFromStorage(JSON.parse(raw));
+      return sanitizeDraftFromStorage(JSON.parse(raw), airtimeEnabled);
     } catch {
       return createDefaultOrderDraft();
     }
@@ -361,11 +471,9 @@ export function createOrderDraftStore(customStorage?: StorageAdapter) {
     } = {}): OrderDraftSnapshot {
       const next: OrderDraftSnapshot = {
         ...state,
-        mode:
-          state.mediaReservation && !params.formatId && !params.industryPreset
-            ? state.mode
-            : 'production_only',
+        mode: 'production_only',
         selectedFormat: params.formatId ?? state.selectedFormat,
+        isFormatPreselected: Boolean(params.formatId),
         industryPreset:
           params.industryPreset !== undefined ? params.industryPreset : state.industryPreset,
         spotDurationSec:
@@ -374,6 +482,9 @@ export function createOrderDraftStore(customStorage?: StorageAdapter) {
             : state.spotDurationSec,
         briefText:
           params.briefHint && !state.briefText.trim() ? params.briefHint : state.briefText,
+        mediaReservation: airtimeEnabled ? state.mediaReservation : null,
+        holdExpiresAtMs: airtimeEnabled ? state.holdExpiresAtMs : null,
+        isViewingSubmittedReceipt: false,
         returnPath: params.returnPath ?? state.returnPath,
       };
       persistAndNotify(next);
@@ -382,9 +493,12 @@ export function createOrderDraftStore(customStorage?: StorageAdapter) {
 
     prepareMediaReservationOrder(
       payload: MediaGridReservationPayload,
-      options: { nowMs?: number; returnPath?: string } = {}
+      opts: { nowMs?: number; returnPath?: string } = {}
     ): OrderDraftSnapshot {
-      const nowMs = options.nowMs ?? Date.now();
+      if (!airtimeEnabled) {
+        return state;
+      }
+      const nowMs = opts.nowMs ?? Date.now();
       const countdownSec =
         payload.initialCountdownSeconds > 0
           ? payload.initialCountdownSeconds
@@ -412,7 +526,8 @@ export function createOrderDraftStore(customStorage?: StorageAdapter) {
         holdExpiresAtMs: nowMs + countdownSec * 1000,
         reservationProdSelection: payload.initialProductionSelection,
         confirmedReservation: null,
-        returnPath: options.returnPath ?? '/hot-air',
+        isViewingSubmittedReceipt: false,
+        returnPath: opts.returnPath ?? '/hot-air',
       };
       persistAndNotify(next);
       return next;
@@ -425,6 +540,31 @@ export function createOrderDraftStore(customStorage?: StorageAdapter) {
         ...state,
         confirmedReservation: summary,
         holdExpiresAtMs: summary.holdExpiresAtMs,
+        isViewingSubmittedReceipt: true,
+      };
+      persistAndNotify(next);
+      return next;
+    },
+
+    openSubmittedReceipt(): OrderDraftSnapshot {
+      if (!state.confirmedReservation) {
+        return state;
+      }
+      const next: OrderDraftSnapshot = {
+        ...state,
+        isViewingSubmittedReceipt: true,
+      };
+      persistAndNotify(next);
+      return next;
+    },
+
+    dismissSubmittedReceipt(): OrderDraftSnapshot {
+      if (!state.isViewingSubmittedReceipt) {
+        return state;
+      }
+      const next: OrderDraftSnapshot = {
+        ...state,
+        isViewingSubmittedReceipt: false,
       };
       persistAndNotify(next);
       return next;
@@ -434,28 +574,45 @@ export function createOrderDraftStore(customStorage?: StorageAdapter) {
       const next: OrderDraftSnapshot = {
         ...state,
         confirmedReservation: null,
+        isViewingSubmittedReceipt: false,
       };
       persistAndNotify(next);
       return next;
     },
 
     switchMode(mode: OrderCheckoutMode): OrderDraftSnapshot {
+      if (!airtimeEnabled && mode === 'air_plus_production') {
+        return state;
+      }
       if (mode === 'air_plus_production' && !state.mediaReservation) {
         return state;
       }
       const next: OrderDraftSnapshot = {
         ...state,
         mode,
+        isViewingSubmittedReceipt: false,
       };
       persistAndNotify(next);
       return next;
     },
 
     updateDraft(patch: Partial<OrderDraftSnapshot>): OrderDraftSnapshot {
-      const next = sanitizeDraftFromStorage({
+      const merged: Partial<OrderDraftSnapshot> = {
         ...state,
         ...patch,
-      });
+      };
+      if (patch.companyName !== undefined || patch.companyInn !== undefined) {
+        const nextName = patch.companyName ?? state.companyName;
+        const nextInn = patch.companyInn ?? state.companyInn;
+        merged.companyName = nextName;
+        merged.companyInn = nextInn;
+        merged.companyLine = formatStructuredCompanyLine(nextName, nextInn);
+      } else if (patch.companyLine !== undefined) {
+        const parsed = parseCompanyNameAndInn(patch.companyLine);
+        merged.companyName = parsed.companyName;
+        merged.companyInn = parsed.companyInn;
+      }
+      const next = sanitizeDraftFromStorage(merged, airtimeEnabled);
       persistAndNotify(next);
       return next;
     },
@@ -467,6 +624,7 @@ export function createOrderDraftStore(customStorage?: StorageAdapter) {
         mediaReservation: null,
         holdExpiresAtMs: null,
         confirmedReservation: null,
+        isViewingSubmittedReceipt: false,
       };
       persistAndNotify(next);
       return next;

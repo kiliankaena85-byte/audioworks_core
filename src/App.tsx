@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { broadcastAircheckEngine } from './audio/broadcastAircheckEngine';
 import { casePlayerEngine, CasePlayerSnapshot } from './audio/casePlayerEngine';
 import { contrastAudioEngine } from './audio/contrastAudioEngine';
 import { SiteTextBlocksProvider } from './cms/SiteTextBlocksContext';
@@ -8,9 +9,9 @@ import { BrandKitModal } from './components/BrandKitModal';
 import { CompactHeaderNav } from './components/CompactHeaderNav';
 import { FloatingCasePlayer } from './components/FloatingCasePlayer';
 import { Footer } from './components/Footer';
-import { LayaSimulationConsole } from './components/LayaSimulationConsole';
 import { ApproachPage } from './components/pages/ApproachPage';
 import { CasesPage } from './components/pages/CasesPage';
+import { FaqPage } from './components/pages/FaqPage';
 import { HomePage } from './components/pages/HomePage';
 import { HotAirPage } from './components/pages/HotAirPage';
 import { OrderPage } from './components/pages/OrderPage';
@@ -28,6 +29,7 @@ import {
   orderDraftStore,
   resolveReservationLifecycleStatus,
 } from './data/orderDraftStore';
+import { AIRTIME_SALES_ENABLED } from './data/platformFeatures';
 import {
   applyRouteSeoToDocument,
   buildPlatformPath,
@@ -96,9 +98,14 @@ function FmworksExperience() {
     return unsubscribeDraft;
   }, []);
 
-  // Нормализация старых хеш-ссылок (например /#hot-air -> /hot-air) при первом заходе и синхронизация popstate
+  // Нормализация URL при первом заходе (включая скрытый /hot-air -> / и старые хеш-ссылки)
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    const lowerPath = window.location.pathname.toLowerCase();
+    if (!AIRTIME_SALES_ENABLED && lowerPath.startsWith('/hot-air')) {
+      window.history.replaceState({}, '', '/');
+      return;
+    }
     const canonical = buildPlatformPath(route);
     const currentFull = `${window.location.pathname}${window.location.hash}`;
     if (window.location.pathname === '/' && (window.location.hash || window.location.search)) {
@@ -119,8 +126,10 @@ function FmworksExperience() {
       if (next.kind === 'admin') {
         casePlayerEngine.stop();
         contrastAudioEngine.stopAll();
+        broadcastAircheckEngine.stop();
       } else if (next.kind !== 'home') {
         contrastAudioEngine.stopAll();
+        broadcastAircheckEngine.stop();
       }
       setRoute(next);
     };
@@ -168,14 +177,21 @@ function FmworksExperience() {
   }, [route, snapshot.flagshipReel, snapshot.portfolioCases]);
 
   const navigateTo = (nextRoute: PlatformRoute) => {
-    const targetPath = buildPlatformPath(nextRoute);
+    const effectiveRoute: PlatformRoute =
+      !AIRTIME_SALES_ENABLED &&
+      (nextRoute.kind === 'hot-air' || nextRoute.kind === 'station-detail')
+        ? { kind: 'home' }
+        : nextRoute;
+    const targetPath = buildPlatformPath(effectiveRoute);
     if (typeof window !== 'undefined') {
-      if (nextRoute.kind === 'admin') {
+      if (effectiveRoute.kind === 'admin') {
         casePlayerEngine.stop();
         contrastAudioEngine.stopAll();
-      } else if (nextRoute.kind !== 'home') {
-        // Останавливаем только локальный краш-тест главного экрана, а глобальный плеер кейсов продолжает играть между страницами!
+        broadcastAircheckEngine.stop();
+      } else if (effectiveRoute.kind !== 'home') {
+        // Останавливаем только локальный краш-тест и эфирный стенд главного экрана, а глобальный плеер кейсов продолжает играть между страницами!
         contrastAudioEngine.stopAll();
+        broadcastAircheckEngine.stop();
       }
 
       const currentUrl = `${window.location.pathname}${window.location.hash}`;
@@ -184,23 +200,33 @@ function FmworksExperience() {
       }
 
       const hasScrollAnchor =
-        (nextRoute.kind === 'home' && Boolean(nextRoute.scrollAnchor)) ||
-        (nextRoute.kind === 'pricing' && Boolean(nextRoute.scrollAnchor));
+        (effectiveRoute.kind === 'home' && Boolean(effectiveRoute.scrollAnchor)) ||
+        (effectiveRoute.kind === 'pricing' && Boolean(effectiveRoute.scrollAnchor));
       if (!hasScrollAnchor) {
         window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
       }
     }
-    setRoute(nextRoute);
+    setRoute(effectiveRoute);
   };
 
   if (route.kind === 'admin') {
     return (
-      <AdminWorkspace
-        brandVariant={brandVariant}
-        isDark={isDark}
-        onToggleTheme={() => setIsDark((prev) => !prev)}
-        onNavigateHome={() => navigateTo({ kind: 'home' })}
-      />
+      <>
+        <AdminWorkspace
+          brandVariant={brandVariant}
+          onSelectBrandVariant={setBrandVariant}
+          onOpenBrandKit={() => setIsBrandKitOpen(true)}
+          isDark={isDark}
+          onToggleTheme={() => setIsDark((prev) => !prev)}
+          onNavigateHome={() => navigateTo({ kind: 'home' })}
+        />
+        <BrandKitModal
+          isOpen={isBrandKitOpen}
+          onClose={() => setIsBrandKitOpen(false)}
+          activeSiteVariant={brandVariant}
+          onSelectSiteVariant={setBrandVariant}
+        />
+      </>
     );
   }
 
@@ -232,6 +258,10 @@ function FmworksExperience() {
   };
 
   const handleHeaderOrderClick = () => {
+    if (!AIRTIME_SALES_ENABLED) {
+      handleOpenStudioOrder(null);
+      return;
+    }
     if (route.kind !== 'order') {
       orderDraftStore.updateDraft({ returnPath: currentReturnPath });
     }
@@ -246,27 +276,25 @@ function FmworksExperience() {
     navigateTo({ kind: 'order' });
   };
 
-  const reservationStatus = resolveReservationLifecycleStatus(orderDraft);
-  const hasActiveHold = orderDraft.mediaReservation !== null;
-  const holdStationsCount = orderDraft.mediaReservation?.stations.length ?? 0;
-  const confirmedOrderNumber =
-    orderDraft.confirmedReservation?.orderNumber ?? null;
-
   return (
     <div className="min-h-screen bg-[#F7F6F2] text-[#111111] dark:bg-[#0D0D0F] dark:text-[#F4F3EF] transition-colors duration-200 flex flex-col">
       <CompactHeaderNav
         isDark={isDark}
         onToggleTheme={() => setIsDark((prev) => !prev)}
         activeRoute={route}
-        hasActiveHold={hasActiveHold}
-        holdStationsCount={holdStationsCount}
-        reservationStatus={reservationStatus}
-        confirmedOrderNumber={confirmedOrderNumber}
         onNavigate={navigateTo}
         onOpenOrder={handleHeaderOrderClick}
-        onOpenConfirmedModal={() => setIsHeaderConfirmedModalOpen(true)}
         brandVariant={brandVariant}
-        onOpenBrandKit={() => setIsBrandKitOpen(true)}
+        {...(AIRTIME_SALES_ENABLED
+          ? {
+              hasActiveHold: orderDraft.mediaReservation !== null,
+              holdStationsCount: orderDraft.mediaReservation?.stations.length ?? 0,
+              reservationStatus: resolveReservationLifecycleStatus(orderDraft),
+              confirmedOrderNumber:
+                orderDraft.confirmedReservation?.orderNumber ?? null,
+              onOpenConfirmedModal: () => setIsHeaderConfirmedModalOpen(true),
+            }
+          : {})}
       />
 
       <main className="flex-1">
@@ -274,7 +302,6 @@ function FmworksExperience() {
           <HomePage
             scrollAnchor={route.scrollAnchor}
             brandVariant={brandVariant}
-            onOpenBrandKit={() => setIsBrandKitOpen(true)}
             playerSnap={caseSnap}
             onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
             onStartPreview={(item) => casePlayerEngine.startPreview(item)}
@@ -284,16 +311,17 @@ function FmworksExperience() {
           />
         )}
 
-        {(route.kind === 'hot-air' || route.kind === 'station-detail') && (
-          <HotAirPage
-            stationSlug={
-              route.kind === 'station-detail' ? route.stationSlug : undefined
-            }
-            isCasePlayerVisible={isCasePlayerVisible}
-            onNavigate={navigateTo}
-            onReserveMediaGrid={handleReserveMediaGrid}
-          />
-        )}
+        {AIRTIME_SALES_ENABLED &&
+          (route.kind === 'hot-air' || route.kind === 'station-detail') && (
+            <HotAirPage
+              stationSlug={
+                route.kind === 'station-detail' ? route.stationSlug : undefined
+              }
+              isCasePlayerVisible={isCasePlayerVisible}
+              onNavigate={navigateTo}
+              onReserveMediaGrid={handleReserveMediaGrid}
+            />
+          )}
 
         {(route.kind === 'cases' ||
           route.kind === 'case-detail' ||
@@ -329,6 +357,13 @@ function FmworksExperience() {
           />
         )}
 
+        {route.kind === 'faq' && (
+          <FaqPage
+            onNavigate={navigateTo}
+            onStartOrder={(formatId) => handleOpenStudioOrder(formatId ?? null)}
+          />
+        )}
+
         {route.kind === 'order' && (
           <OrderPage draft={orderDraft} onNavigate={navigateTo} />
         )}
@@ -336,12 +371,13 @@ function FmworksExperience() {
 
       <Footer
         brandVariant={brandVariant}
-        onOpenBrandKit={() => setIsBrandKitOpen(true)}
         onOpenAdmin={() => navigateTo({ kind: 'admin' })}
         onNavigate={navigateTo}
       />
 
-      {route.kind === 'hot-air' && <div className="h-[58px] sm:h-[68px]" aria-hidden="true" />}
+      {AIRTIME_SALES_ENABLED && route.kind === 'hot-air' && (
+        <div className="h-[58px] sm:h-[68px]" aria-hidden="true" />
+      )}
 
       <FloatingCasePlayer
         playerSnap={caseSnap}
@@ -349,30 +385,26 @@ function FmworksExperience() {
         onNext={() => casePlayerEngine.playNextCase(playlistWithReel)}
       />
 
-      <LayaSimulationConsole
-        isCasePlayerVisible={isCasePlayerVisible}
-        hasStickyBottomBar={route.kind === 'hot-air'}
-        onOpenBrandKit={() => setIsBrandKitOpen(true)}
-        onOpenRadioAdmin={() => setIsRadioAdminOpen(true)}
-      />
-
-      <BrandKitModal
-        isOpen={isBrandKitOpen}
-        onClose={() => setIsBrandKitOpen(false)}
-        activeSiteVariant={brandVariant}
-        onSelectSiteVariant={setBrandVariant}
-      />
-
-      <RadioInventoryAdmin
-        isOpen={isRadioAdminOpen}
-        onClose={() => setIsRadioAdminOpen(false)}
-      />
+      {AIRTIME_SALES_ENABLED && (
+        <RadioInventoryAdmin
+          isOpen={isRadioAdminOpen}
+          onClose={() => setIsRadioAdminOpen(false)}
+        />
+      )}
 
       <ReservationConfirmedModal
-        isOpen={isHeaderConfirmedModalOpen && orderDraft.confirmedReservation !== null}
+        isOpen={
+          AIRTIME_SALES_ENABLED &&
+          isHeaderConfirmedModalOpen &&
+          orderDraft.confirmedReservation !== null
+        }
         confirmed={orderDraft.confirmedReservation}
         onClose={() => setIsHeaderConfirmedModalOpen(false)}
-        onNavigateHotAir={() => navigateTo({ kind: 'hot-air' })}
+        onNavigateHotAir={
+          AIRTIME_SALES_ENABLED
+            ? () => navigateTo({ kind: 'hot-air' })
+            : undefined
+        }
       />
     </div>
   );

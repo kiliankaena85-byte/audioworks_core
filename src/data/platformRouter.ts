@@ -1,3 +1,5 @@
+import { AIRTIME_SALES_ENABLED, isAirtimeSalesEnabled } from './platformFeatures';
+
 export type IndustryVerticalSlug =
   | 'real-estate'
   | 'medicine'
@@ -20,7 +22,8 @@ export type TopNavSectionKey =
   | 'hot-air'
   | 'cases'
   | 'pricing'
-  | 'approach';
+  | 'approach'
+  | 'faq';
 
 export type PlatformRoute =
   | { kind: 'home'; scrollAnchor?: string }
@@ -32,6 +35,7 @@ export type PlatformRoute =
   | { kind: 'pricing'; scrollAnchor?: string }
   | { kind: 'approach' }
   | { kind: 'mistake-detail'; articleSlug: string }
+  | { kind: 'faq' }
   | { kind: 'order' }
   | { kind: 'admin' };
 
@@ -41,13 +45,26 @@ export interface MainPlatformNavItem {
   href: string;
 }
 
-export const MAIN_PLATFORM_NAV_ITEMS: readonly MainPlatformNavItem[] = [
+export const ALL_PLATFORM_NAV_ITEMS: readonly MainPlatformNavItem[] = [
   { key: 'home', label: 'Главная', href: '/' },
   { key: 'hot-air', label: 'Горящий эфир', href: '/hot-air' },
   { key: 'cases', label: 'Кейсы', href: '/cases' },
   { key: 'pricing', label: 'Тарифы', href: '/pricing' },
   { key: 'approach', label: 'О подходе', href: '/approach' },
+  { key: 'faq', label: 'FAQ', href: '/faq' },
 ] as const;
+
+export function getMainPlatformNavItems(
+  airtimeEnabled = AIRTIME_SALES_ENABLED
+): readonly MainPlatformNavItem[] {
+  if (airtimeEnabled) {
+    return ALL_PLATFORM_NAV_ITEMS;
+  }
+  return ALL_PLATFORM_NAV_ITEMS.filter((item) => item.key !== 'hot-air');
+}
+
+export const MAIN_PLATFORM_NAV_ITEMS: readonly MainPlatformNavItem[] =
+  getMainPlatformNavItems();
 
 function sanitizeSlugSegment(raw: string): string {
   return raw
@@ -64,8 +81,10 @@ function sanitizeSlugSegment(raw: string): string {
 export function parsePlatformRoute(
   pathname: string,
   search = '',
-  hash = ''
+  hash = '',
+  options?: { airtimeEnabled?: boolean }
 ): PlatformRoute {
+  const airtimeEnabled = isAirtimeSalesEnabled(options?.airtimeEnabled);
   const normalizedPath = (pathname || '/')
     .trim()
     .replace(/\/+$/g, '')
@@ -86,10 +105,13 @@ export function parsePlatformRoute(
   }
 
   if (normalizedPath === '/hot-air') {
-    return { kind: 'hot-air' };
+    return airtimeEnabled ? { kind: 'hot-air' } : { kind: 'home' };
   }
 
   if (normalizedPath.startsWith('/hot-air/stations/')) {
+    if (!airtimeEnabled) {
+      return { kind: 'home' };
+    }
     const slug = sanitizeSlugSegment(
       normalizedPath.slice('/hot-air/stations/'.length)
     );
@@ -116,9 +138,15 @@ export function parsePlatformRoute(
   }
 
   if (normalizedPath === '/pricing') {
+    if (normalizedHash === 'faq') {
+      return { kind: 'faq' };
+    }
     return {
       kind: 'pricing',
-      scrollAnchor: normalizedHash === 'faq' ? 'faq' : undefined,
+      scrollAnchor:
+        normalizedHash === 'stages-24-48' || normalizedHash === 'legal-clearance'
+          ? normalizedHash
+          : undefined,
     };
   }
 
@@ -131,6 +159,10 @@ export function parsePlatformRoute(
     return slug ? { kind: 'mistake-detail', articleSlug: slug } : { kind: 'approach' };
   }
 
+  if (normalizedPath === '/faq') {
+    return { kind: 'faq' };
+  }
+
   // Обратная совместимость старых прямых ссылок с корневой страницы (`/?case=...`, `/#hot-air`, `/#work` и т.д.)
   const sharedCaseParam = sanitizeSlugSegment(params.get('case') ?? '');
   if (sharedCaseParam) {
@@ -138,7 +170,7 @@ export function parsePlatformRoute(
   }
 
   if (normalizedHash === 'hot-air') {
-    return { kind: 'hot-air' };
+    return airtimeEnabled ? { kind: 'hot-air' } : { kind: 'home' };
   }
   if (normalizedHash === 'work') {
     return { kind: 'cases' };
@@ -152,8 +184,8 @@ export function parsePlatformRoute(
   if (normalizedHash === 'pricing') {
     return { kind: 'pricing' };
   }
-  if (normalizedHash === 'faq') {
-    return { kind: 'pricing', scrollAnchor: 'faq' };
+  if (normalizedHash === 'faq' || normalizedHash === 'home-faq') {
+    return { kind: 'faq' };
   }
   if (normalizedHash === 'approach') {
     return { kind: 'approach' };
@@ -188,6 +220,8 @@ export function buildPlatformPath(route: PlatformRoute): string {
       return '/approach';
     case 'mistake-detail':
       return `/approach/${encodeURIComponent(route.articleSlug)}`;
+    case 'faq':
+      return '/faq';
     case 'order':
       return '/order';
     case 'admin':
@@ -203,7 +237,7 @@ export function resolveActiveTopNavSection(
 ): TopNavSectionKey | null {
   switch (route.kind) {
     case 'home':
-      return 'home';
+      return route.scrollAnchor === 'home-faq' ? 'faq' : 'home';
     case 'hot-air':
     case 'station-detail':
       return 'hot-air';
@@ -216,6 +250,8 @@ export function resolveActiveTopNavSection(
     case 'approach':
     case 'mistake-detail':
       return 'approach';
+    case 'faq':
+      return 'faq';
     case 'order':
     case 'admin':
       return null;
@@ -242,14 +278,17 @@ export interface RouteSeoLookupTitles {
  */
 export function resolveRouteSeoMeta(
   route: PlatformRoute,
-  lookup: RouteSeoLookupTitles = {}
+  lookup: RouteSeoLookupTitles = {},
+  options?: { airtimeEnabled?: boolean }
 ): RouteSeoMetadata {
+  const airtimeEnabled = isAirtimeSalesEnabled(options?.airtimeEnabled);
   switch (route.kind) {
     case 'home':
       return {
-        title: 'FMWorks — Студийный аудиопродакшн рекламных роликов за 24–48ч',
+        title:
+          'FMWorks — Студийный аудиопродакшн: от 24–48ч по тексту, 3–4 дня под ключ',
         description:
-          'Производство коммерческих аудиороликов полного цикла: сценарий, голоса кинодубляжа, саунд-дизайн и паспорт прав для радио и стримингов.',
+          'Производство коммерческих аудиороликов по договору и предоплате: 3 сценария, голоса кинодубляжа, саунд-дизайн и паспорт прав РАО/ВОИС.',
         canonicalPath: '/',
         schemaType: 'WebSite',
       };
@@ -290,17 +329,18 @@ export function resolveRouteSeoMeta(
     case 'industry-detail': {
       const ind = lookup.industryTitle || 'Отраслевое решение';
       return {
-        title: `${ind} — Аудиореклама и эфирная стратегия | FMWorks`,
-        description: `Отраслевой стандарт радиорекламы (${ind}): рабочие сценарии, прохождение модерации по ФЗ «О рекламе» и рекомендуемые тайм-слоты.`,
+        title: `${ind} — Аудиореклама и отраслевой стандарт | FMWorks`,
+        description: `Отраслевой стандарт радиорекламы (${ind}): рабочие сценарии, прохождение модерации по ФЗ «О рекламе» и звуковая драматургия.`,
         canonicalPath: `/cases/industry/${route.industrySlug}`,
         schemaType: 'Service',
       };
     }
     case 'pricing':
       return {
-        title: 'Тарифы на аудиоролики, этапы 24–48ч и очистка прав — FMWorks',
+        title:
+          'Тарифы на аудиоролики, сроки от 24–48ч (3–4 дня под ключ) и права — FMWorks',
         description:
-          'Фиксированная стоимость радиороликов от 15 000 ₽, почасовой регламент продакшна, лицензионный паспорт музыки и прохождение эфирной модерации.',
+          'Фиксированная стоимость радиороликов от 15 000 ₽ по рамочному договору, этапы продакшна, паспорт прав РАО/ВОИС и эфирная модерация.',
         canonicalPath: '/pricing',
         schemaType: 'Service',
       };
@@ -321,21 +361,46 @@ export function resolveRouteSeoMeta(
         schemaType: 'Article',
       };
     }
-    case 'order':
+    case 'faq':
       return {
-        title: 'Оформление брони эфира и заказа аудиоролика — FMWorks',
+        title: 'Частые вопросы (FAQ) по договору, оплате и срокам — FMWorks',
         description:
-          'Поставьте эфирную сетку на приоритетный 4-часовой резерв или передайте голосовое ТЗ на производство радиоролика по договору и ЭДО.',
-        canonicalPath: '/order',
-        schemaType: 'CheckoutPage',
+          'Как устроена проверка реквизитов, рамочный договор и счёт в ЭДО, оплата картой физлица по 54-ФЗ, договорной тариф и сроки продакшна аудиороликов.',
+        canonicalPath: '/faq',
+        schemaType: 'CollectionPage',
       };
+    case 'order':
+      return airtimeEnabled
+        ? {
+            title: 'Оформление брони эфира и заказа аудиоролика — FMWorks',
+            description:
+              'Поставьте эфирную сетку на приоритетный 4-часовой резерв или передайте голосовое ТЗ на производство радиоролика по договору и ЭДО.',
+            canonicalPath: '/order',
+            schemaType: 'CheckoutPage',
+          }
+        : {
+            title: 'Оформление заказа аудиоролика — Студия FMWorks',
+            description:
+              'Передайте задачу и реквизиты или выберите консультацию продюсера: рамочный договор и счёт в ЭДО или оплата картой (54-ФЗ), старт сценариев и записи после предоплаты.',
+            canonicalPath: '/order',
+            schemaType: 'CheckoutPage',
+          };
     case 'admin':
-      return {
-        title: 'Кабинет продюсера — Управление контентом и эфиром FMWorks',
-        description: 'Закрытая панель управления студийной витриной и эфирными квотами FMWorks.',
-        canonicalPath: '/admin',
-        schemaType: 'WebSite',
-      };
+      return airtimeEnabled
+        ? {
+            title: 'Кабинет продюсера — Управление контентом и эфиром FMWorks',
+            description:
+              'Закрытая панель управления студийной витриной и эфирными квотами FMWorks.',
+            canonicalPath: '/admin',
+            schemaType: 'WebSite',
+          }
+        : {
+            title: 'Кабинет продюсера — Управление студией и заказами FMWorks',
+            description:
+              'Закрытая панель управления студийной витриной, заказами аудиороликов и SLA FMWorks.',
+            canonicalPath: '/admin',
+            schemaType: 'WebSite',
+          };
   }
 }
 

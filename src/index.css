@@ -3,7 +3,9 @@
 
 @layer base {
   :root {
-    --font-sans: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-sans: 'Golos Text', 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-display: 'Manrope', 'Golos Text', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
     --scrollbar-thumb: rgba(17, 17, 17, 0.15);
     --scrollbar-thumb-hover: rgba(17, 17, 17, 0.32);
     --scrollbar-thumb-active: #ff4820;
@@ -21,6 +23,12 @@
     overflow-x: clip;
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+
+  code,
+  pre,
+  .font-mono {
+    font-family: var(--font-mono);
   }
 
   body {
@@ -77,6 +85,10 @@
       scroll-behavior: auto;
     }
   }
+}
+
+.font-display-brand {
+  font-family: var(--font-display);
 }
 
 .editorial-balance {
@@ -158,5 +170,63 @@
   .animate-stream-left-slow,
   .animate-ken-burns {
     animation: none;
+  }
+}
+
+@page {
+  size: A4 portrait;
+  margin: 12mm;
+}
+
+@media print {
+  html,
+  body {
+    background: #ffffff !important;
+    color: #111111 !important;
+    overflow: visible !important;
+    height: auto !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body[data-fmworks-print-active='true'] #root > *:not(.fmworks-print-portal) {
+    display: none !important;
+  }
+
+  .fmworks-no-print {
+    display: none !important;
+  }
+
+  .fmworks-print-portal {
+    position: static !important;
+    inset: auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+    box-shadow: none !important;
+    border: none !important;
+    display: block !important;
+  }
+
+  .fmworks-a4-sheet {
+    width: 100% !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    color: #111111 !important;
+  }
+
+  .fmworks-print-page-break {
+    break-before: page;
+    page-break-before: always;
   }
 }

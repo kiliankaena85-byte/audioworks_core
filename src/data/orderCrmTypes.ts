@@ -1,12 +1,83 @@
-import { FlexibleMediaPlanResult, formatAudienceSummaryLine } from './mediaPlannerCore';
-import {
+import type {
+  FlexibleMediaPlanResult,
+  TargetAudienceProfile,
+} from './mediaPlannerCore.ts';
+import type {
   ComputedReservationTotals,
-  formatHoldCountdown,
-  formatNumberSpaced,
-  formatRubCompact,
-  MEDIA_NICHE_OPTIONS,
   MediaGridReservationPayload,
-} from './radioInventory';
+} from './radioInventory.ts';
+import {
+  computeSlaDeadlineWindow,
+  computeSmartHoldExpirationMs,
+  DEFAULT_STUDIO_WORK_SCHEDULE,
+  getCallbackPreferenceMeta,
+  resolveStudioOperatingRegime,
+  sanitizeWorkScheduleConfig,
+  SLA_BREACH_COMPENSATION_NOTE,
+} from './slaWorkCalendar.ts';
+import type {
+  ClientCallbackPreference,
+  StudioOperatingRegimeId,
+  StudioWorkScheduleConfig,
+} from './slaWorkCalendar.ts';
+import type { OrderDocumentMeta } from './studioDocumentsCore.ts';
+
+function formatRubCompact(amount: number): string {
+  return `${Math.round(amount)
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, '\u00A0')} ₽`;
+}
+
+function formatNumberSpaced(amount: number): string {
+  return Math.round(amount)
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, '\u00A0');
+}
+
+function formatHoldCountdown(remainingSeconds: number): string {
+  const clamped = Math.max(0, Math.floor(remainingSeconds));
+  const hours = Math.floor(clamped / 3600);
+  const minutes = Math.floor((clamped % 3600) / 60);
+  const seconds = clamped % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(
+    seconds
+  ).padStart(2, '0')}`;
+}
+
+const NICHE_LABELS_BY_ID: Readonly<Record<string, string>> = {
+  real_estate: 'Недвижимость и ЖК',
+  b2b_finance: 'B2B и Финансы',
+  fmcg_retail: 'Продукты и Ритейл',
+  medicine: 'Медицина',
+  auto_services: 'Авто и Услуги',
+};
+
+const SEGMENT_LABELS_BY_ID: Readonly<Record<string, string>> = {
+  b2c_mass: 'B2C широкий спрос',
+  b2c_premium: 'B2C бизнес и премиум',
+  b2b_decision_makers: 'B2B и руководители',
+};
+
+const AGE_LABELS_BY_ID: Readonly<Record<string, string>> = {
+  '20_35': '20–35 лет',
+  '30_45': '30–45 лет',
+  '35_55': '35–55 лет',
+  '45_plus': '45+ лет',
+};
+
+const CONTEXT_LABELS_BY_ID: Readonly<Record<string, string>> = {
+  commute_rush: 'За рулём в часах пик',
+  office_daytime: 'Днём в делах и офисе',
+  evening_leisure: 'Только вечерний прайм',
+  weekend_family: 'Выходные и загород',
+};
+
+function formatAudienceSummaryLine(audience: TargetAudienceProfile): string {
+  const seg = SEGMENT_LABELS_BY_ID[audience.segment] ?? 'B2C';
+  const age = AGE_LABELS_BY_ID[audience.ageCore] ?? '30–45 лет';
+  const ctx = CONTEXT_LABELS_BY_ID[audience.listeningContext] ?? 'В часах пик';
+  return `${seg} · ${age} · ${ctx}`;
+}
 
 export type CrmOrderStage =
   | 'new_hold'
@@ -88,8 +159,84 @@ export const CRM_ORDER_STAGES: readonly CrmStageMeta[] = [
   },
 ] as const;
 
+export const STUDIO_PRODUCTION_CRM_STAGES: readonly CrmStageMeta[] = [
+  {
+    id: 'new_hold',
+    stepCode: '01',
+    shortLabel: 'Проверка заявки и реквизитов',
+    fullTitle: '01. Проверка заявки и реквизитов · Договор и счёт',
+    slaHint:
+      'SLA 15 минут: проверка контрагента, сверка брифа и формирование рамочного договора-счёта',
+    nextActionLabel: 'Подтвердить контрагента и ТЗ →',
+    nextStage: 'quota_locked',
+  },
+  {
+    id: 'quota_locked',
+    stepCode: '02',
+    shortLabel: 'Контрагент подтверждён',
+    fullTitle: '02. Контрагент и задача подтверждены продюсером',
+    slaHint:
+      'Бриф проверен · пре-чек ФЗ-38 · ожидание подписания рамочного договора и счёта',
+    nextActionLabel: 'Направить договор-счёт / ссылку оплаты →',
+    nextStage: 'edo_invoice',
+  },
+  {
+    id: 'edo_invoice',
+    stepCode: '03',
+    shortLabel: 'Договор и предоплата',
+    fullTitle: '03. Рамочный договор и ожидание 100% предоплаты',
+    slaHint:
+      'Счёт в Диадок / СБИС или ссылка 54-ФЗ · старт сценариев строго после оплаты',
+    nextActionLabel: 'Оплата получена · запустить продакшн →',
+    nextStage: 'in_production',
+  },
+  {
+    id: 'in_production',
+    stepCode: '04',
+    shortLabel: 'Сценарии и запись',
+    fullTitle: '04. 3 сценария, запись диктора и паспорт прав РАО/ВОИС',
+    slaHint:
+      'Разработка 3 концепций, кастинг голосов кино, студийное сведение −14 LUFS',
+    nextActionLabel: 'Передать мастер-файл заказчику →',
+    nextStage: 'on_air',
+  },
+  {
+    id: 'on_air',
+    stepCode: '05',
+    shortLabel: 'Мастер передан',
+    fullTitle: '05. Мастер-ролик и паспорт прав переданы заказчику',
+    slaHint:
+      'WAV/MP3 файлы и паспорт РАО/ВОИС отправлены · подписание закрывающего акта в ЭДО',
+    nextActionLabel: 'Подписать акт ЭДО и закрыть сделку →',
+    nextStage: 'completed_ltv',
+  },
+  {
+    id: 'completed_ltv',
+    stepCode: '06',
+    shortLabel: 'Закрыт в ЭДО',
+    fullTitle: '06. Проект закрыт актом ЭДО · Права отчуждены бессрочно',
+    slaHint:
+      'Акт подписан · исключительные права у заказчика · профиль постоянного клиента',
+    nextActionLabel: null,
+    nextStage: null,
+  },
+] as const;
+
 export function getCrmStageMeta(stage: CrmOrderStage): CrmStageMeta {
   return CRM_ORDER_STAGES.find((s) => s.id === stage) ?? CRM_ORDER_STAGES[0];
+}
+
+export function getCrmStageMetaForOrder(
+  stage: CrmOrderStage,
+  checkoutMode: 'air_plus_production' | 'production_only' = 'production_only'
+): CrmStageMeta {
+  if (checkoutMode === 'air_plus_production') {
+    return getCrmStageMeta(stage);
+  }
+  return (
+    STUDIO_PRODUCTION_CRM_STAGES.find((s) => s.id === stage) ??
+    STUDIO_PRODUCTION_CRM_STAGES[0]
+  );
 }
 
 export interface OrderStationLineSnapshot {
@@ -147,6 +294,24 @@ export interface ChannelDeliveryStatus {
   detail: string;
 }
 
+export type CrmDispatchEvent =
+  | 'order.created'
+  | 'order.stage_changed'
+  | 'order.sla_breached'
+  | 'order.client_rescue'
+  | 'dispatch.test';
+
+export interface OrderSlaTrackingState {
+  createdRegime: StudioOperatingRegimeId;
+  slaWindowStartAt: string;
+  slaDeadlineAt: string;
+  promisedWindowLabel: string;
+  firstContactedAt: string | null;
+  escalatedAt: string | null;
+  clientRescueCount: number;
+  compensationNote: string | null;
+}
+
 export interface CrmOrderRecord {
   id: string;
   orderNumber: string;
@@ -155,11 +320,13 @@ export interface CrmOrderRecord {
   holdExpiresAt: string;
   source: OrderEntrySource;
   checkoutMode: 'air_plus_production' | 'production_only';
+  paymentChannel?: 'edo_invoice' | 'card_online';
   stage: CrmOrderStage;
   formatLabel: string;
   totalBudgetRub: number;
   contact: string;
   detectedChannel: 'phone' | 'telegram' | 'email' | 'vip_saved';
+  callbackPreference?: ClientCallbackPreference;
   companyOrInn: string;
   innVerified: boolean;
   briefText: string;
@@ -169,6 +336,9 @@ export interface CrmOrderRecord {
   producerNotes: string;
   compliance: OrderComplianceChecklist;
   mediaPlanSnapshot: OrderMediaPlanSnapshot | null;
+  documentMeta?: OrderDocumentMeta;
+  pdnConsentAcceptedAt?: string | null;
+  slaState?: OrderSlaTrackingState;
   delivery: {
     crmRegistry: 'saved';
     telegram: ChannelDeliveryStatus;
@@ -191,6 +361,7 @@ export interface OrderDispatchSettings {
     notifyOnNewOrder: boolean;
     notifyOnStageChange: boolean;
   };
+  workSchedule?: StudioWorkScheduleConfig;
 }
 
 export interface DispatchAttemptLog {
@@ -198,12 +369,51 @@ export interface DispatchAttemptLog {
   timestamp: string;
   orderNumber: string;
   channel: 'telegram' | 'webhook';
-  event: 'order.created' | 'order.stage_changed' | 'dispatch.test';
+  event: CrmDispatchEvent;
   state: ExternalDeliveryState;
   httpStatus: number | null;
   latencyMs: number;
   summary: string;
 }
+
+export function ensureCrmOrderSlaFields(
+  order: CrmOrderRecord,
+  rawSchedule?: Partial<StudioWorkScheduleConfig> | null
+): CrmOrderRecord {
+  const schedule = sanitizeWorkScheduleConfig(rawSchedule ?? DEFAULT_STUDIO_WORK_SCHEDULE);
+  const createdMs = Number.isFinite(Date.parse(order.createdAt))
+    ? Date.parse(order.createdAt)
+    : Date.now();
+  const pref: ClientCallbackPreference = order.callbackPreference ?? 'call_15m';
+
+  if (order.slaState && order.slaState.slaDeadlineAt) {
+    return {
+      ...order,
+      callbackPreference: pref,
+    };
+  }
+
+  const regime = resolveStudioOperatingRegime(createdMs, schedule);
+  const slaWin = computeSlaDeadlineWindow(createdMs, pref, schedule);
+  const alreadyProgressed = order.stage !== 'new_hold';
+
+  return {
+    ...order,
+    callbackPreference: pref,
+    slaState: {
+      createdRegime: regime.regime,
+      slaWindowStartAt: new Date(slaWin.slaWindowStartMs).toISOString(),
+      slaDeadlineAt: new Date(slaWin.slaDeadlineMs).toISOString(),
+      promisedWindowLabel: slaWin.promisedWindowLabel,
+      firstContactedAt: alreadyProgressed ? order.updatedAt : null,
+      escalatedAt: null,
+      clientRescueCount: 0,
+      compensationNote: null,
+    },
+  };
+}
+
+export { SLA_BREACH_COMPENSATION_NOTE };
 
 /**
  * Оценивает среднюю эффективную частоту контактов в ядре ЦА по числу выходов на станцию.
@@ -273,8 +483,7 @@ export function buildMediaPlanSnapshotFromReservation(
 export function buildMediaPlanSnapshotFromFlexiblePlan(
   plan: FlexibleMediaPlanResult
 ): OrderMediaPlanSnapshot {
-  const nicheLabel =
-    MEDIA_NICHE_OPTIONS.find((n) => n.id === plan.niche)?.label ?? 'Бизнес-сегмент';
+  const nicheLabel = NICHE_LABELS_BY_ID[plan.niche] ?? 'Бизнес-сегмент';
 
   const stations: OrderStationLineSnapshot[] = plan.selectedQuotes.map((q) => ({
     slotId: q.variation.id,
@@ -379,24 +588,47 @@ export function computeOrderHoldStatus(
  */
 export function formatTelegramOrderDispatchMessage(
   order: CrmOrderRecord,
-  event: 'order.created' | 'order.stage_changed' | 'dispatch.test' = 'order.created'
+  event: CrmDispatchEvent = 'order.created'
 ): string {
-  const stageMeta = getCrmStageMeta(order.stage);
+  const stageMeta = getCrmStageMetaForOrder(order.stage, order.checkoutMode);
+  const prefMeta = getCallbackPreferenceMeta(order.callbackPreference);
   const header =
     event === 'dispatch.test'
       ? `ТЕСТ ШЛЮЗА ПРИЁМА ЗАКАЗОВ · FMWorks`
-      : event === 'order.stage_changed'
-        ? `ОБНОВЛЕНИЕ ЭТАПА СДЕЛКИ #${order.orderNumber}`
-        : order.checkoutMode === 'air_plus_production'
-          ? `НОВЫЙ ПРИОРИТЕТНЫЙ ХОЛД 4Ч · #${order.orderNumber}`
-          : `НОВЫЙ ЗАКАЗ НА АУДИОПРОДАКШН · #${order.orderNumber}`;
+      : event === 'order.sla_breached'
+        ? `ПРОСРОЧКА SLA · СРОЧНАЯ ЭСКАЛАЦИЯ РУКОВОДИТЕЛЮ #${order.orderNumber}`
+        : event === 'order.client_rescue'
+          ? `СИГНАЛ ОТ КЛИЕНТА (ПРОДЛЕНИЕ ХОЛДА / ЗАПРОС СВЯЗИ) · #${order.orderNumber}`
+          : event === 'order.stage_changed'
+            ? `ОБНОВЛЕНИЕ ЭТАПА СДЕЛКИ #${order.orderNumber}`
+            : order.checkoutMode === 'air_plus_production'
+              ? `НОВЫЙ ПРИОРИТЕТНЫЙ ХОЛД 4Ч · #${order.orderNumber}`
+              : `НОВЫЙ ЗАКАЗ НА АУДИОПРОДАКШН · #${order.orderNumber}`;
+
+  const budgetLabel =
+    order.totalBudgetRub > 0
+      ? formatRubCompact(order.totalBudgetRub)
+      : 'Договорная цена (по оценке продюсера)';
+  const paymentLabel =
+    order.paymentChannel === 'card_online'
+      ? 'Карта физлица / СБП (ЮKassa / Робокасса, 54-ФЗ)'
+      : 'Безнал по рамочному договору и счёту в ЭДО';
 
   const lines: string[] = [
     header,
     `Этап: ${stageMeta.fullTitle}`,
-    `Сумма договора: ${formatRubCompact(order.totalBudgetRub)}`,
+    `Сумма договора: ${budgetLabel}`,
+    `Способ оплаты: ${paymentLabel}`,
     `Контакт клиента: ${order.contact} (${order.detectedChannel})`,
+    `Режим связи: ${prefMeta.fullLabel}`,
   ];
+
+  if (order.slaState?.promisedWindowLabel) {
+    lines.push(`Обещанное окно SLA: ${order.slaState.promisedWindowLabel}`);
+  }
+  if (order.slaState?.compensationNote) {
+    lines.push(`Сервисная гарантия: ${order.slaState.compensationNote}`);
+  }
 
   if (order.companyOrInn) {
     lines.push(
@@ -437,7 +669,7 @@ export function formatTelegramOrderDispatchMessage(
 }
 
 export interface WebhookOrderEnvelope {
-  event: 'order.created' | 'order.stage_changed' | 'dispatch.test';
+  event: CrmDispatchEvent;
   idempotencyKey: string;
   emittedAt: string;
   platform: 'FMWorks Studio CRM';
@@ -447,8 +679,11 @@ export interface WebhookOrderEnvelope {
     stage: CrmOrderStage;
     stageTitle: string;
     checkoutMode: 'air_plus_production' | 'production_only';
+    paymentChannel?: 'edo_invoice' | 'card_online';
     totalBudgetRub: number;
     holdExpiresAt: string;
+    callbackPreference: ClientCallbackPreference;
+    slaState: OrderSlaTrackingState | null;
     client: {
       contact: string;
       channel: string;
@@ -468,7 +703,7 @@ export interface WebhookOrderEnvelope {
 
 export function buildWebhookOrderEnvelope(
   order: CrmOrderRecord,
-  event: 'order.created' | 'order.stage_changed' | 'dispatch.test',
+  event: CrmDispatchEvent,
   nowIso = new Date().toISOString()
 ): WebhookOrderEnvelope {
   return {
@@ -480,10 +715,13 @@ export function buildWebhookOrderEnvelope(
       id: order.id,
       orderNumber: order.orderNumber,
       stage: order.stage,
-      stageTitle: getCrmStageMeta(order.stage).fullTitle,
+      stageTitle: getCrmStageMetaForOrder(order.stage, order.checkoutMode).fullTitle,
       checkoutMode: order.checkoutMode,
+      paymentChannel: order.paymentChannel ?? 'edo_invoice',
       totalBudgetRub: order.totalBudgetRub,
       holdExpiresAt: order.holdExpiresAt,
+      callbackPreference: order.callbackPreference ?? 'call_15m',
+      slaState: order.slaState ?? null,
       client: {
         contact: order.contact,
         channel: order.detectedChannel,
@@ -520,20 +758,59 @@ export function formatEdoInvoiceSpecificationDocument(order: CrmOrderRecord): st
 
   const invoiceNumber = `СФ-${order.orderNumber.replace(/^FM-/, '')}`;
   const snap = order.mediaPlanSnapshot;
+  const embeddedInnMatch = order.companyOrInn
+    ? order.companyOrInn.match(/^(.*?)[\s·,;(/|-]*инн[\s:№-]*(\d{10,12})[)\s]*$/i)
+    : null;
+  const pureInnMatch = order.companyOrInn
+    ? order.companyOrInn.replace(/[\s-]/g, '').match(/^(\d{10,12})$/)
+    : null;
+  const parsedCustomerName = embeddedInnMatch
+    ? embeddedInnMatch[1].replace(/[·,;|\s-]+$/g, '').trim()
+    : pureInnMatch
+      ? ''
+      : order.companyOrInn.trim();
+  const parsedCustomerInn = embeddedInnMatch
+    ? embeddedInnMatch[2]
+    : pureInnMatch
+      ? pureInnMatch[1]
+      : '';
+
+  const customerLines: string[] = [];
+  if (parsedCustomerName && parsedCustomerInn) {
+    customerLines.push(
+      `• Заказчик (организация / ИП): ${parsedCustomerName}`,
+      `• ИНН Заказчика: ${parsedCustomerInn}${
+        order.innVerified ? ' (ИНН подтверждён по ключу ФНС)' : ''
+      }`
+    );
+  } else {
+    customerLines.push(
+      `• Контрагент / ИНН: ${
+        order.companyOrInn
+          ? `${order.companyOrInn}${order.innVerified ? ' (ИНН подтверждён по ФНС)' : ''}`
+          : order.paymentChannel === 'card_online'
+            ? 'Физическое лицо / оплата по СБП или картой (ЮKassa / Робокасса, чек 54-ФЗ)'
+            : 'Реквизиты уточняются при выставлении в Диадок / СБИС'
+      }`
+    );
+  }
 
   const lines: string[] = [
     `══════════════════════════════════════════════════════════════════════`,
-    `СПЕЦИФИКАЦИЯ И СЧЁТ-ОФЕРТА ДЛЯ ЭДО № ${invoiceNumber} от ${createdDate}`,
-    `Исполнитель: FMWorks® — Отдел радиомедиабаинга и аудиопродакшна (fmworks.ru)`,
-    `Основание резерва: Заказ #${order.orderNumber} (${getCrmStageMeta(order.stage).shortLabel})`,
+    `РАМОЧНЫЙ ДОГОВОР-ОФЕРТА, СПЕЦИФИКАЦИЯ И СЧЁТ-ОФЕРТА ДЛЯ ЭДО № ${invoiceNumber} от ${createdDate}`,
+    `Исполнитель: Студия FMWorks® — Аудиопродакшн и лицензирование прав (fmworks.ru)`,
+    `Основание заявки: Заказ #${order.orderNumber} (${
+      getCrmStageMetaForOrder(order.stage, order.checkoutMode).shortLabel
+    })`,
     `══════════════════════════════════════════════════════════════════════`,
     `ЗАКАЗЧИК:`,
-    `• Контрагент / ИНН: ${
-      order.companyOrInn
-        ? `${order.companyOrInn}${order.innVerified ? ' (ИНН подтверждён по ФНС)' : ''}`
-        : 'Реквизиты уточняются при выставлении в Диадок / СБИС'
-    }`,
+    ...customerLines,
     `• Ответственный контакт: ${order.contact}`,
+    `• Форма расчёта: ${
+      order.paymentChannel === 'card_online'
+        ? 'Онлайн-оплата картой / СБП (54-ФЗ) по акцепту оферты'
+        : 'Безналичный расчёт по рамочному договору и ЭДО (Диадок / СБИС / Контур)'
+    }`,
     ``,
   ];
 
@@ -578,20 +855,36 @@ export function formatEdoInvoiceSpecificationDocument(order: CrmOrderRecord): st
       )}`
     );
   } else {
+    const isNegotiableBudget = order.totalBudgetRub <= 0;
     lines.push(
-      `ТАБЛИЦА ПОЗИЦИЙ ДЛЯ ЭДО:`,
-      `1. Производство рекламного аудиоролика по тарифу «${order.formatLabel}»`,
-      `   Включая 3 концепции сценария, запись диктора, сведение −14 LUFS и бессрочный паспорт прав РАО/ВОИС`,
-      `   ИТОГО К ОПЛАТЕ ПО ДОГОВОРУ (ЭДО): ${formatRubCompact(order.totalBudgetRub)}`
+      `ТАБЛИЦА ПОЗИЦИЙ ПО РАМОЧНОМУ ДОГОВОРУ:`,
+      `1. Услуга по тарифу «${order.formatLabel}»`,
+      isNegotiableBudget
+        ? `   Индивидуальный объём работ (нестандартный проект, консультация или отдельный этап «Только сценарий») — смета согласуется с продюсером`
+        : `   Полный цикл после предоплаты: концепции сценария, диктор, сведение −14 LUFS и бессрочный паспорт прав РАО/ВОИС`,
+      isNegotiableBudget
+        ? `   СТОИМОСТЬ: Договорная цена (фиксируется приложением/счётом после консультации с продюсером)`
+        : `   ИТОГО К ОПЛАТЕ ПО СЧЁТУ-ОФЕРТЕ (100% предоплата): ${formatRubCompact(
+            order.totalBudgetRub
+          )}`
+    );
+  }
+
+  if (order.slaState?.compensationNote) {
+    lines.push(
+      ``,
+      `СЕРВИСНАЯ ГАРАНТИЯ SLA:`,
+      `• ${order.slaState.compensationNote}`
     );
   }
 
   lines.push(
     ``,
-    `ЮРИДИЧЕСКИЕ ГАРАНТИИ И ОТЧЁТНОСТЬ:`,
-    `• Эфирные справки радиостанций с точным временем каждого выхода передаются в ЭДО по завершении флайта.`,
-    `• Паспорт прав на аудиоролик действует бессрочно: во 2-й и 3-й волне 100% бюджета направляется в эфир.`,
-    `• Отдел оформления договоров: hello@fmworks.ru`
+    `КЛЮЧЕВЫЕ УСЛОВИЯ РАМОЧНОГО ДОГОВОРА И ПРЕДОПЛАТЫ:`,
+    `1. Порядок запуска работ: Исполнитель приступает к проверке ТЗ, разработке концепций сценария, кастингу и записи фонограммы строго после подтверждения контрагента, заключения настоящего рамочного договора-оферты и поступления 100% предоплаты.`,
+    `2. Защита интеллектуальной собственности: до полной оплаты все сценарии и черновые наработки не передаются Заказчику; после сдачи проекта и подписания акта в ЭДО исключительные права и паспорт РАО/ВОИС переходят Заказчику бессрочно.`,
+    `3. Документооборот: для юрлиц и ИП закрывающие акты передаются в Диадок / СБИС / Контур; при оплате картой физлица или по СБП (ЮKassa / Робокасса) направляется фискальный чек по ФЗ-54.`,
+    `4. Служба оформления договоров: hello@fmworks.ru`
   );
 
   return lines.join('\n');
@@ -631,7 +924,7 @@ export function exportCrmOrdersToCsv(orders: readonly CrmOrderRecord[]): string 
     return [
       escapeCsv(o.orderNumber),
       escapeCsv(o.createdAt),
-      escapeCsv(getCrmStageMeta(o.stage).shortLabel),
+      escapeCsv(getCrmStageMetaForOrder(o.stage, o.checkoutMode).shortLabel),
       escapeCsv(o.checkoutMode === 'air_plus_production' ? 'Эфир + Ролик' : 'Аудиопродакшн'),
       escapeCsv(o.totalBudgetRub),
       escapeCsv(o.contact),
@@ -654,14 +947,18 @@ export function exportCrmOrdersToCsv(orders: readonly CrmOrderRecord[]): string 
  */
 export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
   const isoAt = (offsetMin: number) => new Date(nowMs + offsetMin * 60_000).toISOString();
+  const seed1CreatedMs = nowMs - 8 * 60_000;
+  const seed1HoldExpiresIso = new Date(
+    computeSmartHoldExpirationMs(seed1CreatedMs, DEFAULT_STUDIO_WORK_SCHEDULE)
+  ).toISOString();
 
-  return [
+  const rawSeeds: CrmOrderRecord[] = [
     {
       id: 'crm-seed-hold-2914',
       orderNumber: 'FM-HOLD-2914',
-      createdAt: isoAt(-22),
-      updatedAt: isoAt(-22),
-      holdExpiresAt: isoAt(3 * 60 + 38), // Осталось ~03:38:00 из 4 часов
+      createdAt: new Date(seed1CreatedMs).toISOString(),
+      updatedAt: new Date(seed1CreatedMs).toISOString(),
+      holdExpiresAt: seed1HoldExpiresIso,
       source: 'order_page',
       checkoutMode: 'air_plus_production',
       stage: 'new_hold',
@@ -669,6 +966,7 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
       totalBudgetRub: 176_550,
       contact: '+7 916 740-28-19 · Алексей (коммерческий директор)',
       detectedChannel: 'phone',
+      callbackPreference: 'call_15m',
       companyOrInn: 'ООО «Квартал Инвест» · ИНН 7707083893',
       innVerified: true,
       briefText:
@@ -932,4 +1230,6 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
       },
     },
   ];
+
+  return rawSeeds.map((ord) => ensureCrmOrderSlaFields(ord, DEFAULT_STUDIO_WORK_SCHEDULE));
 }

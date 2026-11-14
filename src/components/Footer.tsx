@@ -1,6 +1,7 @@
 import { Check, Copy } from 'lucide-react';
 import { MouseEvent as ReactMouseEvent, useEffect, useState } from 'react';
 import { BrandDomainVariant } from '../data/brandKitData';
+import { AIRTIME_SALES_ENABLED } from '../data/platformFeatures';
 import {
   buildPlatformPath,
   MAIN_PLATFORM_NAV_ITEMS,
@@ -53,6 +54,28 @@ const FOOTER_STATION_LINKS: readonly { label: string; route: PlatformRoute }[] =
   { label: 'Радио Monte Carlo', route: { kind: 'station-detail', stationSlug: 'monte-carlo' } },
   { label: 'Авторадио', route: { kind: 'station-detail', stationSlug: 'avtoradio' } },
   { label: 'Европа Плюс', route: { kind: 'station-detail', stationSlug: 'europa-plus' } },
+] as const;
+
+const FOOTER_STUDIO_EXPERTISE_LINKS: readonly {
+  label: string;
+  route: PlatformRoute;
+}[] = [
+  {
+    label: 'Этапы производства и сроки',
+    route: { kind: 'pricing', scrollAnchor: 'stages-24-48' },
+  },
+  {
+    label: 'Паспорт прав РАО / ВОИС',
+    route: { kind: 'pricing', scrollAnchor: 'legal-clearance' },
+  },
+  {
+    label: 'Разбор 5 ошибок в сценариях',
+    route: { kind: 'approach' },
+  },
+  {
+    label: 'Частые вопросы заказчиков',
+    route: { kind: 'faq' },
+  },
 ] as const;
 
 export function Footer({
@@ -123,7 +146,9 @@ export function Footer({
             </div>
 
             <p className="text-2xl sm:text-3xl font-bold tracking-tight leading-snug text-[#111111] dark:text-[#F4F3EF] editorial-balance">
-              Аудиопродакшн полного цикла и прямая бронь эфира для амбициозных брендов.
+              {AIRTIME_SALES_ENABLED
+                ? 'Аудиопродакшн полного цикла и прямая бронь эфира для амбициозных брендов.'
+                : 'Студийный аудиопродакшн полного цикла: сценарии, голоса кинодубляжа и чистые права для эфира.'}
             </p>
           </div>
 
@@ -182,7 +207,9 @@ export function Footer({
                         ? { kind: 'cases' }
                         : item.key === 'pricing'
                           ? { kind: 'pricing' }
-                          : { kind: 'approach' };
+                          : item.key === 'faq'
+                            ? { kind: 'faq' }
+                            : { kind: 'approach' };
                 return (
                   <li key={item.key}>
                     <a
@@ -201,7 +228,9 @@ export function Footer({
                   onClick={(e) => handleRouteClick(e, { kind: 'order' })}
                   className="inline-flex py-0.5 font-semibold text-[#FF4820] hover:underline"
                 >
-                  Оформление брони и заказа →
+                  {AIRTIME_SALES_ENABLED
+                    ? 'Оформление брони и заказа →'
+                    : 'Заказать аудиоролик →'}
                 </a>
               </li>
             </ul>
@@ -228,30 +257,48 @@ export function Footer({
 
           <div className="space-y-3">
             <p className="text-xs font-semibold text-[#111111]/50 dark:text-[#F4F3EF]/50">
-              Карточки радиостанций
+              {AIRTIME_SALES_ENABLED
+                ? 'Карточки радиостанций'
+                : 'Регламент и экспертиза'}
             </p>
-            <ul className="space-y-2">
-              {FOOTER_STATION_LINKS.map((entry) => (
-                <li key={entry.label}>
+            {AIRTIME_SALES_ENABLED ? (
+              <ul className="space-y-2">
+                {FOOTER_STATION_LINKS.map((entry) => (
+                  <li key={entry.label}>
+                    <a
+                      href={buildPlatformPath(entry.route)}
+                      onClick={(e) => handleRouteClick(e, entry.route)}
+                      className="inline-flex py-0.5 text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors"
+                    >
+                      {entry.label}
+                    </a>
+                  </li>
+                ))}
+                <li>
                   <a
-                    href={buildPlatformPath(entry.route)}
-                    onClick={(e) => handleRouteClick(e, entry.route)}
-                    className="inline-flex py-0.5 text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors"
+                    href="/hot-air"
+                    onClick={(e) => handleRouteClick(e, { kind: 'hot-air' })}
+                    className="inline-flex py-0.5 text-[#111111]/58 dark:text-[#F4F3EF]/58 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors"
                   >
-                    {entry.label}
+                    Все 12 радиостанций и слоты →
                   </a>
                 </li>
-              ))}
-              <li>
-                <a
-                  href="/hot-air"
-                  onClick={(e) => handleRouteClick(e, { kind: 'hot-air' })}
-                  className="inline-flex py-0.5 text-[#111111]/58 dark:text-[#F4F3EF]/58 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors"
-                >
-                  Все 12 радиостанций и слоты →
-                </a>
-              </li>
-            </ul>
+              </ul>
+            ) : (
+              <ul className="space-y-2">
+                {FOOTER_STUDIO_EXPERTISE_LINKS.map((entry) => (
+                  <li key={entry.label}>
+                    <a
+                      href={buildPlatformPath(entry.route)}
+                      onClick={(e) => handleRouteClick(e, entry.route)}
+                      className="inline-flex py-0.5 text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors"
+                    >
+                      {entry.label}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </nav>
 

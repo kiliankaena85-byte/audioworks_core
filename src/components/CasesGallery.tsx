@@ -14,7 +14,6 @@ import { formatAudioTime } from '../data/audioworksCommercial';
 import {
   BrandCasePoster,
   buildCaseShareUrl,
-  CASE_SPECTRUM_BAND_COUNT,
   CaseCardProgressState,
   CaseId,
   CasePlaybackMode,
@@ -26,6 +25,7 @@ import {
 } from '../data/casesData';
 import { orderPublishedCmsCasesForPersona } from '../data/studioCmsTypes';
 import { useLayaDecision } from '../engine/LayaContext';
+import { PremiumAcousticWaveform } from './PremiumAcousticWaveform';
 
 const LOCAL_CASE_FALLBACK_IMAGE =
   '/src/assets/images/hero_studio_editorial_1794399404984.jpg';
@@ -269,72 +269,25 @@ function CaseAudioProgressBar({
     progress.mode === 'preview' ? previewWindow.durationSec : item.durationSec;
 
   return (
-    <div className="h-[30px] w-full flex flex-col justify-end gap-1.5">
-      <div
-        aria-hidden="true"
-        data-testid={`case-visualizer-${item.id}`}
-        data-active={progress.isActive ? 'true' : 'false'}
-        data-mode={progress.mode ?? 'idle'}
-        className="h-5 w-full flex items-end justify-between gap-[2px] pointer-events-none"
-      >
-        {Array.from({ length: CASE_SPECTRUM_BAND_COUNT }, (_, idx) => {
-          const rawBand = progress.isActive ? (spectrumBands[idx] ?? 0.24) : 0;
-          const staticContour =
-            0.28 + 0.52 * Math.exp(-Math.pow((idx / (CASE_SPECTRUM_BAND_COUNT - 1) - 0.45) / 0.28, 2));
-          const targetScaleY = progress.isActive
-            ? prefersReducedMotion
-              ? staticContour
-              : Math.max(0.16, rawBand)
-            : 0.08;
-          const bandPosition = (idx + 0.5) / CASE_SPECTRUM_BAND_COUNT;
-          const isPlayedBand = progress.isActive && bandPosition <= progress.ratio;
-
-          return (
-            <motion.span
-              key={idx}
-              initial={false}
-              animate={{
-                scaleY: targetScaleY,
-                opacity: progress.isActive ? 1 : 0,
-              }}
-              transition={{
-                duration: prefersReducedMotion ? 0 : progress.isActive ? 0.08 : 0.16,
-                ease: 'linear',
-              }}
-              className={`h-full w-[2px] sm:w-[2.5px] rounded-full origin-bottom will-change-transform transition-colors duration-150 ${
-                isPlayedBand ? 'bg-[#FF4820]' : 'bg-white/42'
-              }`}
-            />
-          );
-        })}
-      </div>
-
-      <div
-        role="progressbar"
-        aria-label={`Прогресс воспроизведения: ${item.client}`}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={progress.percent}
-        aria-valuetext={
-          progress.isActive
-            ? `${progress.mode === 'preview' ? 'Превью ' : ''}${progress.percent}% (${formatAudioTime(currentTimeSec)} из ${formatAudioTime(targetDurationSec)})`
-            : 'Не воспроизводится'
-        }
-        data-testid={`case-progress-${item.id}`}
-        data-playing={progress.isActive ? 'true' : 'false'}
-        data-mode={progress.mode ?? 'idle'}
-        className={`h-1 w-full rounded-full overflow-hidden transition-colors duration-200 ${
-          progress.isActive ? 'bg-white/24' : 'bg-white/12'
-        }`}
-      >
-        <motion.div
-          initial={false}
-          animate={{ scaleX: progress.isActive ? progress.ratio : 0 }}
-          transition={{ duration: prefersReducedMotion ? 0 : 0.1, ease: 'linear' }}
-          className="h-full w-full rounded-full bg-[#FF4820] origin-left will-change-transform"
-        />
-      </div>
-    </div>
+    <PremiumAcousticWaveform
+      seedKey={item.id}
+      isActive={progress.isActive}
+      progressRatio={progress.isActive ? progress.ratio : 0}
+      spectrumBands={spectrumBands}
+      reducedMotion={Boolean(prefersReducedMotion)}
+      variant="dark-surface"
+      heightClass="h-10"
+      visualizerTestId={`case-visualizer-${item.id}`}
+      visualizerMode={progress.mode ?? 'idle'}
+      progressBarTestId={`case-progress-${item.id}`}
+      ariaLabel={`Прогресс воспроизведения: ${item.client}`}
+      ariaValueNow={progress.percent}
+      ariaValueText={
+        progress.isActive
+          ? `${progress.mode === 'preview' ? 'Превью ' : ''}${progress.percent}% (${formatAudioTime(currentTimeSec)} из ${formatAudioTime(targetDurationSec)})`
+          : 'Не воспроизводится'
+      }
+    />
   );
 }
 
@@ -430,11 +383,11 @@ function StudioCommercialStrip({
           }
         }}
         style={imageMotionStyle}
-        className="pointer-events-none absolute -inset-6 w-[calc(100%+3rem)] h-[calc(100%+3rem)] max-w-none object-cover opacity-26 brightness-110 will-change-transform"
+        className="pointer-events-none absolute -inset-6 w-[calc(100%+3rem)] h-[calc(100%+3rem)] max-w-none object-cover opacity-75 brightness-105 will-change-transform"
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#111114]/95 via-[#111114]/88 to-[#111114]/72"
+        className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#111114]/92 via-[#111114]/68 to-[#111114]/30"
       />
 
       <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">

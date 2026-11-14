@@ -1,3 +1,5 @@
+import { AIRTIME_SALES_ENABLED } from './platformFeatures';
+
 export type NavSectionId =
   | 'hot-air'
   | 'duel'
@@ -10,7 +12,6 @@ export interface CompactNavItem {
   id: NavSectionId;
   label: string;
   href: `#${NavSectionId}`;
-  isHotCapsule?: boolean;
 }
 
 export interface SectionViewportBounds {
@@ -22,14 +23,25 @@ export interface SectionViewportBounds {
 export const COMPACT_HEADER_HEIGHT_PX = 56;
 export const COMPACT_SCROLL_OFFSET_PX = 68;
 
-export const COMPACT_NAV_ITEMS: readonly CompactNavItem[] = [
-  { id: 'hot-air', label: '🔥 Горящий эфир', href: '#hot-air', isHotCapsule: true },
+export const ALL_COMPACT_NAV_ITEMS: readonly CompactNavItem[] = [
+  { id: 'hot-air', label: 'Горящий эфир', href: '#hot-air' },
   { id: 'duel', label: 'Сравнение', href: '#duel' },
   { id: 'work', label: 'Галерея', href: '#work' },
   { id: 'pricing', label: 'Стоимость', href: '#pricing' },
   { id: 'testimonials', label: 'Отзывы', href: '#testimonials' },
   { id: 'faq', label: 'FAQ', href: '#faq' },
 ] as const;
+
+export function getCompactNavItems(
+  airtimeEnabled = AIRTIME_SALES_ENABLED
+): readonly CompactNavItem[] {
+  if (airtimeEnabled) {
+    return ALL_COMPACT_NAV_ITEMS;
+  }
+  return ALL_COMPACT_NAV_ITEMS.filter((item) => item.id !== 'hot-air');
+}
+
+export const COMPACT_NAV_ITEMS: readonly CompactNavItem[] = getCompactNavItems();
 
 /**
  * Определяет активную секцию навигации по координатам секций относительно окна просмотра.
