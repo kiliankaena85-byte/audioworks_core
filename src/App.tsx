@@ -47,6 +47,11 @@ const OrderPage = lazy(() =>
     default: m.OrderPage,
   }))
 );
+const ClientCabinetPage = lazy(() =>
+  import('./components/pages/ClientCabinetPage').then((m) => ({
+    default: m.ClientCabinetPage,
+  }))
+);
 const PricingPage = lazy(() =>
   import('./components/pages/PricingPage').then((m) => ({
     default: m.PricingPage,
@@ -437,6 +442,10 @@ function FmworksExperience() {
 
           {route.kind === 'order' && (
             <OrderPage draft={orderDraft} onNavigate={navigateTo} />
+          )}
+
+          {route.kind === 'cabinet' && (
+            <ClientCabinetPage onNavigate={navigateTo} />
           )}
         </Suspense>
       </main>

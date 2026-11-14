@@ -2,10 +2,23 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
+import {ensureWebpSiblingsInDirs} from './scripts/generate-webp.mjs';
+
+function webpAssetGeneratorPlugin() {
+  return {
+    name: 'fmworks-webp-generator',
+    buildStart() {
+      ensureWebpSiblingsInDirs([
+        path.resolve(__dirname, 'src', 'assets', 'images'),
+        path.resolve(__dirname, 'public', 'assets', 'cms'),
+      ]);
+    },
+  };
+}
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), webpAssetGeneratorPlugin()],
     resolve: {
       dedupe: ['react', 'react-dom'],
       alias: {

@@ -21,6 +21,11 @@ import type {
   StudioWorkScheduleConfig,
 } from './slaWorkCalendar.ts';
 import type { OrderDocumentMeta } from './studioDocumentsCore.ts';
+import type {
+  ClientDeliveryChannel,
+  ClientUploadedAttachment,
+  OrderDeliverableFile,
+} from './clientCabinetHelpers.ts';
 import { maskContactChannelSummary } from '../security/rfLegalCompliance.ts';
 
 function formatRubCompact(amount: number): string {
@@ -167,7 +172,7 @@ export const STUDIO_PRODUCTION_CRM_STAGES: readonly CrmStageMeta[] = [
     shortLabel: 'Проверка заявки и реквизитов',
     fullTitle: '01. Проверка заявки и реквизитов · Договор и счёт',
     slaHint:
-      'SLA 15 минут: проверка контрагента, сверка брифа и формирование рамочного договора-счёта',
+      'SLA 15 минут: сверка задачи с продюсером и подготовка счёта на оплату',
     nextActionLabel: 'Подтвердить контрагента и ТЗ →',
     nextStage: 'quota_locked',
   },
@@ -177,17 +182,17 @@ export const STUDIO_PRODUCTION_CRM_STAGES: readonly CrmStageMeta[] = [
     shortLabel: 'Контрагент подтверждён',
     fullTitle: '02. Контрагент и задача подтверждены продюсером',
     slaHint:
-      'Бриф проверен · пре-чек ФЗ-38 · ожидание подписания рамочного договора и счёта',
+      'Бриф проверен · пре-чек ФЗ-38 · подготовка счёта или ссылки на оплату',
     nextActionLabel: 'Направить договор-счёт / ссылку оплаты →',
     nextStage: 'edo_invoice',
   },
   {
     id: 'edo_invoice',
     stepCode: '03',
-    shortLabel: 'Договор и предоплата',
-    fullTitle: '03. Рамочный договор и ожидание 100% предоплаты',
+    shortLabel: 'Счёт и предоплата',
+    fullTitle: '03. Счёт выставлен · ожидание предоплаты',
     slaHint:
-      'Счёт в Диадок / СБИС или ссылка 54-ФЗ · старт сценариев строго после оплаты',
+      'Счёт готов в личном кабинете или ЭДО · старт сценариев после поступления оплаты',
     nextActionLabel: 'Оплата получена · запустить продакшн →',
     nextStage: 'in_production',
   },
@@ -326,6 +331,7 @@ export interface CrmOrderRecord {
   formatLabel: string;
   totalBudgetRub: number;
   contact: string;
+  clientEmail?: string | null;
   detectedChannel: 'phone' | 'telegram' | 'email' | 'vip_saved';
   callbackPreference?: ClientCallbackPreference;
   companyOrInn: string;
@@ -338,6 +344,11 @@ export interface CrmOrderRecord {
   compliance: OrderComplianceChecklist;
   mediaPlanSnapshot: OrderMediaPlanSnapshot | null;
   documentMeta?: OrderDocumentMeta;
+  preferredDeliveryChannel?: ClientDeliveryChannel;
+  preferredDeliveryDetail?: string;
+  cloudDiskUrl?: string | null;
+  deliverables?: OrderDeliverableFile[];
+  clientUploads?: ClientUploadedAttachment[];
   pdnConsentAcceptedAt?: string | null;
   pdnAnonymizedAt?: string | null;
   slaState?: OrderSlaTrackingState;
@@ -624,7 +635,7 @@ export function formatTelegramOrderDispatchMessage(
   const paymentLabel =
     order.paymentChannel === 'card_online'
       ? 'Карта физлица / СБП (ЮKassa / Робокасса, 54-ФЗ)'
-      : 'Безнал по рамочному договору и счёту в ЭДО';
+      : 'Безналичный расчёт по счёту / ЭДО';
 
   const contactDisplayLine = maskPdn
     ? `Канал связи: ${maskContactChannelSummary(order.detectedChannel)}`
@@ -717,6 +728,7 @@ export function anonymizeCrmOrderPdnRecord(
     ...order,
     updatedAt: nowIso,
     contact: '[ПДН УДАЛЕНЫ ПО 152-ФЗ]',
+    clientEmail: null,
     companyOrInn: '[РЕКВИЗИТЫ ОБЕЗЛИЧЕНЫ ПО 152-ФЗ]',
     innVerified: false,
     briefText: anonymizedNote,
@@ -738,6 +750,8 @@ export interface WebhookOrderEnvelope {
     stageTitle: string;
     checkoutMode: 'air_plus_production' | 'production_only';
     paymentChannel?: 'edo_invoice' | 'card_online';
+    preferredDeliveryChannel?: ClientDeliveryChannel;
+    preferredDeliveryDetail?: string;
     totalBudgetRub: number;
     holdExpiresAt: string;
     callbackPreference: ClientCallbackPreference;
@@ -776,6 +790,8 @@ export function buildWebhookOrderEnvelope(
       stageTitle: getCrmStageMetaForOrder(order.stage, order.checkoutMode).fullTitle,
       checkoutMode: order.checkoutMode,
       paymentChannel: order.paymentChannel ?? 'edo_invoice',
+      preferredDeliveryChannel: order.preferredDeliveryChannel ?? 'messenger',
+      preferredDeliveryDetail: order.preferredDeliveryDetail ?? '',
       totalBudgetRub: order.totalBudgetRub,
       holdExpiresAt: order.holdExpiresAt,
       callbackPreference: order.callbackPreference ?? 'call_15m',
@@ -1033,6 +1049,11 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
       voiceDurationSec: 26,
       attachedFileName: null,
       producerNotes: 'Проверить свободные утренние окна на Серебряном Дожде под бизнес-аудиторию.',
+      preferredDeliveryChannel: 'messenger',
+      preferredDeliveryDetail: 'Telegram',
+      cloudDiskUrl: null,
+      deliverables: [],
+      clientUploads: [],
       compliance: {
         trafficConfirmed: false,
         fz38Checked: true,
@@ -1125,6 +1146,22 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
       attachedFileName: 'spot_cardio_20s_passport.pdf',
       producerNotes:
         'Трафик подтвердил все 28 выходов. Дисклеймер «Имеются противопоказания» уложен в финальные 3 сек. Счёт отправлен в Диадок.',
+      preferredDeliveryChannel: 'cabinet',
+      preferredDeliveryDetail: '',
+      cloudDiskUrl: null,
+      deliverables: [
+        {
+          id: 'deliv-seed-2891-spot',
+          title: 'Эфирный мастер-файл (20 сек, −14 LUFS)',
+          kind: 'audio_master',
+          fileName: 'medcenter_cardio_20s_master.wav',
+          mimeType: 'audio/wav',
+          sizeBytes: 2_648_000,
+          uploadedAt: isoAt(-60),
+          staticAssetUrl: 'Audioworks_75c6023f.wav',
+        },
+      ],
+      clientUploads: [],
       compliance: {
         trafficConfirmed: true,
         fz38Checked: true,
@@ -1207,6 +1244,7 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
       formatLabel: 'Экспресс-продакшн (15 сек) за 24ч — 0 ₽ Бонус',
       totalBudgetRub: 418_500,
       contact: '+7 925 310-88-42 · Дмитрий (отдел лизинга)',
+      clientEmail: 'director@transflot-leasing.ru',
       detectedChannel: 'phone',
       companyOrInn: 'АО «ТрансФлот Лизинг» · ИНН 7702070139',
       innVerified: true,
@@ -1217,6 +1255,32 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
       attachedFileName: 'requisites_transflot.pdf',
       producerNotes:
         'Бонусный ролик за 0 ₽ сдан и утверждён с первого дубля. Идёт 1-я волна в утреннем и вечернем драйве, готовим график 2-й волны без оплаты продакшна.',
+      preferredDeliveryChannel: 'cloud',
+      preferredDeliveryDetail: 'Яндекс Диск',
+      cloudDiskUrl: 'https://disk.yandex.ru/d/fmworks-transflot-2854',
+      deliverables: [
+        {
+          id: 'deliv-seed-2854-master',
+          title: 'Финальный мастер-ролик (WAV 48 кГц / −14 LUFS)',
+          kind: 'audio_master',
+          fileName: 'transflot_leasing_15s_master.wav',
+          mimeType: 'audio/wav',
+          sizeBytes: 2_648_000,
+          uploadedAt: isoAt(-360),
+          staticAssetUrl: 'zerno_audioworks_15.wav',
+        },
+        {
+          id: 'deliv-seed-2854-backup',
+          title: 'Дубль для мессенджеров и соцсетей',
+          kind: 'audio_master',
+          fileName: 'transflot_leasing_15s_promo.wav',
+          mimeType: 'audio/wav',
+          sizeBytes: 2_890_000,
+          uploadedAt: isoAt(-355),
+          staticAssetUrl: 'Audioworks_75c6023f.wav',
+        },
+      ],
+      clientUploads: [],
       compliance: {
         trafficConfirmed: true,
         fz38Checked: true,

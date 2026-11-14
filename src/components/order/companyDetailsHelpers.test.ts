@@ -79,4 +79,14 @@ test('inspectCompanyDetails требует название и валидный 
   });
   assert.equal(invalidInnOnCard.valid, false);
   assert.ok(invalidInnOnCard.innError?.includes('ИНН'));
+
+  const validInnOnly = inspectCompanyDetails({
+    companyName: '',
+    companyInn: '6663003127',
+    paymentChannel: 'edo_invoice',
+  });
+  assert.equal(validInnOnly.valid, true);
+  assert.equal(validInnOnly.innVerified, true);
+  assert.match(validInnOnly.combinedCompanyLine, /СКБ Контур.*ИНН 6663003127/);
 });
+

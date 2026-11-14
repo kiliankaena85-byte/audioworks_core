@@ -166,3 +166,150 @@ test('validateOrderSubmissionFields блокирует отправку без �
   assert.equal(withConsent.consentError, undefined);
   assert.equal(withConsent.firstErrorField, null);
 });
+
+test('validateOrderSubmissionFields в режиме быстрого лида (requireCompanyDetails: false) пропускает заявку без ИНН, но ловит ошибку при частичном вводе ИНН', () => {
+  const fastLeadValid = validateOrderSubmissionFields({
+    mode: 'production_only',
+    paymentChannel: 'edo_invoice',
+    requireCompanyDetails: false,
+    contactLine: 'Дмитрий +7 925 310-88-42',
+    companyName: '',
+    companyInn: '',
+    legacyCompanyLine: '',
+    briefText: 'Нужен аудиоролик на 15 секунд для акции сети кофеен',
+    hasVoiceRecording: false,
+    hasAttachedFile: false,
+    isReturningFastTrack: false,
+    honeypotFilled: false,
+    pdnConsentAccepted: true,
+  });
+
+  assert.equal(fastLeadValid.valid, true);
+  assert.equal(fastLeadValid.companyNameError, undefined);
+  assert.equal(fastLeadValid.companyInnError, undefined);
+  assert.equal(fastLeadValid.firstErrorField, null);
+
+  const partialInn = validateOrderSubmissionFields({
+    mode: 'production_only',
+    paymentChannel: 'edo_invoice',
+    requireCompanyDetails: false,
+    contactLine: 'Дмитрий +7 925 310-88-42',
+    companyName: 'ООО «Рассвет»',
+    companyInn: '77070',
+    legacyCompanyLine: '',
+    briefText: 'Нужен аудиоролик на 15 секунд',
+    hasVoiceRecording: false,
+    hasAttachedFile: false,
+    isReturningFastTrack: false,
+    honeypotFilled: false,
+    pdnConsentAccepted: true,
+  });
+
+  assert.equal(partialInn.valid, false);
+  assert.ok(partialInn.companyInnError);
+  assert.equal(partialInn.firstErrorField, 'companyInn');
+});
+
+test('validateOrderSubmissionFields проверяет e-mail и свой вариант для мессенджера/облака', () => {
+  const invalidEmail = validateOrderSubmissionFields({
+    mode: 'production_only',
+    paymentChannel: 'edo_invoice',
+    requireCompanyDetails: false,
+    preferredDeliveryChannel: 'email',
+    deliveryEmail: 'anna@',
+    contactLine: 'Анна +7 916 555-32-10',
+    companyName: '',
+    companyInn: '',
+    legacyCompanyLine: '',
+    briefText: 'Нужен аудиоролик на 15 секунд для акции сети кофеен',
+    hasVoiceRecording: false,
+    hasAttachedFile: false,
+    isReturningFastTrack: false,
+    honeypotFilled: false,
+    pdnConsentAccepted: true,
+  });
+  assert.equal(invalidEmail.valid, false);
+  assert.ok(invalidEmail.deliveryError);
+  assert.equal(invalidEmail.firstErrorField, 'delivery');
+
+  const validEmail = validateOrderSubmissionFields({
+    mode: 'production_only',
+    paymentChannel: 'edo_invoice',
+    requireCompanyDetails: false,
+    preferredDeliveryChannel: 'email',
+    deliveryEmail: 'anna@coffee.ru',
+    contactLine: 'Анна +7 916 555-32-10',
+    companyName: '',
+    companyInn: '',
+    legacyCompanyLine: '',
+    briefText: 'Нужен аудиоролик на 15 секунд для акции сети кофеен',
+    hasVoiceRecording: false,
+    hasAttachedFile: false,
+    isReturningFastTrack: false,
+    honeypotFilled: false,
+    pdnConsentAccepted: true,
+  });
+  assert.equal(validEmail.valid, true);
+  assert.equal(validEmail.deliveryError, undefined);
+
+  const missingOtherMessenger = validateOrderSubmissionFields({
+    mode: 'production_only',
+    paymentChannel: 'edo_invoice',
+    requireCompanyDetails: false,
+    preferredDeliveryChannel: 'messenger',
+    deliveryMessenger: 'other',
+    deliveryMessengerOther: '',
+    contactLine: 'Анна +7 916 555-32-10',
+    companyName: '',
+    companyInn: '',
+    legacyCompanyLine: '',
+    briefText: 'Нужен аудиоролик на 15 секунд для акции сети кофеен',
+    hasVoiceRecording: false,
+    hasAttachedFile: false,
+    isReturningFastTrack: false,
+    honeypotFilled: false,
+    pdnConsentAccepted: true,
+  });
+  assert.equal(missingOtherMessenger.valid, false);
+  assert.ok(missingOtherMessenger.deliveryError);
+  assert.equal(missingOtherMessenger.firstErrorField, 'delivery');
+
+  const validMaxMessenger = validateOrderSubmissionFields({
+    mode: 'production_only',
+    paymentChannel: 'edo_invoice',
+    requireCompanyDetails: false,
+    preferredDeliveryChannel: 'messenger',
+    deliveryMessenger: 'max',
+    contactLine: 'Анна +7 916 555-32-10',
+    companyName: '',
+    companyInn: '',
+    legacyCompanyLine: '',
+    briefText: 'Нужен аудиоролик на 15 секунд для акции сети кофеен',
+    hasVoiceRecording: false,
+    hasAttachedFile: false,
+    isReturningFastTrack: false,
+    honeypotFilled: false,
+    pdnConsentAccepted: true,
+  });
+  assert.equal(validMaxMessenger.valid, true);
+
+  const validInnOnlySubmit = validateOrderSubmissionFields({
+    mode: 'production_only',
+    paymentChannel: 'edo_invoice',
+    requireCompanyDetails: true,
+    contactLine: 'Анна +7 916 555-32-10',
+    companyName: '',
+    companyInn: '6663003127',
+    legacyCompanyLine: '',
+    briefText: 'Нужен аудиоролик на 15 секунд для конференции',
+    hasVoiceRecording: false,
+    hasAttachedFile: false,
+    isReturningFastTrack: false,
+    honeypotFilled: false,
+    pdnConsentAccepted: true,
+  });
+  assert.equal(validInnOnlySubmit.valid, true);
+  assert.match(validInnOnlySubmit.effectiveCompany, /СКБ Контур.*ИНН 6663003127/);
+});
+
+

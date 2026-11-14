@@ -1,3 +1,8 @@
+import {
+  type DiadocDraftState,
+  resolveOfflineCounterpartyByInn,
+} from './konturIntegrationCore.ts';
+
 export type StudioEntityKind = 'ip' | 'ooo';
 
 export type StudioTaxRegimeId =
@@ -68,8 +73,13 @@ export interface OrderDocumentMeta {
   customerLegalName?: string;
   customerInn?: string;
   customerKpp?: string;
+  customerOgrn?: string;
   customerAddress?: string;
   customerSignatory?: string;
+  customerEdoBoxId?: string;
+  customerEdoOperator?: string;
+  wantsDiadocDuplicate?: boolean;
+  diadocDraftState?: DiadocDraftState;
 }
 
 export interface TaxCalculationSummary {
@@ -92,9 +102,13 @@ export interface ParsedCustomerCounterparty {
   displayName: string;
   inn: string;
   kpp: string;
+  ogrn: string;
   isIpByInn: boolean;
   address: string;
   signatory: string;
+  edoBoxId: string;
+  edoOperator: string;
+  wantsDiadocDuplicate: boolean;
   contact: string;
   isPlaceholder: boolean;
 }
@@ -265,7 +279,7 @@ export function createDefaultStudioLegalProfiles(): StudioLegalProfilesConfig {
       chiefAccountantShortName: '',
       authorityBasis:
         'действующий на основании государственной регистрации (ОГРНИП 322695200041850)',
-      edoOperatorLabel: 'Контур.Диадок / СБИС',
+      edoOperatorLabel: 'Контур.Диадок (Учёт в Контур.Экстерне)',
       edoParticipantId: '2BM-695008412904-FMWORKS',
       websiteDomain: 'fmworks.ru',
       email: 'hello@fmworks.ru',
@@ -291,7 +305,7 @@ export function createDefaultStudioLegalProfiles(): StudioLegalProfilesConfig {
       signatoryShortName: 'Соколов А. В.',
       chiefAccountantShortName: 'Соколов А. В.',
       authorityBasis: 'действующего на основании Устава',
-      edoOperatorLabel: 'Контур.Диадок / СБИС',
+      edoOperatorLabel: 'Контур.Диадок (Учёт в Контур.Экстерне)',
       edoParticipantId: '2BM-6950241890-695001001-FMWORKS',
       websiteDomain: 'fmworks.ru',
       email: 'hello@fmworks.ru',
@@ -364,7 +378,10 @@ export function sanitizeStudioLegalProfile(
         ? ''
         : cleanText(raw.chiefAccountantShortName, base.chiefAccountantShortName, 80),
     authorityBasis: cleanText(raw.authorityBasis, base.authorityBasis, 200),
-    edoOperatorLabel: cleanText(raw.edoOperatorLabel, base.edoOperatorLabel, 100),
+    edoOperatorLabel: (() => {
+      const cleaned = cleanText(raw.edoOperatorLabel, base.edoOperatorLabel, 100);
+      return cleaned === 'Контур.Диадок / СБИС' ? base.edoOperatorLabel : cleaned;
+    })(),
     edoParticipantId: cleanText(raw.edoParticipantId, base.edoParticipantId, 100),
     websiteDomain: cleanText(raw.websiteDomain, 'fmworks.ru', 80),
     email: cleanText(raw.email, 'hello@fmworks.ru', 100),
@@ -476,6 +493,10 @@ export function sanitizeOrderDocumentMeta(
       typeof raw.customerKpp === 'string'
         ? raw.customerKpp.replace(/\D/g, '').slice(0, 9)
         : undefined,
+    customerOgrn:
+      typeof raw.customerOgrn === 'string'
+        ? raw.customerOgrn.replace(/\D/g, '').slice(0, 15)
+        : undefined,
     customerAddress:
       typeof raw.customerAddress === 'string'
         ? raw.customerAddress.trim().slice(0, 260)
@@ -483,6 +504,53 @@ export function sanitizeOrderDocumentMeta(
     customerSignatory:
       typeof raw.customerSignatory === 'string'
         ? raw.customerSignatory.trim().slice(0, 160)
+        : undefined,
+    customerEdoBoxId:
+      typeof raw.customerEdoBoxId === 'string'
+        ? raw.customerEdoBoxId.trim().slice(0, 100)
+        : undefined,
+    customerEdoOperator:
+      typeof raw.customerEdoOperator === 'string'
+        ? raw.customerEdoOperator.trim().slice(0, 120)
+        : undefined,
+    wantsDiadocDuplicate:
+      typeof raw.wantsDiadocDuplicate === 'boolean'
+        ? raw.wantsDiadocDuplicate
+        : undefined,
+    diadocDraftState:
+      raw.diadocDraftState && typeof raw.diadocDraftState === 'object'
+        ? {
+            status:
+              raw.diadocDraftState.status === 'draft_created' ||
+              raw.diadocDraftState.status === 'queued_local' ||
+              raw.diadocDraftState.status === 'error'
+                ? raw.diadocDraftState.status
+                : 'not_sent',
+            draftMessageId:
+              typeof raw.diadocDraftState.draftMessageId === 'string'
+                ? raw.diadocDraftState.draftMessageId.trim().slice(0, 120)
+                : undefined,
+            toBoxId:
+              typeof raw.diadocDraftState.toBoxId === 'string'
+                ? raw.diadocDraftState.toBoxId.trim().slice(0, 100)
+                : undefined,
+            fromBoxId:
+              typeof raw.diadocDraftState.fromBoxId === 'string'
+                ? raw.diadocDraftState.fromBoxId.trim().slice(0, 100)
+                : undefined,
+            documentNumber:
+              typeof raw.diadocDraftState.documentNumber === 'string'
+                ? raw.diadocDraftState.documentNumber.trim().slice(0, 64)
+                : undefined,
+            updatedAt:
+              typeof raw.diadocDraftState.updatedAt === 'string'
+                ? raw.diadocDraftState.updatedAt.trim().slice(0, 64)
+                : undefined,
+            detail:
+              typeof raw.diadocDraftState.detail === 'string'
+                ? raw.diadocDraftState.detail.trim().slice(0, 300)
+                : undefined,
+          }
         : undefined,
   };
 }
@@ -729,10 +797,12 @@ export function parseCustomerCounterparty(
       : '';
 
   const finalInn = (meta?.customerInn?.trim() || parsedInn).replace(/\D/g, '').slice(0, 12);
+  const offlineFallback = finalInn ? resolveOfflineCounterpartyByInn(finalInn) : null;
   const isIpByInn = finalInn.length === 12;
   const finalName =
     meta?.customerLegalName?.trim() ||
     parsedName ||
+    offlineFallback?.legalName ||
     (finalInn
       ? isIpByInn
         ? `Индивидуальный предприниматель (ИНН ${finalInn})`
@@ -741,15 +811,35 @@ export function parseCustomerCounterparty(
 
   const finalKpp = isIpByInn
     ? ''
-    : (meta?.customerKpp?.trim() || '').replace(/\D/g, '').slice(0, 9);
+    : (meta?.customerKpp?.trim() || offlineFallback?.kpp || '')
+        .replace(/\D/g, '')
+        .slice(0, 9);
+
+  const finalOgrn = (meta?.customerOgrn?.trim() || offlineFallback?.ogrn || '')
+    .replace(/\D/g, '')
+    .slice(0, 15);
+
+  const finalAddress =
+    meta?.customerAddress?.trim() || offlineFallback?.legalAddress || '';
+  const finalSignatory =
+    meta?.customerSignatory?.trim() || offlineFallback?.signatory || '';
+  const finalEdoBoxId =
+    meta?.customerEdoBoxId?.trim() || offlineFallback?.diadoc.boxId || '';
+  const finalEdoOperator =
+    meta?.customerEdoOperator?.trim() ||
+    (offlineFallback?.diadoc.hasBox ? offlineFallback.diadoc.operatorLabel : '');
 
   return {
     displayName: finalName,
     inn: finalInn,
     kpp: finalKpp,
+    ogrn: finalOgrn,
     isIpByInn,
-    address: meta?.customerAddress?.trim() || '',
-    signatory: meta?.customerSignatory?.trim() || '',
+    address: finalAddress,
+    signatory: finalSignatory,
+    edoBoxId: finalEdoBoxId,
+    edoOperator: finalEdoOperator,
+    wantsDiadocDuplicate: Boolean(meta?.wantsDiadocDuplicate),
     contact: (contactRaw || '').trim() || 'Контактное лицо Заказчика',
     isPlaceholder: !meta?.customerLegalName?.trim() && !parsedName && !finalInn,
   };
@@ -1197,10 +1287,18 @@ export function formatProductionSuitePlainSummary(
     `ИНН ${studio.inn}${kppPart} · ${ogrnLabel} ${studio.ogrnOrOgrnip}`,
     `Банк: ${studio.bankName} · БИК ${studio.bik}`,
     `Р/с: ${studio.checkingAccount} · К/с: ${studio.correspondentAccount}`,
-    `ЭДО: ${studio.edoOperatorLabel} (ID: ${studio.edoParticipantId})`,
+    `ЭДО Поставщика: ${studio.edoOperatorLabel} (ID: ${studio.edoParticipantId})`,
     `Заказчик: ${customer.displayName}${customer.inn ? `, ИНН ${customer.inn}` : ''}${
       customer.kpp ? `, КПП ${customer.kpp}` : ''
+    }${
+      customer.ogrn
+        ? `, ${customer.isIpByInn ? 'ОГРНИП' : 'ОГРН'} ${customer.ogrn}`
+        : ''
     }`,
+    ...(customer.address ? [`Юр. адрес Заказчика: ${customer.address}`] : []),
+    ...(customer.edoBoxId
+      ? [`ЭДО Заказчика (Диадок): ${customer.edoBoxId}`]
+      : []),
     ``,
     `Позиция 1: Создание рекламного аудиоролика и передача прав по Приложению № ${suite.appendixNumber} («${suite.spotWorkingTitle}», ${suite.spotDurationSec} сек, тариф «${scope.tierTitle}»)`,
     suite.isNegotiablePendingPrice

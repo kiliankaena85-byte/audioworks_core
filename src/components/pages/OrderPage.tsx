@@ -1,19 +1,34 @@
 import {
   AlertCircle,
   ArrowLeft,
-  ArrowUpRight,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Clock,
   Copy,
   Download,
+  FileCheck2,
   FileText,
+  FolderOpen,
   Paperclip,
   Radio,
   RotateCcw,
   ShieldCheck,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  buildCanonicalDeliveryDetail,
+  CLIENT_DELIVERY_CHANNEL_OPTIONS,
+  DELIVERY_CLOUD_OPTIONS,
+  DELIVERY_MESSENGER_OPTIONS,
+  resolveDeliveryChannelLabel,
+  upsertClientCabinetEntry,
+} from '../../data/clientCabinetHelpers';
+import {
+  extractEmailFromContactText,
+  normalizeClientEmail,
+} from '../../data/clientAuthShared';
 import { INDUSTRY_SOLUTIONS } from '../../data/multiPageContentData';
 import { buildMediaPlanSnapshotFromReservation } from '../../data/orderCrmTypes';
 import {
@@ -66,6 +81,11 @@ import {
 } from '../OperatingRegimeAndCallbackBar';
 import { CompanyDetailsForm } from '../order/CompanyDetailsForm';
 import {
+  formatStructuredCompanyLine,
+  inspectInnDigits,
+  normalizeInnDigits,
+} from '../order/companyDetailsHelpers';
+import {
   OrderValidationFieldKey,
   validateOrderSubmissionFields,
 } from '../order/orderFormValidation';
@@ -75,10 +95,22 @@ import {
 } from '../order/VoiceBriefRecorder';
 import { PersonalDataConsentField } from '../legal/PersonalDataConsentField';
 import {
+  counterpartyToDocumentMetaPatch,
+  type CounterpartyLookupResult,
+  resolveOfflineCounterpartyByInn,
+} from '../../data/konturIntegrationCore';
+import {
   createDefaultStudioLegalProfiles,
+  type OrderDocumentMeta,
   StudioLegalProfilesConfig,
 } from '../../data/studioDocumentsCore';
 import { ReservationConfirmedModal } from '../ReservationConfirmedModal';
+
+const BrandedDocumentSuiteModal = lazy(() =>
+  import('../documents/BrandedDocumentSuiteModal').then((m) => ({
+    default: m.BrandedDocumentSuiteModal,
+  }))
+);
 
 interface OrderPageProps {
   draft: OrderDraftSnapshot;
@@ -123,6 +155,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
   const [voiceResetSignal, setVoiceResetSignal] = useState(0);
 
   const [contactError, setContactError] = useState<string | undefined>();
+  const [deliveryError, setDeliveryError] = useState<string | undefined>();
   const [companyError, setCompanyError] = useState<string | undefined>();
   const [companyNameError, setCompanyNameError] = useState<string | undefined>();
   const [companyInnError, setCompanyInnError] = useState<string | undefined>();
@@ -140,6 +173,18 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
   const [isFormatPickerExpanded, setIsFormatPickerExpanded] = useState<boolean>(
     () => !draft.isFormatPreselected
   );
+  const [isDurationIndustryExpanded, setIsDurationIndustryExpanded] =
+    useState<boolean>(false);
+  const [isDocModalOpen, setIsDocModalOpen] = useState<boolean>(false);
+  const [quickInnName, setQuickInnName] = useState<string>('');
+  const [quickInnDigits, setQuickInnDigits] = useState<string>('');
+  const [quickInnError, setQuickInnError] = useState<string | null>(null);
+  const [isSavingQuickInn, setIsSavingQuickInn] = useState<boolean>(false);
+  const [quickInnSaved, setQuickInnSaved] = useState<boolean>(false);
+  const [activeSessionEmail, setActiveSessionEmail] = useState<string | null>(null);
+  const [bindEmailDraft, setBindEmailDraft] = useState<string>('');
+  const [bindEmailError, setBindEmailError] = useState<string | null>(null);
+  const [isBindingEmail, setIsBindingEmail] = useState<boolean>(false);
 
   const activeRateScope = resolveLeadFormRateScope(
     isMediaBookingMode ? 'air_plus_production' : 'production_only'
@@ -172,6 +217,8 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const briefTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const contactInputRef = useRef<HTMLInputElement | null>(null);
+  const deliverySectionRef = useRef<HTMLDivElement | null>(null);
+  const deliveryDetailInputRef = useRef<HTMLInputElement | null>(null);
   const companyNameInputRef = useRef<HTMLInputElement | null>(null);
   const companyInnInputRef = useRef<HTMLInputElement | null>(null);
   const consentInputRef = useRef<HTMLInputElement | null>(null);
@@ -183,6 +230,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
     const targetMap: Record<OrderValidationFieldKey, HTMLElement | null> = {
       brief: briefTextareaRef.current,
       contact: contactInputRef.current,
+      delivery: deliveryDetailInputRef.current ?? deliverySectionRef.current,
       companyName: companyNameInputRef.current,
       companyInn: companyInnInputRef.current,
       companyLine: companyNameInputRef.current ?? companyInnInputRef.current,
@@ -229,6 +277,24 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       })
       .catch(() => {
         // Локальные профили г. Тверь работают автономно
+      });
+    fetch('/api/client-auth/session', { headers: { Accept: 'application/json' } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(
+        (
+          data: {
+            ok?: boolean;
+            authenticated?: boolean;
+            account?: { email?: string } | null;
+          } | null
+        ) => {
+          if (active && data?.authenticated && data.account?.email) {
+            setActiveSessionEmail(data.account.email);
+          }
+        }
+      )
+      .catch(() => {
+        // Сессия кабинета опциональна
       });
     return () => {
       active = false;
@@ -285,6 +351,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
     setIsConfirmedModalOpen(false);
     orderDraftStore.dismissSubmittedReceipt();
     setContactError(undefined);
+    setDeliveryError(undefined);
     setCompanyError(undefined);
     setCompanyNameError(undefined);
     setCompanyInnError(undefined);
@@ -297,6 +364,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
   const handleSwitchClientMode = (nextMode: ClientMode) => {
     setClientMode(nextMode);
     setContactError(undefined);
+    setDeliveryError(undefined);
     setCompanyError(undefined);
     setCompanyNameError(undefined);
     setCompanyInnError(undefined);
@@ -338,6 +406,26 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
     [draft.selectedFormat]
   );
 
+  const resolvedDeliveryDetail = useMemo(
+    () =>
+      buildCanonicalDeliveryDetail({
+        channel: draft.preferredDeliveryChannel,
+        messenger: draft.deliveryMessenger,
+        messengerOther: draft.deliveryMessengerOther,
+        cloud: draft.deliveryCloud,
+        cloudOther: draft.deliveryCloudOther,
+        email: draft.deliveryEmail,
+      }),
+    [
+      draft.preferredDeliveryChannel,
+      draft.deliveryMessenger,
+      draft.deliveryMessengerOther,
+      draft.deliveryCloud,
+      draft.deliveryCloudOther,
+      draft.deliveryEmail,
+    ]
+  );
+
   // Критическое разделение: экран квитанции показывается ТОЛЬКО если пользователь только что отправил заявку
   // или сам нажал «Посмотреть статус и счёт ЭДО». Клик по любой кнопке «Заказать ролик» всегда открывает чистую форму!
   const showConfirmedView = Boolean(
@@ -355,6 +443,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
     if (isSubmittingLead) return;
 
     setContactError(undefined);
+    setDeliveryError(undefined);
     setCompanyError(undefined);
     setCompanyNameError(undefined);
     setCompanyInnError(undefined);
@@ -383,6 +472,13 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
     const validation = validateOrderSubmissionFields({
       mode: effectiveMode,
       paymentChannel: draft.paymentChannel,
+      requireCompanyDetails: isMediaBookingMode ? true : draft.wantsInvoiceNow,
+      preferredDeliveryChannel: draft.preferredDeliveryChannel,
+      deliveryMessenger: draft.deliveryMessenger,
+      deliveryMessengerOther: draft.deliveryMessengerOther,
+      deliveryCloud: draft.deliveryCloud,
+      deliveryCloudOther: draft.deliveryCloudOther,
+      deliveryEmail: draft.deliveryEmail,
       contactLine: isReturningFastTrack ? savedVip.contactLine : draft.contactLine,
       companyName: draft.companyName,
       companyInn: draft.companyInn,
@@ -399,6 +495,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
     if (!validation.valid) {
       setTaskError(validation.taskError);
       setContactError(validation.contactError);
+      setDeliveryError(validation.deliveryError);
       setCompanyNameError(validation.companyNameError);
       setCompanyInnError(validation.companyInnError);
       setCompanyError(validation.companyError);
@@ -409,8 +506,57 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       return;
     }
 
+    if (
+      draft.preferredDeliveryChannel === 'cabinet' &&
+      draft.cabinetEmail.trim().length > 0 &&
+      !normalizeClientEmail(draft.cabinetEmail)
+    ) {
+      setDeliveryError(
+        'Проверьте адрес почты (например, name@company.ru) или оставьте поле пустым'
+      );
+      window.requestAnimationFrame(() => scrollAndFocusField('delivery'));
+      return;
+    }
+
     const effectiveContact = validation.effectiveContact;
     const effectiveCompany = validation.effectiveCompany;
+
+    const buildClientSideDocumentMeta = (): OrderDocumentMeta | null => {
+      const candidateInn = normalizeInnDigits(
+        draft.companyInn || effectiveCompany.match(/(\d{10,12})/)?.[1] || ''
+      );
+      const offlineCp = candidateInn
+        ? resolveOfflineCounterpartyByInn(candidateInn)
+        : null;
+      const basePatch = offlineCp
+        ? counterpartyToDocumentMetaPatch(offlineCp, {
+            wantsDiadocDuplicate: draft.wantsDiadocDuplicate,
+          })
+        : {};
+      const trimmedManualName = draft.companyName.trim();
+      const resolvedFullLegalName =
+        draft.resolvedCounterpartyMeta?.customerLegalName || basePatch.customerLegalName;
+      const isAutoShortName =
+        Boolean(trimmedManualName) &&
+        (trimmedManualName === offlineCp?.shortName ||
+          trimmedManualName === resolvedFullLegalName);
+
+      const merged: OrderDocumentMeta = {
+        ...basePatch,
+        ...(draft.resolvedCounterpartyMeta ?? {}),
+        ...(trimmedManualName && (!isAutoShortName || !resolvedFullLegalName)
+          ? { customerLegalName: trimmedManualName }
+          : {}),
+        ...(candidateInn ? { customerInn: candidateInn } : {}),
+        wantsDiadocDuplicate: draft.wantsDiadocDuplicate,
+      };
+      return Object.keys(merged).length > 0 ? merged : null;
+    };
+
+    const submittedDocMeta =
+      draft.wantsInvoiceNow || effectiveMode === 'air_plus_production' || Boolean(draft.companyInn)
+        ? buildClientSideDocumentMeta()
+        : null;
 
     if (effectiveMode === 'air_plus_production' && mediaReservation && reservationTotals) {
       const recordedRate = recordAttempt(activeRateScope);
@@ -427,6 +573,12 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       const shieldResult = await submitProtectedLead({
         source: 'order_page',
         checkoutMode: 'air_plus_production',
+        preferredDeliveryChannel: draft.preferredDeliveryChannel,
+        preferredDeliveryDetail: resolvedDeliveryDetail,
+        cabinetEmail:
+          draft.preferredDeliveryChannel === 'cabinet'
+            ? draft.cabinetEmail.trim()
+            : undefined,
         orderNumberCandidate: `FM-HOLD-${holdNum}`,
         formatLabel: reservationTotals.spotStatusLabel,
         totalBudgetRub: reservationTotals.unifiedTotalRub,
@@ -445,6 +597,8 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
         isReturningFastTrack,
         requireBriefOrVoice: false,
         pdnConsentAccepted: isReturningFastTrack ? true : pdnConsentAccepted,
+        wantsDiadocDuplicate: draft.wantsDiadocDuplicate,
+        documentMeta: submittedDocMeta,
         skipClientRateConsume: true,
       });
 
@@ -496,6 +650,8 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
           fallbackHoldMs ??
           nowMs + DEFAULT_HOLD_WINDOW_SECONDS * 1000,
         checkoutMode: 'air_plus_production',
+        preferredDeliveryChannel: draft.preferredDeliveryChannel,
+        preferredDeliveryDetail: resolvedDeliveryDetail,
         callbackPreference: draft.callbackPreference,
         slaWindowStartAtMs:
           shieldResult.slaWindowStartAtMs ?? fallbackSla.slaWindowStartMs,
@@ -516,7 +672,24 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
         lockedTotals: reservationTotals,
         conversionAllowed: shieldResult.conversionAllowed,
         innVerified: shieldResult.innVerified,
+        wantsDiadocDuplicate: draft.wantsDiadocDuplicate,
+        documentMeta: shieldResult.documentMeta ?? submittedDocMeta,
+        clientEmail: shieldResult.clientEmail ?? null,
+        autoSignedIn: Boolean(shieldResult.clientSession?.authenticated),
       };
+
+      if (shieldResult.clientEmail) {
+        setActiveSessionEmail(shieldResult.clientEmail);
+      }
+
+      if (shieldResult.rescueToken) {
+        upsertClientCabinetEntry({
+          orderNumber: shieldResult.orderNumber,
+          rescueToken: shieldResult.rescueToken,
+          contactLine: effectiveContact,
+          companyLine: nextVip.company,
+        });
+      }
 
       orderDraftStore.confirmReservationOrder(summary);
       setConfirmedOrder(summary);
@@ -543,6 +716,12 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       source: 'order_page',
       checkoutMode: 'production_only',
       paymentChannel: draft.paymentChannel,
+      preferredDeliveryChannel: draft.preferredDeliveryChannel,
+      preferredDeliveryDetail: resolvedDeliveryDetail,
+      cabinetEmail:
+        draft.preferredDeliveryChannel === 'cabinet'
+          ? draft.cabinetEmail.trim()
+          : undefined,
       orderNumberCandidate: generateOrderNumber(),
       formatLabel: chosenPill.label,
       totalBudgetRub: selectedFormatMeta.priceRub,
@@ -558,6 +737,8 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       isReturningFastTrack,
       requireBriefOrVoice: true,
       pdnConsentAccepted: isReturningFastTrack ? true : pdnConsentAccepted,
+      wantsDiadocDuplicate: draft.wantsInvoiceNow ? draft.wantsDiadocDuplicate : false,
+      documentMeta: submittedDocMeta,
       skipClientRateConsume: true,
     });
 
@@ -609,6 +790,8 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
         nowMs + DEFAULT_HOLD_WINDOW_SECONDS * 1000,
       checkoutMode: 'production_only',
       paymentChannel: draft.paymentChannel,
+      preferredDeliveryChannel: draft.preferredDeliveryChannel,
+      preferredDeliveryDetail: resolvedDeliveryDetail,
       selectedFormatId: draft.selectedFormat,
       selectedBudgetRub: selectedFormatMeta.priceRub,
       callbackPreference: draft.callbackPreference,
@@ -631,8 +814,31 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       lockedTotals: null,
       conversionAllowed: shieldResult.conversionAllowed,
       innVerified: shieldResult.innVerified,
+      wantsDiadocDuplicate: draft.wantsInvoiceNow ? draft.wantsDiadocDuplicate : false,
+      documentMeta: shieldResult.documentMeta ?? submittedDocMeta,
+      clientEmail: shieldResult.clientEmail ?? null,
+      autoSignedIn: Boolean(shieldResult.clientSession?.authenticated),
     };
 
+    if (shieldResult.clientEmail) {
+      setActiveSessionEmail(shieldResult.clientEmail);
+    }
+
+    if (shieldResult.rescueToken) {
+      upsertClientCabinetEntry({
+        orderNumber: shieldResult.orderNumber,
+        rescueToken: shieldResult.rescueToken,
+        contactLine: effectiveContact,
+        companyLine: nextVip.company,
+      });
+    }
+
+    setQuickInnName('');
+    setQuickInnDigits('');
+    setQuickInnError(null);
+    setQuickInnSaved(false);
+    setBindEmailDraft('');
+    setBindEmailError(null);
     orderDraftStore.confirmReservationOrder(summary);
     setConfirmedOrder(summary);
     if (typeof window !== 'undefined') {
@@ -689,8 +895,170 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
+  const handleQuickInnDigitsChange = (rawValue: string) => {
+    const digits = normalizeInnDigits(rawValue);
+    setQuickInnDigits(digits);
+    if (quickInnError) setQuickInnError(null);
+    const check = inspectInnDigits(digits);
+    if (check.isCompleteLength && check.checksumValid) {
+      const offline = resolveOfflineCounterpartyByInn(digits);
+      if (offline && !quickInnName.trim()) {
+        setQuickInnName(offline.shortName);
+      }
+      fetch(`/api/public/counterparty-by-inn?inn=${encodeURIComponent(digits)}`, {
+        headers: { Accept: 'application/json' },
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: { ok?: boolean; counterparty?: CounterpartyLookupResult } | null) => {
+          if (data?.ok && data.counterparty) {
+            setQuickInnName((prev) => prev.trim() || data.counterparty!.shortName);
+          }
+        })
+        .catch(() => {
+          // Офлайн-подстановка уже выполнена
+        });
+    }
+  };
+
+  const handleSaveQuickInnForConfirmed = async () => {
+    if (!confirmedOrder) return;
+    const cleanDigits = normalizeInnDigits(quickInnDigits);
+    const innCheck = inspectInnDigits(cleanDigits);
+
+    if (!innCheck.isCompleteLength || !innCheck.checksumValid) {
+      setQuickInnError('Проверьте ИНН (10 или 12 цифр).');
+      return;
+    }
+
+    const offlineResolved = resolveOfflineCounterpartyByInn(cleanDigits);
+    const cleanName =
+      quickInnName.trim() || offlineResolved?.shortName || `Организация (ИНН ${cleanDigits})`;
+
+    const companyLine = formatStructuredCompanyLine(cleanName, cleanDigits);
+    let nextDocMeta: OrderDocumentMeta | null = offlineResolved
+      ? {
+          ...(confirmedOrder.documentMeta ?? {}),
+          ...counterpartyToDocumentMetaPatch(offlineResolved),
+          customerLegalName:
+            quickInnName.trim() && quickInnName.trim() !== offlineResolved.shortName
+              ? quickInnName.trim()
+              : offlineResolved.legalName,
+        }
+      : confirmedOrder.documentMeta ?? null;
+
+    setIsSavingQuickInn(true);
+    setQuickInnError(null);
+    try {
+      if (confirmedOrder.rescueToken) {
+        const res = await fetch(
+          `/api/orders/${encodeURIComponent(confirmedOrder.orderNumber)}/preferences`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              rescueToken: confirmedOrder.rescueToken,
+              companyName: cleanName,
+              companyInn: cleanDigits,
+              companyOrInn: companyLine,
+            }),
+          }
+        );
+        if (!res.ok) {
+          throw new Error('Не удалось сохранить реквизиты компании');
+        }
+        const json = (await res.json()) as {
+          ok?: boolean;
+          documentMeta?: OrderDocumentMeta | null;
+        };
+        if (json?.documentMeta) {
+          nextDocMeta = json.documentMeta;
+        }
+      }
+
+      const updated: ConfirmedReservationSummary = {
+        ...confirmedOrder,
+        companyLine,
+        innVerified: true,
+        documentMeta: nextDocMeta,
+      };
+      orderDraftStore.updateDraft({
+        companyName: cleanName,
+        companyInn: cleanDigits,
+        companyLine,
+        resolvedCounterpartyMeta: nextDocMeta,
+      });
+      orderDraftStore.confirmReservationOrder(updated);
+      setConfirmedOrder(updated);
+      if (confirmedOrder.rescueToken) {
+        upsertClientCabinetEntry({
+          orderNumber: confirmedOrder.orderNumber,
+          rescueToken: confirmedOrder.rescueToken,
+          contactLine: confirmedOrder.contactLine,
+          companyLine,
+        });
+      }
+      setQuickInnSaved(true);
+    } catch (err) {
+      setQuickInnError(
+        err instanceof Error ? err.message : 'Ошибка сохранения реквизитов'
+      );
+    } finally {
+      setIsSavingQuickInn(false);
+    }
+  };
+
+  const handleBindEmailForConfirmed = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!confirmedOrder?.rescueToken || isBindingEmail) return;
+    const normalized = normalizeClientEmail(bindEmailDraft);
+    if (!normalized) {
+      setBindEmailError('Укажите корректную почту (например, name@company.ru)');
+      return;
+    }
+
+    setIsBindingEmail(true);
+    setBindEmailError(null);
+    try {
+      const res = await fetch('/api/client-auth/bind-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: normalized,
+          orderNumber: confirmedOrder.orderNumber,
+          rescueToken: confirmedOrder.rescueToken,
+        }),
+      });
+      const json = (await res.json()) as {
+        ok?: boolean;
+        authenticated?: boolean;
+        account?: { email: string };
+        error?: string;
+      };
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error ?? 'Не удалось привязать почту к заказу');
+      }
+      const boundEmail = json.account?.email ?? normalized;
+      const updated: ConfirmedReservationSummary = {
+        ...confirmedOrder,
+        clientEmail: boundEmail,
+        autoSignedIn: true,
+      };
+      setActiveSessionEmail(boundEmail);
+      orderDraftStore.confirmReservationOrder(updated);
+      setConfirmedOrder(updated);
+      setBindEmailDraft('');
+    } catch (err) {
+      setBindEmailError(
+        err instanceof Error ? err.message : 'Ошибка привязки почты'
+      );
+    } finally {
+      setIsBindingEmail(false);
+    }
+  };
+
   const startNewCleanStudioOrder = () => {
     setIsConfirmedModalOpen(false);
+    setIsDocModalOpen(false);
     orderDraftStore.dismissSubmittedReceipt();
     setCopiedSpec(false);
     setRateLimitError(undefined);
@@ -849,7 +1217,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                 onClick={() => orderDraftStore.openSubmittedReceipt()}
                 className="font-semibold text-[#FF4820] hover:underline cursor-pointer whitespace-nowrap"
               >
-                Открыть статус и счёт ЭДО →
+                Открыть заказ #{confirmedOrder.orderNumber} и счёт →
               </button>
               <button
                 type="button"
@@ -863,15 +1231,15 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
         )}
 
         {/* Заголовок экрана оформления */}
-        <div className="max-w-3xl space-y-3">
+        <div className="max-w-3xl space-y-2.5">
           <p className="text-sm font-medium text-[#FF4820]">
             {showConfirmedView && confirmedOrder
               ? `Заявка #${confirmedOrder.orderNumber} принята · ${
-                  confirmedOrder.promisedWindowLabel ?? 'Ответ продюсера в течение 15–20 минут'
+                  confirmedOrder.promisedWindowLabel ?? 'Продюсер свяжется в рабочее время'
                 }`
               : isMediaBookingMode
-                ? `Выбрано радиостанций: ${mediaReservation?.stations.length ?? 0} · Оставьте контакт, чтобы закрепить слоты за вашей компанией`
-                : 'Консьерж-оформление FMWorks · Рамочный договор, ЭДО и оплата 54-ФЗ'}
+                ? `Выбрано радиостанций: ${mediaReservation?.stations.length ?? 0} · Оставьте контакт, чтобы закрепить слоты`
+                : 'Оформление заказа · Быстрый запуск'}
           </p>
           <h1
             id="order-page-heading"
@@ -880,19 +1248,19 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
             {showConfirmedView && confirmedOrder
               ? AIRTIME_SALES_ENABLED && confirmedOrder.lockedMediaReservation
                 ? 'Ваша приоритетная бронь принята в работу'
-                : 'Заявка принята в студию FMWorks'
+                : 'Заявка принята в работу'
               : isMediaBookingMode
                 ? 'Завершение бронирования эфира за 15 секунд'
                 : draft.selectedFormat === 'custom_consult'
-                  ? 'Обсудить задачу с продюсером и согласовать смету'
-                  : 'Запуск аудиоролика по договору'}
+                  ? 'Обсудить задачу с продюсером'
+                  : 'Заказать аудиоролик'}
           </h1>
           <p className="text-base sm:text-lg text-[#111111]/70 dark:text-[#F4F3EF]/70 editorial-pretty">
             {showConfirmedView && confirmedOrder
-              ? 'Ниже показаны живой статус SLA, рамочный договор-оферта со счётом (ЭДО) или оплатой по 54-ФЗ и пошаговый маршрут работы.'
+              ? 'Отслеживайте статус заказа, скачайте счёт на оплату или перейдите в Личный кабинет.'
               : isMediaBookingMode
-                ? 'Укажите Имя, Телефон или @Telegram и реквизиты компании для выставления рамочного договора и счёта в ЭДО. Задачу на ролик можно добавить ниже.'
-                : 'Опишите задачу голосом или парой строк и выберите удобный способ оплаты. После подтверждения заявки, рамочного договора и 100% предоплаты приступаем к 3 концепциям сценария, кастингу и записи.'}
+                ? 'Укажите имя, телефон или @Telegram и реквизиты компании для выставления счёта. Задачу на ролик можно добавить ниже.'
+                : 'Выберите формат и оставьте контакт — продюсер уточнит детали и запустит проект.'}
           </p>
         </div>
 
@@ -914,7 +1282,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                   <p className="text-xs sm:text-sm font-semibold text-[#FF4820] tabular-nums">
                     {AIRTIME_SALES_ENABLED && confirmedOrder.lockedMediaReservation
                       ? `Приоритетная бронь #${confirmedOrder.orderNumber} зафиксирована`
-                      : `Заказ #${confirmedOrder.orderNumber} принят на согласование`}
+                      : `Заказ #${confirmedOrder.orderNumber} принят`}
                   </p>
                   <h2 className="text-2xl sm:text-3xl font-bold tracking-tight mt-0.5">
                     {AIRTIME_SALES_ENABLED && confirmedOrder.lockedMediaReservation
@@ -922,10 +1290,8 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                       : confirmedOrder.promisedWindowLabel ??
                         (confirmedOrder.selectedFormatId === 'custom_consult' ||
                         confirmedOrder.selectedBudgetRub === 0
-                          ? 'Оценим задачу, согласуем цену и подготовим договор'
-                          : confirmedOrder.paymentChannel === 'card_online'
-                            ? 'Проверяем задачу и готовим ссылку на оплату (54-ФЗ)'
-                            : 'Проверяем реквизиты и открываем договор и счёт в ЭДО')}
+                          ? 'Оценим задачу и свяжемся с вами'
+                          : 'Продюсер свяжется и поможет со стартом')}
                   </h2>
                 </div>
               </div>
@@ -937,24 +1303,188 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                     {confirmedOrder.contactLine}
                   </strong>
                 </div>
+                <div>
+                  Выдача материалов:{' '}
+                  <strong className="text-[#111111] dark:text-[#F4F3EF]">
+                    {resolveDeliveryChannelLabel(
+                      confirmedOrder.preferredDeliveryChannel,
+                      confirmedOrder.preferredDeliveryDetail
+                    )}
+                  </strong>
+                </div>
                 {confirmedOrder.conversionAllowed && (
                   <div
                     data-testid="verified-human-lead-status"
                     className="text-xs text-emerald-700 dark:text-emerald-400 font-semibold"
                   >
-                    Верифицированная заявка
-                    {confirmedOrder.innVerified ? ' · ИНН проверен по ключу ФНС' : ''}
+                    Заявка подтверждена
+                    {confirmedOrder.innVerified ? ' · ИНН проверен' : ''}
+                  </div>
+                )}
+                {confirmedOrder.clientEmail && (
+                  <div
+                    data-testid="confirmed-auto-login-status"
+                    className="text-xs text-[#111111]/78 dark:text-[#F4F3EF]/78"
+                  >
+                    Личный кабинет:{' '}
+                    <strong className="text-[#111111] dark:text-[#F4F3EF]">
+                      {confirmedOrder.clientEmail}
+                    </strong>{' '}
+                    (авто-вход выполнен)
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Живой пульт SLA, счёта-оферты ЭДО 24/7 и самообслуживания клиента */}
+            {/* Главные быстрые действия: Счёт A4 и Личный кабинет */}
+            <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3">
+              <button
+                type="button"
+                data-testid="confirmed-open-invoice-btn"
+                onClick={() => setIsDocModalOpen(true)}
+                className="min-h-[46px] px-5 py-2.5 rounded-full bg-[#FF4820] hover:bg-[#E63C17] text-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <FileText className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span>Открыть / скачать счёт (A4 / PDF)</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="confirmed-go-cabinet-btn"
+                onClick={() => onNavigate({ kind: 'cabinet' })}
+                className="min-h-[46px] px-5 py-2.5 rounded-full bg-[#111111] hover:bg-[#27272A] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <FolderOpen className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span>
+                  {confirmedOrder.clientEmail
+                    ? 'Перейти в Личный кабинет (вы вошли) →'
+                    : 'Перейти в Личный кабинет →'}
+                </span>
+              </button>
+            </div>
+
+            {/* Опциональная 1-клик привязка почты для входа с других устройств (если заказ оформлен только по телефону) */}
+            {!confirmedOrder.clientEmail && confirmedOrder.rescueToken && (
+              <form
+                onSubmit={handleBindEmailForConfirmed}
+                data-testid="confirmed-bind-email-bar"
+                className="rounded-2xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              >
+                <div className="space-y-0.5 min-w-0">
+                  <label
+                    htmlFor="confirmed-bind-email-input"
+                    className="block text-xs sm:text-sm font-semibold text-[#111111] dark:text-[#F4F3EF]"
+                  >
+                    Открывать заказ с любого устройства без пароля (по желанию)
+                  </label>
+                  <p className="text-xs text-[#111111]/62 dark:text-[#F4F3EF]/62">
+                    Укажите почту — кабинет привяжется автоматически, а вход с телефона или другого ПК будет по magic-ссылке.
+                  </p>
+                  {bindEmailError && (
+                    <p role="alert" className="text-xs font-semibold text-[#FF4820] pt-0.5">
+                      {bindEmailError}
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
+                  <input
+                    id="confirmed-bind-email-input"
+                    data-testid="confirmed-bind-email-input"
+                    type="email"
+                    value={bindEmailDraft}
+                    onChange={(e) => {
+                      setBindEmailDraft(e.target.value);
+                      if (bindEmailError) setBindEmailError(null);
+                    }}
+                    placeholder="name@company.ru"
+                    className="min-h-[40px] sm:w-56 px-3.5 rounded-xl bg-white dark:bg-[#141418] border border-[#111111]/16 dark:border-white/16 text-xs sm:text-sm text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isBindingEmail}
+                    data-testid="confirmed-bind-email-submit-btn"
+                    className="min-h-[40px] px-4 rounded-xl bg-[#111111] hover:bg-[#FF4820] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {isBindingEmail ? 'Сохраняем…' : 'Привязать почту'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Если быстрый лид был без реквизитов — даём возможность мгновенно дописать ИНН под счёт */}
+            {!confirmedOrder.companyLine ? (
+              <div
+                data-testid="confirmed-quick-inn-card"
+                className="rounded-2xl p-4 sm:p-5 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 space-y-3"
+              >
+                <div className="space-y-0.5">
+                  <p className="text-xs sm:text-sm font-bold text-[#111111] dark:text-[#F4F3EF]">
+                    Нужен счёт с вашими реквизитами прямо сейчас?
+                  </p>
+                  <p className="text-xs text-[#111111]/64 dark:text-[#F4F3EF]/64">
+                    Укажите ИНН — название, КПП, ОГРН и юр. адрес подтянутся в счёт A4 автоматически.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-start">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={12}
+                    value={quickInnDigits}
+                    onChange={(e) => handleQuickInnDigitsChange(e.target.value)}
+                    placeholder="ИНН (10 или 12 цифр)"
+                    aria-label="ИНН компании для счёта"
+                    data-testid="confirmed-quick-inn-digits"
+                    className="sm:col-span-4 min-h-[44px] px-3.5 rounded-xl bg-transparent border border-[#111111]/16 dark:border-white/16 text-xs sm:text-sm tabular-nums focus:outline-none focus:border-[#FF4820]"
+                  />
+                  <input
+                    type="text"
+                    value={quickInnName}
+                    onChange={(e) => {
+                      setQuickInnName(e.target.value);
+                      if (quickInnError) setQuickInnError(null);
+                    }}
+                    placeholder="Название компании (авто по ИНН)"
+                    aria-label="Название компании для счёта"
+                    data-testid="confirmed-quick-inn-name"
+                    className="sm:col-span-5 min-h-[44px] px-3.5 rounded-xl bg-transparent border border-[#111111]/16 dark:border-white/16 text-xs sm:text-sm focus:outline-none focus:border-[#FF4820]"
+                  />
+                  <button
+                    type="button"
+                    disabled={isSavingQuickInn}
+                    data-testid="confirmed-quick-inn-save-btn"
+                    onClick={() => void handleSaveQuickInnForConfirmed()}
+                    className="sm:col-span-3 min-h-[44px] px-4 rounded-xl bg-[#111111] hover:bg-[#FF4820] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap"
+                  >
+                    {isSavingQuickInn ? 'Сохраняем…' : 'Сформировать счёт'}
+                  </button>
+                </div>
+
+                {quickInnError && (
+                  <p role="alert" className="text-xs font-semibold text-[#FF4820]">
+                    {quickInnError}
+                  </p>
+                )}
+              </div>
+            ) : (
+              quickInnSaved && (
+                <div className="rounded-xl px-4 py-2.5 bg-emerald-600/10 border border-emerald-600/25 text-xs font-medium text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
+                  <FileCheck2 className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span>
+                    Реквизиты сохранены: <strong>{confirmedOrder.companyLine}</strong>. Счёт A4 обновлён!
+                  </span>
+                </div>
+              )
+            )}
+
+            {/* Живой пульт SLA и самообслуживания клиента */}
             <ClientSlaAndRescuePanel
               confirmed={confirmedOrder}
               workSchedule={workSchedule}
               legalProfiles={legalProfiles}
-              defaultExpandedEdo
+              hideDocumentButtons
               onUpdatedConfirmed={(next) => setConfirmedOrder(next)}
             />
 
@@ -1096,21 +1626,6 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
             <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 min-w-0">
               <button
                 type="button"
-                onClick={() =>
-                  onNavigate(
-                    AIRTIME_SALES_ENABLED && confirmedOrder.lockedMediaReservation
-                      ? { kind: 'hot-air' }
-                      : { kind: 'cases' }
-                  )
-                }
-                className="w-full sm:w-auto min-h-[46px] px-5 sm:px-6 py-3 rounded-full bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] text-sm font-semibold text-center leading-snug cursor-pointer sm:whitespace-nowrap"
-              >
-                {AIRTIME_SALES_ENABLED && confirmedOrder.lockedMediaReservation
-                  ? 'Вернуться в раздел «Горящий эфир»'
-                  : 'Посмотреть разборы кейсов'}
-              </button>
-              <button
-                type="button"
                 data-testid="start-another-studio-order-btn"
                 onClick={startNewCleanStudioOrder}
                 className="w-full sm:w-auto min-h-[46px] inline-flex items-center justify-center gap-2 px-5 py-3 rounded-full border border-[#111111]/15 dark:border-[#F4F3EF]/15 text-sm font-semibold text-center leading-snug hover:border-[#FF4820] transition-colors cursor-pointer sm:whitespace-nowrap"
@@ -1121,7 +1636,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
             </div>
           </motion.div>
         ) : (
-          /* ДВУХКОЛОНОЧНАЯ ПОЛНОЭКРАННАЯ ФОРМА ЗАКАЗА (ВСЕГДА РАЗБЛОКИРОВАНА ДЛЯ НОВОГО ПРОЕКТА) */
+          /* ДВУХКОЛОНОЧНАЯ ФОРМА ЗАКАЗА (Вариант 2: Быстрый лид + счёт по желанию) */
           <form
             onSubmit={handleSubmit}
             onPointerMove={registerPointerActivity}
@@ -1130,8 +1645,8 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
             noValidate
             className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-start"
           >
-            {/* Невидимая антибот-ловушка (Honeypot) без влияния на доступность и верстку */}
-            <div aria-hidden="true" className="sr-only relative">
+            {/* Невидимая антибот-ловушка (Honeypot) без класса relative, чтобы не сдвигать CSS Grid */}
+            <div aria-hidden="true" className="sr-only">
               <label htmlFor="order-corp-website-trap">
                 Корпоративный портал (не заполнять)
               </label>
@@ -1148,7 +1663,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
             </div>
 
             {/* ЛЕВАЯ КОЛОНКА (7 колонок) */}
-            <div className="lg:col-span-7 space-y-8">
+            <div className="lg:col-span-7 space-y-6">
               {isMediaBookingMode && (
                 <OperatingRegimeBanner
                   workSchedule={workSchedule}
@@ -1243,6 +1758,18 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                           companyName={draft.companyName}
                           companyInn={draft.companyInn}
                           paymentChannel="edo_invoice"
+                          wantsDiadocDuplicate={draft.wantsDiadocDuplicate}
+                          onChangeWantsDiadocDuplicate={(checked) =>
+                            orderDraftStore.updateDraft({ wantsDiadocDuplicate: checked })
+                          }
+                          onResolvedCounterparty={(metaPatch) =>
+                            orderDraftStore.updateDraft({
+                              resolvedCounterpartyMeta: {
+                                ...(draft.resolvedCounterpartyMeta ?? {}),
+                                ...metaPatch,
+                              },
+                            })
+                          }
                           companyNameError={companyNameError}
                           companyInnError={companyInnError}
                           onChangeCompanyName={(val) => {
@@ -1322,11 +1849,11 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
 
                       <p
                         data-testid="order-antispam-caption"
-                        className="text-xs text-[#111111]/56 dark:text-[#F4F3EF]/56 flex flex-wrap items-center gap-1.5 tabular-nums"
+                        className="text-xs leading-relaxed text-[#111111]/56 dark:text-[#F4F3EF]/56 flex items-start gap-2 tabular-nums"
                       >
-                        <ShieldCheck className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
+                        <ShieldCheck className="w-3.5 h-3.5 mt-0.5 text-[#FF4820] shrink-0" aria-hidden="true" />
                         <span>
-                          Проверка ИНН по алгоритму ФНС · Формирование рамочного договора и счёта без капчи
+                          Проверка ИНН по алгоритму ФНС · Быстрое оформление счёта без капчи
                         </span>
                       </p>
                     </div>
@@ -1475,21 +2002,20 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                   )}
 
                   {!isFormatPickerExpanded ? (
-                    /* Компактная плашка предвыбранного тарифа и хронометража */
+                    /* Компактная плашка предвыбранного тарифа */
                     <div
                       data-testid="preselected-format-summary"
                       className="rounded-2xl p-4 sm:p-5 bg-[#EFECE5]/80 dark:bg-[#15151A] border border-[#111111]/12 dark:border-white/12 flex flex-col sm:flex-row sm:items-center justify-between gap-4 tabular-nums"
                     >
                       <div className="space-y-1 min-w-0">
                         <p className="text-xs font-semibold text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                          01. Выбранный пакет и параметры ролика
+                          01. Формат
                         </p>
                         <p className="text-base sm:text-lg font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF]">
                           {selectedFormatMeta.title} · {selectedFormatMeta.priceFormatted}
                         </p>
                         <p className="text-xs text-[#111111]/68 dark:text-[#F4F3EF]/68">
-                          Срок после оплаты: {selectedFormatMeta.turnaround} · Хронометраж:{' '}
-                          {draft.spotDurationSec} сек
+                          Срок: {selectedFormatMeta.turnaround} · {draft.spotDurationSec} сек
                           {activeIndustrySpec ? ` · ${activeIndustrySpec.shortTitle}` : ''}
                         </p>
                       </div>
@@ -1500,74 +2026,96 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                         onClick={() => setIsFormatPickerExpanded(true)}
                         className="min-h-[40px] px-4 py-2 rounded-full border border-[#111111]/18 dark:border-white/18 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors cursor-pointer whitespace-nowrap shrink-0 self-start sm:self-auto"
                       >
-                        Изменить тариф или хронометраж
+                        Изменить формат
                       </button>
                     </div>
                   ) : (
-                    <>
-                      {/* Шаг 01: Выбор пакета продакшна */}
-                      <div className="space-y-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <p className="text-xs font-semibold text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                            01. Формат студийного производства
-                          </p>
-                          {draft.isFormatPreselected && (
+                    /* Шаг 01: Выбор формата ролика */
+                    <div className="space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-[#111111]/60 dark:text-[#F4F3EF]/60">
+                          01. Выберите формат
+                        </p>
+                        {draft.isFormatPreselected && (
+                          <button
+                            type="button"
+                            data-testid="collapse-format-picker-btn"
+                            onClick={() => setIsFormatPickerExpanded(false)}
+                            className="text-xs font-semibold text-[#FF4820] hover:underline cursor-pointer whitespace-nowrap"
+                          >
+                            Свернуть ↑
+                          </button>
+                        )}
+                      </div>
+                      <div
+                        role="group"
+                        aria-label="Формат ролика"
+                        className="grid grid-cols-1 sm:grid-cols-2 gap-2.5"
+                      >
+                        {QUICK_ORDER_PILLS.map((pill) => {
+                          const active = draft.selectedFormat === pill.id;
+                          const spanClass =
+                            pill.id === 'custom_consult' ? 'sm:col-span-2' : '';
+                          return (
                             <button
+                              key={pill.id}
                               type="button"
-                              data-testid="collapse-format-picker-btn"
-                              onClick={() => setIsFormatPickerExpanded(false)}
-                              className="text-xs font-semibold text-[#FF4820] hover:underline cursor-pointer whitespace-nowrap"
+                              data-testid={`studio-format-pill-${pill.id}`}
+                              onClick={() =>
+                                orderDraftStore.updateDraft({ selectedFormat: pill.id })
+                              }
+                              aria-pressed={active}
+                              className={`min-h-[52px] px-4 py-2.5 rounded-2xl text-left transition-colors border cursor-pointer flex flex-col justify-center ${spanClass} ${
+                                active
+                                  ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] border-transparent'
+                                  : 'bg-[#EFECE5]/65 dark:bg-[#15151A] text-[#111111] dark:text-[#F4F3EF] border-[#111111]/12 dark:border-white/10 hover:border-[#111111]/35 dark:hover:border-white/30'
+                              }`}
                             >
-                              Свернуть параметры ↑
-                            </button>
-                          )}
-                        </div>
-                        <div
-                          role="group"
-                          aria-label="Формат ролика"
-                          className="grid grid-cols-1 sm:grid-cols-2 gap-2.5"
-                        >
-                          {QUICK_ORDER_PILLS.map((pill) => {
-                            const active = draft.selectedFormat === pill.id;
-                            const spanClass =
-                              pill.id === 'custom_consult' ? 'sm:col-span-2' : '';
-                            return (
-                              <button
-                                key={pill.id}
-                                type="button"
-                                data-testid={`studio-format-pill-${pill.id}`}
-                                onClick={() =>
-                                  orderDraftStore.updateDraft({ selectedFormat: pill.id })
-                                }
-                                aria-pressed={active}
-                                className={`min-h-[54px] px-4 py-3 rounded-2xl text-left transition-colors border cursor-pointer flex flex-col justify-center ${spanClass} ${
-                                  active
-                                    ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] border-transparent'
-                                    : 'bg-[#EFECE5]/65 dark:bg-[#15151A] text-[#111111] dark:text-[#F4F3EF] border-[#111111]/12 dark:border-white/10 hover:border-[#111111]/35 dark:hover:border-white/30'
+                              <span className="text-sm font-semibold">{pill.label}</span>
+                              <span
+                                className={`text-xs tabular-nums mt-0.5 ${
+                                  active ? 'opacity-72' : 'opacity-58'
                                 }`}
                               >
-                                <span className="text-sm font-semibold">{pill.label}</span>
-                                <span
-                                  className={`text-xs tabular-nums mt-0.5 ${
-                                    active ? 'opacity-72' : 'opacity-58'
-                                  }`}
-                                >
-                                  {pill.shortSummary}
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
+                                {pill.shortSummary}
+                              </span>
+                            </button>
+                          );
+                        })}
                       </div>
+                    </div>
+                  )}
 
-                      {/* Шаг 02: Точный хронометраж ролика и отрасль */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-2 border-t border-[#111111]/10 dark:border-white/10">
-                        <div className="space-y-2.5">
+                  {/* Опциональная сворачиваемая настройка хронометража и отрасли */}
+                  <div className="space-y-3">
+                    <button
+                      type="button"
+                      data-testid="toggle-duration-industry-btn"
+                      aria-expanded={isDurationIndustryExpanded}
+                      onClick={() =>
+                        setIsDurationIndustryExpanded((prev) => !prev)
+                      }
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-[#111111]/64 dark:text-[#F4F3EF]/64 hover:text-[#FF4820] transition-colors cursor-pointer"
+                    >
+                      {isDurationIndustryExpanded ? (
+                        <ChevronUp className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                      )}
+                      <span>
+                        Уточнить хронометраж ({draft.spotDurationSec} сек) или отрасль
+                        {activeIndustrySpec ? ` · ${activeIndustrySpec.shortTitle}` : ''}
+                      </span>
+                    </button>
+
+                    {isDurationIndustryExpanded && (
+                      <div className="rounded-2xl p-4 bg-[#EFECE5]/55 dark:bg-[#15151A] border border-[#111111]/10 dark:border-white/10 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-2">
                           <label
                             htmlFor="order-spot-seconds-input"
-                            className="block text-xs font-semibold text-[#111111]/58 dark:text-[#F4F3EF]/58"
+                            className="block text-xs font-semibold text-[#111111]/64 dark:text-[#F4F3EF]/64"
                           >
-                            02. Хронометраж ролика (включая 17с, 22с и др.)
+                            Хронометраж ролика (сек)
                           </label>
                           <div className="flex flex-wrap items-center gap-1.5">
                             {SPOT_DURATION_PRESETS.map((sec) => {
@@ -1580,7 +2128,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                                     orderDraftStore.updateDraft({ spotDurationSec: sec })
                                   }
                                   aria-pressed={isCurrent}
-                                  className={`min-h-[38px] px-3 rounded-xl text-xs font-semibold tabular-nums border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                                  className={`min-h-[36px] px-2.5 rounded-xl text-xs font-semibold tabular-nums border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                                     isCurrent
                                       ? 'bg-[#FF4820] text-white border-[#FF4820]'
                                       : 'border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820]'
@@ -1603,17 +2151,17 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                                 }
                               }}
                               aria-label="Точный хронометраж в секундах"
-                              className="w-20 min-h-[38px] px-2.5 rounded-xl bg-transparent border border-[#111111]/16 dark:border-white/16 text-xs font-semibold tabular-nums text-center focus:outline-none focus:border-[#FF4820]"
+                              className="w-16 min-h-[36px] px-2 rounded-xl bg-transparent border border-[#111111]/16 dark:border-white/16 text-xs font-semibold tabular-nums text-center focus:outline-none focus:border-[#FF4820]"
                             />
                           </div>
                         </div>
 
-                        <div className="space-y-2.5">
+                        <div className="space-y-2">
                           <label
                             htmlFor="order-industry-select"
-                            className="block text-xs font-semibold text-[#111111]/58 dark:text-[#F4F3EF]/58"
+                            className="block text-xs font-semibold text-[#111111]/64 dark:text-[#F4F3EF]/64"
                           >
-                            Отраслевой профиль и модерация ФЗ-38
+                            Отрасль (для нюансов ФЗ-38)
                           </label>
                           <select
                             id="order-industry-select"
@@ -1624,9 +2172,9 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                                 industryPreset: val ? val : null,
                               });
                             }}
-                            className="w-full min-h-[42px] px-3.5 rounded-xl bg-[#EFECE5]/70 dark:bg-[#15151A] border border-[#111111]/14 dark:border-white/14 text-sm font-medium focus:outline-none focus:border-[#FF4820]"
+                            className="w-full min-h-[40px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs sm:text-sm font-medium focus:outline-none focus:border-[#FF4820]"
                           >
-                            <option value="">Универсальный коммерческий проект</option>
+                            <option value="">Без привязки к отрасли</option>
                             {VALID_INDUSTRY_SLUGS.map((slug) => (
                               <option key={slug} value={slug}>
                                 {INDUSTRY_SOLUTIONS[slug].shortTitle}
@@ -1635,34 +2183,24 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                           </select>
                         </div>
                       </div>
-                    </>
-                  )}
+                    )}
+                  </div>
 
-                  {/* Голосовая надиктовка задачи + текстовый бриф + прикрепление файла */}
-                  <div className="space-y-3.5 pt-2 border-t border-[#111111]/10 dark:border-white/10">
-                    <p className="text-xs font-semibold text-[#111111]/60 dark:text-[#F4F3EF]/60">
+                  {/* Шаг 02: Короткий бриф + компактный голос/файл в одну строку */}
+                  <div className="space-y-3 pt-4 border-t border-[#111111]/10 dark:border-white/10">
+                    <label
+                      htmlFor="production-order-brief-input"
+                      className="block text-xs font-semibold text-[#111111]/60 dark:text-[#F4F3EF]/60"
+                    >
                       {draft.selectedFormat === 'custom_consult'
-                        ? `${isFormatPickerExpanded ? '03' : '02'}. Опишите нестандартную задачу, этап «Только сценарий» или вопросы продюсеру`
-                        : `${isFormatPickerExpanded ? '03' : '02'}. Передайте задачу голосом или текстом`}
-                    </p>
-
-                    <VoiceBriefRecorder
-                      variant="primary"
-                      idleLabel={
-                        draft.selectedFormat === 'custom_consult'
-                          ? 'Надиктовать вопрос или ТЗ голосом'
-                          : 'Надиктовать задачу голосом'
-                      }
-                      idleHint="30 секунд своими словами вместо заполнения анкеты"
-                      resetSignal={voiceResetSignal}
-                      onStateChange={handleVoiceChange}
-                      onClearError={handleClearTaskError}
-                    />
+                        ? '02. Опишите задачу или вопросы продюсеру'
+                        : '02. О чём ролик? (текст, голос или файл)'}
+                    </label>
 
                     <textarea
                       ref={briefTextareaRef}
                       id="production-order-brief-input"
-                      rows={3}
+                      rows={2}
                       data-testid="drawer-brief-input"
                       aria-label="О чем ролик или какая акция?"
                       aria-invalid={Boolean(taskError)}
@@ -1674,21 +2212,29 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                       }}
                       placeholder={
                         draft.selectedFormat === 'custom_consult'
-                          ? 'Например: нужна серия из 4 роликов, отдельный этап «Только сценарий» для записи на месте или у нас есть вопросы до старта по договорной цене…'
-                          : 'О чем ролик, какая главная выгода для клиента и какой контакт оставить в финале?'
+                          ? 'Кратко: серия роликов, сценарий для записи на месте или вопросы по задаче…'
+                          : 'Продукт или акция, главное преимущество и контакт в конце'
                       }
-                      className={`scroll-mt-24 w-full px-4 py-3.5 rounded-2xl border text-sm sm:text-base text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none transition-all ${
+                      className={`scroll-mt-24 w-full px-4 py-3 rounded-2xl border text-sm sm:text-base text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none transition-all ${
                         taskError
                           ? 'border-[#FF4820] ring-2 ring-[#FF4820]/20 bg-[#FF4820]/[0.03]'
                           : 'bg-transparent border-[#111111]/16 dark:border-[#F4F3EF]/16 focus:border-[#FF4820]'
                       }`}
                     />
 
-                    <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <VoiceBriefRecorder
+                        variant="compact"
+                        idleLabel="Надиктовать голосом"
+                        resetSignal={voiceResetSignal}
+                        onStateChange={handleVoiceChange}
+                        onClearError={handleClearTaskError}
+                      />
+
                       <input
                         ref={fileInputRef}
                         type="file"
-                        accept=".doc,.docx,.pdf,.txt,.rtf,.xls,.xlsx,.jpg,.png"
+                        accept=".doc,.docx,.pdf,.txt,.rtf,.xls,.xlsx,.jpg,.png,.mp3,.wav"
                         onChange={handleFileChange}
                         className="hidden"
                       />
@@ -1701,9 +2247,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                       >
                         <Paperclip className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                         <span>
-                          {attachedFileName
-                            ? attachedFileName
-                            : 'Прикрепить карточку реквизитов или бриф (.pdf, .doc)'}
+                          {attachedFileName ? attachedFileName : 'Прикрепить файл'}
                         </span>
                       </button>
 
@@ -1734,106 +2278,410 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                     )}
                   </div>
 
-                  {/* Способ оплаты, реквизиты ЭДО и выбор удобного окна связи */}
-                  <div className="space-y-4 pt-2 border-t border-[#111111]/10 dark:border-white/10">
+                  {/* Шаг 03: Контакт, где удобно забрать готовый ролик, и опциональный счёт */}
+                  <div className="space-y-4 pt-4 border-t border-[#111111]/10 dark:border-white/10">
                     <p className="text-xs font-semibold text-[#111111]/60 dark:text-[#F4F3EF]/60">
-                      {isFormatPickerExpanded ? '04' : '03'}. Способ оплаты, реквизиты и контакт для договора
+                      03. Куда ответить и где удобно получить готовый ролик
                     </p>
 
-                    <div
-                      role="group"
-                      aria-label="Способ оплаты заказа"
-                      className="grid grid-cols-1 sm:grid-cols-2 gap-2.5"
-                    >
-                      <button
-                        type="button"
-                        data-testid="payment-channel-edo"
-                        aria-pressed={draft.paymentChannel === 'edo_invoice'}
-                        onClick={() =>
-                          orderDraftStore.updateDraft({ paymentChannel: 'edo_invoice' })
-                        }
-                        className={`min-h-[60px] px-4 py-3 rounded-2xl text-left border transition-colors cursor-pointer flex flex-col justify-center ${
-                          draft.paymentChannel === 'edo_invoice'
-                            ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] border-transparent'
-                            : 'bg-[#EFECE5]/65 dark:bg-[#15151A] text-[#111111] dark:text-[#F4F3EF] border-[#111111]/12 dark:border-white/10 hover:border-[#FF4820]'
-                        }`}
-                      >
-                        <span className="text-xs sm:text-sm font-semibold">
-                          Безнал · Рамочный договор и ЭДО
-                        </span>
-                        <span
-                          className={`text-[11px] mt-0.5 leading-snug ${
-                            draft.paymentChannel === 'edo_invoice'
-                              ? 'opacity-75'
-                              : 'opacity-60'
-                          }`}
-                        >
-                          Для ООО и ИП · Диадок / СБИС · Договор и счёт доступны сразу
-                        </span>
-                      </button>
-
+                    {isReturningFastTrack ? (
+                      <div className="rounded-2xl p-4 bg-[#EFECE5] dark:bg-[#16161B] border border-[#111111]/10 dark:border-white/10 flex items-center justify-between gap-4">
+                        <div className="min-w-0">
+                          <p className="text-xs text-[#FF4820] font-semibold">
+                            Сохранённый профиль клиента
+                          </p>
+                          <p className="text-sm sm:text-base font-semibold mt-0.5">
+                            {savedVip.contactLine}
+                            {savedVip.company ? ` · ${savedVip.company}` : ''}
+                          </p>
+                        </div>
                         <button
                           type="button"
-                          onClick={() => {
-                            orderDraftStore.updateDraft({
-                              paymentChannel: 'card_online',
-                            });
-                            setCompanyNameError(undefined);
-                            setCompanyInnError(undefined);
-                            setCompanyError(undefined);
-                          }}
-                          aria-pressed={draft.paymentChannel === 'card_online'}
-                          data-testid="payment-channel-card"
-                          className={`min-h-[60px] px-4 py-3 rounded-2xl text-left border transition-colors cursor-pointer flex flex-col justify-center ${
-                            draft.paymentChannel === 'card_online'
-                              ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] border-transparent'
-                              : 'bg-[#EFECE5]/65 dark:bg-[#15151A] text-[#111111] dark:text-[#F4F3EF] border-[#111111]/12 dark:border-white/10 hover:border-[#FF4820]'
-                          }`}
+                          onClick={() => setIsEditingVipContact(true)}
+                          className="text-xs font-semibold underline underline-offset-4 opacity-75 hover:opacity-100 cursor-pointer shrink-0"
                         >
-                          <span className="text-xs sm:text-sm font-semibold">
-                            Картой физлица / СБП (54-ФЗ)
-                          </span>
-                          <span
-                            className={`text-[11px] mt-0.5 leading-snug ${
-                              draft.paymentChannel === 'card_online'
-                                ? 'opacity-75'
-                                : 'opacity-60'
-                            }`}
-                          >
-                            ЮKassa / Робокасса · Чек 54-ФЗ · Если удобнее без р/с
-                          </span>
+                          Изменить
                         </button>
                       </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <label
+                          htmlFor="production-order-contact-input"
+                          className="block text-xs font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72"
+                        >
+                          Имя и телефон или @Telegram *
+                        </label>
+                        <input
+                          ref={contactInputRef}
+                          id="production-order-contact-input"
+                          type="text"
+                          data-testid="drawer-contact-input"
+                          aria-label="Имя и телефон или @Telegram"
+                          aria-invalid={Boolean(contactError)}
+                          aria-describedby={
+                            contactError ? 'production-order-contact-error' : undefined
+                          }
+                          value={draft.contactLine}
+                          onChange={(e) => {
+                            orderDraftStore.updateDraft({ contactLine: e.target.value });
+                            if (contactError) setContactError(undefined);
+                          }}
+                          placeholder="Например: Анна +7 916 555-32-10 или @anna_promo"
+                          className={`scroll-mt-24 w-full min-h-[48px] px-4 py-3 rounded-2xl border text-sm sm:text-base text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none transition-all ${
+                            contactError
+                              ? 'border-[#FF4820] ring-2 ring-[#FF4820]/20 bg-[#FF4820]/[0.03]'
+                              : 'bg-transparent border-[#111111]/16 dark:border-[#F4F3EF]/16 focus:border-[#FF4820]'
+                          }`}
+                        />
+                        {contactError && (
+                          <p
+                            id="production-order-contact-error"
+                            role="alert"
+                            data-testid="drawer-contact-error"
+                            className="text-xs font-semibold text-[#FF4820] flex items-center gap-1.5"
+                          >
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                            <span>{contactError}</span>
+                          </p>
+                        )}
+                      </div>
+                    )}
 
-                    {isReturningFastTrack ? (
-                      <div className="space-y-4">
-                        <div className="rounded-2xl p-4 sm:p-5 bg-[#EFECE5] dark:bg-[#16161B] border border-[#111111]/10 dark:border-white/10 flex items-center justify-between gap-4">
-                          <div className="min-w-0">
-                            <p className="text-xs text-[#FF4820] font-semibold">
-                              Сохранённый профиль постоянного клиента · запуск в 2 клика
-                            </p>
-                            <p className="text-sm sm:text-base font-semibold mt-0.5">
-                              {savedVip.contactLine}
-                              {savedVip.company ? ` · ${savedVip.company}` : ''}
+                    {/* Предпочтительный канал выдачи готовых файлов */}
+                    <div ref={deliverySectionRef} className="scroll-mt-24 space-y-2.5">
+                      <p className="text-xs font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                        Где удобно получить готовый ролик и материалы?
+                      </p>
+                      <div
+                        role="group"
+                        aria-label="Предпочтительный канал получения файлов"
+                        className="grid grid-cols-2 sm:grid-cols-4 gap-2"
+                      >
+                        {CLIENT_DELIVERY_CHANNEL_OPTIONS.map((opt) => {
+                          const isSelected = draft.preferredDeliveryChannel === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              data-testid={`delivery-channel-${opt.id}`}
+                              aria-pressed={isSelected}
+                              onClick={() => {
+                                const extractedContactEmail =
+                                  extractEmailFromContactText(draft.contactLine) ?? '';
+                                const emailFromContact =
+                                  opt.id === 'email' && !draft.deliveryEmail
+                                    ? extractedContactEmail
+                                    : draft.deliveryEmail;
+                                const cabinetEmailPrefill =
+                                  opt.id === 'cabinet' && !draft.cabinetEmail
+                                    ? extractedContactEmail ||
+                                      draft.deliveryEmail ||
+                                      activeSessionEmail ||
+                                      ''
+                                    : draft.cabinetEmail;
+                                orderDraftStore.updateDraft({
+                                  preferredDeliveryChannel: opt.id,
+                                  ...(opt.id === 'email' && emailFromContact
+                                    ? { deliveryEmail: emailFromContact }
+                                    : {}),
+                                  ...(opt.id === 'cabinet' && cabinetEmailPrefill
+                                    ? { cabinetEmail: cabinetEmailPrefill }
+                                    : {}),
+                                });
+                                if (deliveryError) setDeliveryError(undefined);
+                              }}
+                              className={`min-h-[42px] px-2.5 py-2 rounded-xl text-xs font-semibold border transition-colors cursor-pointer text-center leading-tight ${
+                                isSelected
+                                  ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] border-transparent'
+                                  : 'bg-[#EFECE5]/65 dark:bg-[#15151A] text-[#111111]/82 dark:text-[#F4F3EF]/82 border-[#111111]/12 dark:border-white/10 hover:border-[#FF4820]'
+                              }`}
+                            >
+                              {opt.shortLabel}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Компактное уточнение под выбранный канал (не перегружает форму) */}
+                      <div
+                        data-testid={`delivery-subpanel-${draft.preferredDeliveryChannel}`}
+                        className="rounded-xl p-3 bg-[#EFECE5]/45 dark:bg-[#15151A]/80 border border-[#111111]/8 dark:border-white/8 space-y-2.5"
+                      >
+                        {draft.preferredDeliveryChannel === 'messenger' && (
+                          <>
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="text-[11px] font-semibold text-[#111111]/66 dark:text-[#F4F3EF]/66">
+                                Какой мессенджер удобнее?
+                              </span>
+                              <div
+                                role="group"
+                                aria-label="Выбор мессенджера"
+                                className="flex flex-wrap items-center gap-1.5"
+                              >
+                                {DELIVERY_MESSENGER_OPTIONS.map((m) => {
+                                  const active = draft.deliveryMessenger === m.id;
+                                  return (
+                                    <button
+                                      key={m.id}
+                                      type="button"
+                                      data-testid={`delivery-messenger-${m.id}`}
+                                      aria-pressed={active}
+                                      onClick={() => {
+                                        orderDraftStore.updateDraft({
+                                          deliveryMessenger: m.id,
+                                        });
+                                        if (deliveryError) setDeliveryError(undefined);
+                                      }}
+                                      className={`min-h-[32px] px-3 py-1 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                                        active
+                                          ? 'bg-[#FF4820] text-white border-[#FF4820]'
+                                          : 'bg-white/80 dark:bg-[#0D0D0F] text-[#111111]/80 dark:text-[#F4F3EF]/80 border-[#111111]/12 dark:border-white/12 hover:border-[#FF4820]'
+                                      }`}
+                                    >
+                                      {m.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            {draft.deliveryMessenger === 'other' && (
+                              <input
+                                ref={deliveryDetailInputRef}
+                                type="text"
+                                data-testid="delivery-messenger-other-input"
+                                aria-label="Название вашего мессенджера"
+                                aria-invalid={Boolean(deliveryError)}
+                                value={draft.deliveryMessengerOther}
+                                onChange={(e) => {
+                                  orderDraftStore.updateDraft({
+                                    deliveryMessengerOther: e.target.value,
+                                  });
+                                  if (deliveryError) setDeliveryError(undefined);
+                                }}
+                                placeholder="Например: VK Мессенджер или Viber"
+                                className={`w-full min-h-[40px] px-3.5 py-2 rounded-xl border text-xs sm:text-sm bg-white/90 dark:bg-[#0D0D0F] text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none ${
+                                  deliveryError
+                                    ? 'border-[#FF4820] ring-2 ring-[#FF4820]/20'
+                                    : 'border-[#111111]/14 dark:border-white/14 focus:border-[#FF4820]'
+                                }`}
+                              />
+                            )}
+                          </>
+                        )}
+
+                        {draft.preferredDeliveryChannel === 'cloud' && (
+                          <>
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="text-[11px] font-semibold text-[#111111]/66 dark:text-[#F4F3EF]/66">
+                                Какой сервис удобнее?
+                              </span>
+                              <div
+                                role="group"
+                                aria-label="Выбор облачного хранилища"
+                                className="flex flex-wrap items-center gap-1.5"
+                              >
+                                {DELIVERY_CLOUD_OPTIONS.map((c) => {
+                                  const active = draft.deliveryCloud === c.id;
+                                  return (
+                                    <button
+                                      key={c.id}
+                                      type="button"
+                                      data-testid={`delivery-cloud-${c.id}`}
+                                      aria-pressed={active}
+                                      onClick={() => {
+                                        orderDraftStore.updateDraft({
+                                          deliveryCloud: c.id,
+                                        });
+                                        if (deliveryError) setDeliveryError(undefined);
+                                      }}
+                                      className={`min-h-[32px] px-3 py-1 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                                        active
+                                          ? 'bg-[#FF4820] text-white border-[#FF4820]'
+                                          : 'bg-white/80 dark:bg-[#0D0D0F] text-[#111111]/80 dark:text-[#F4F3EF]/80 border-[#111111]/12 dark:border-white/12 hover:border-[#FF4820]'
+                                      }`}
+                                    >
+                                      {c.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            {draft.deliveryCloud === 'other' && (
+                              <input
+                                ref={deliveryDetailInputRef}
+                                type="text"
+                                data-testid="delivery-cloud-other-input"
+                                aria-label="Укажите облачное хранилище"
+                                aria-invalid={Boolean(deliveryError)}
+                                value={draft.deliveryCloudOther}
+                                onChange={(e) => {
+                                  orderDraftStore.updateDraft({
+                                    deliveryCloudOther: e.target.value,
+                                  });
+                                  if (deliveryError) setDeliveryError(undefined);
+                                }}
+                                placeholder="Например: Облако Mail, Nextcloud или ваша папка"
+                                className={`w-full min-h-[40px] px-3.5 py-2 rounded-xl border text-xs sm:text-sm bg-white/90 dark:bg-[#0D0D0F] text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none ${
+                                  deliveryError
+                                    ? 'border-[#FF4820] ring-2 ring-[#FF4820]/20'
+                                    : 'border-[#111111]/14 dark:border-white/14 focus:border-[#FF4820]'
+                                }`}
+                              />
+                            )}
+                          </>
+                        )}
+
+                        {draft.preferredDeliveryChannel === 'email' && (
+                          <div className="space-y-1.5">
+                            <label
+                              htmlFor="production-order-delivery-email"
+                              className="block text-[11px] font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72"
+                            >
+                              Почта для отправки готового ролика *
+                            </label>
+                            <input
+                              ref={deliveryDetailInputRef}
+                              id="production-order-delivery-email"
+                              type="email"
+                              data-testid="delivery-email-input"
+                              aria-invalid={Boolean(deliveryError)}
+                              aria-describedby={
+                                deliveryError ? 'production-order-delivery-error' : undefined
+                              }
+                              value={draft.deliveryEmail}
+                              onChange={(e) => {
+                                orderDraftStore.updateDraft({
+                                  deliveryEmail: e.target.value,
+                                });
+                                if (deliveryError) setDeliveryError(undefined);
+                              }}
+                              placeholder="name@company.ru"
+                              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl border text-xs sm:text-sm bg-white/90 dark:bg-[#0D0D0F] text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none ${
+                                deliveryError
+                                  ? 'border-[#FF4820] ring-2 ring-[#FF4820]/20'
+                                  : 'border-[#111111]/14 dark:border-white/14 focus:border-[#FF4820]'
+                              }`}
+                            />
+                            <p className="text-[11px] text-[#111111]/58 dark:text-[#F4F3EF]/58">
+                              Отправим ролик и материалы прямо на e-mail — без входа в личный кабинет.
                             </p>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => setIsEditingVipContact(true)}
-                            className="text-xs font-semibold underline underline-offset-4 opacity-75 hover:opacity-100 cursor-pointer shrink-0"
-                          >
-                            Изменить
-                          </button>
-                        </div>
+                        )}
 
-                        {draft.paymentChannel === 'edo_invoice' && !savedVip.company && (
+                        {draft.preferredDeliveryChannel === 'cabinet' && (
+                          <div className="space-y-1.5">
+                            <label
+                              htmlFor="production-order-cabinet-email"
+                              className="block text-[11px] font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72"
+                            >
+                              Почта для авто-входа в Личный кабинет (необязательно)
+                            </label>
+                            <input
+                              ref={deliveryDetailInputRef}
+                              id="production-order-cabinet-email"
+                              type="email"
+                              data-testid="delivery-cabinet-email-input"
+                              aria-invalid={Boolean(deliveryError)}
+                              aria-describedby={
+                                deliveryError ? 'production-order-delivery-error' : undefined
+                              }
+                              value={draft.cabinetEmail}
+                              onChange={(e) => {
+                                orderDraftStore.updateDraft({
+                                  cabinetEmail: e.target.value,
+                                });
+                                if (deliveryError) setDeliveryError(undefined);
+                              }}
+                              placeholder={
+                                activeSessionEmail
+                                  ? `${activeSessionEmail} (уже выполнен вход)`
+                                  : 'name@company.ru — для авто-регистрации без пароля'
+                              }
+                              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl border text-xs sm:text-sm bg-white/90 dark:bg-[#0D0D0F] text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none ${
+                                deliveryError
+                                  ? 'border-[#FF4820] ring-2 ring-[#FF4820]/20'
+                                  : 'border-[#111111]/14 dark:border-white/14 focus:border-[#FF4820]'
+                              }`}
+                            />
+                            <p className="text-[11px] text-[#111111]/60 dark:text-[#F4F3EF]/60 leading-snug">
+                              При указании почты регистрация и вход выполняются автоматически без пароля (с других устройств — по magic-ссылке). Можно оставить пустым.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {deliveryError && (
+                        <p
+                          id="production-order-delivery-error"
+                          role="alert"
+                          data-testid="drawer-delivery-error"
+                          className="text-xs font-semibold text-[#FF4820] flex items-center gap-1.5"
+                        >
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                          <span>{deliveryError}</span>
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Сворачиваемый блок «Счёт на компанию сразу (по желанию)» */}
+                    {!isReturningFastTrack && (
+                      <div className="space-y-3">
+                        <button
+                          type="button"
+                          data-testid="toggle-invoice-section-btn"
+                          aria-expanded={draft.wantsInvoiceNow}
+                          onClick={() => {
+                            const nextWants = !draft.wantsInvoiceNow;
+                            orderDraftStore.updateDraft({
+                              wantsInvoiceNow: nextWants,
+                              paymentChannel: 'edo_invoice',
+                            });
+                            if (!nextWants) {
+                              setCompanyNameError(undefined);
+                              setCompanyInnError(undefined);
+                              setCompanyError(undefined);
+                            }
+                          }}
+                          className="w-full rounded-2xl px-4 py-3 bg-[#EFECE5]/60 dark:bg-[#15151A] border border-[#111111]/10 dark:border-white/10 hover:border-[#FF4820]/60 transition-colors flex items-center justify-between gap-3 text-left cursor-pointer"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-xs sm:text-sm font-semibold text-[#111111] dark:text-[#F4F3EF]">
+                              Нужен счёт на компанию сразу? (по желанию)
+                            </p>
+                            <p className="text-[11px] text-[#111111]/58 dark:text-[#F4F3EF]/58">
+                              Укажите ИНН, чтобы скачать счёт сразу после отправки — без ожидания менеджера
+                            </p>
+                          </div>
+                          {draft.wantsInvoiceNow ? (
+                            <ChevronUp className="w-4 h-4 text-[#FF4820] shrink-0" aria-hidden="true" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4 text-[#111111]/55 dark:text-[#F4F3EF]/55 shrink-0" aria-hidden="true" />
+                          )}
+                        </button>
+
+                        {draft.wantsInvoiceNow && (
                           <CompanyDetailsForm
-                            idPrefix="vip-order-company"
+                            idPrefix="production-order-company"
+                            hideCardSwitch
                             nameInputRef={companyNameInputRef}
                             innInputRef={companyInnInputRef}
                             companyName={draft.companyName}
                             companyInn={draft.companyInn}
-                            paymentChannel={draft.paymentChannel}
+                            paymentChannel="edo_invoice"
+                            wantsDiadocDuplicate={draft.wantsDiadocDuplicate}
+                            onChangeWantsDiadocDuplicate={(checked) =>
+                              orderDraftStore.updateDraft({ wantsDiadocDuplicate: checked })
+                            }
+                            onResolvedCounterparty={(metaPatch) =>
+                              orderDraftStore.updateDraft({
+                                resolvedCounterpartyMeta: {
+                                  ...(draft.resolvedCounterpartyMeta ?? {}),
+                                  ...metaPatch,
+                                },
+                              })
+                            }
                             companyNameError={companyNameError}
                             companyInnError={companyInnError}
                             onChangeCompanyName={(val) => {
@@ -1846,94 +2694,10 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                               if (companyInnError) setCompanyInnError(undefined);
                               if (companyError) setCompanyError(undefined);
                             }}
-                            onSwitchToCardOnline={() => {
-                              orderDraftStore.updateDraft({ paymentChannel: 'card_online' });
-                              setCompanyNameError(undefined);
-                              setCompanyInnError(undefined);
-                            }}
                           />
                         )}
                       </div>
-                    ) : (
-                      <div className="space-y-4">
-                        <div className="space-y-1.5">
-                          <label
-                            htmlFor="production-order-contact-input"
-                            className="block text-xs font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72"
-                          >
-                            Контакт ответственного лица (Имя и Телефон / @Telegram) *
-                          </label>
-                          <input
-                            ref={contactInputRef}
-                            id="production-order-contact-input"
-                            type="text"
-                            data-testid="drawer-contact-input"
-                            aria-label="Имя и Телефон / @Telegram"
-                            aria-invalid={Boolean(contactError)}
-                            aria-describedby={
-                              contactError ? 'production-order-contact-error' : undefined
-                            }
-                            value={draft.contactLine}
-                            onChange={(e) => {
-                              orderDraftStore.updateDraft({ contactLine: e.target.value });
-                              if (contactError) setContactError(undefined);
-                            }}
-                            placeholder="Например: Анна +7 916 555-32-10 или @anna_promo"
-                            className={`scroll-mt-24 w-full min-h-[48px] px-4 py-3 rounded-2xl border text-sm sm:text-base text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none transition-all ${
-                              contactError
-                                ? 'border-[#FF4820] ring-2 ring-[#FF4820]/20 bg-[#FF4820]/[0.03]'
-                                : 'bg-transparent border-[#111111]/16 dark:border-[#F4F3EF]/16 focus:border-[#FF4820]'
-                            }`}
-                          />
-                          {contactError && (
-                            <p
-                              id="production-order-contact-error"
-                              role="alert"
-                              data-testid="drawer-contact-error"
-                              className="text-xs font-semibold text-[#FF4820] flex items-center gap-1.5"
-                            >
-                              <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                              <span>{contactError}</span>
-                            </p>
-                          )}
-                        </div>
-
-                        <CompanyDetailsForm
-                          idPrefix="production-order-company"
-                          nameInputRef={companyNameInputRef}
-                          innInputRef={companyInnInputRef}
-                          companyName={draft.companyName}
-                          companyInn={draft.companyInn}
-                          paymentChannel={draft.paymentChannel}
-                          companyNameError={companyNameError}
-                          companyInnError={companyInnError}
-                          onChangeCompanyName={(val) => {
-                            orderDraftStore.updateDraft({ companyName: val });
-                            if (companyNameError) setCompanyNameError(undefined);
-                            if (companyError) setCompanyError(undefined);
-                          }}
-                          onChangeCompanyInn={(digits) => {
-                            orderDraftStore.updateDraft({ companyInn: digits });
-                            if (companyInnError) setCompanyInnError(undefined);
-                            if (companyError) setCompanyError(undefined);
-                          }}
-                          onSwitchToCardOnline={() => {
-                            orderDraftStore.updateDraft({ paymentChannel: 'card_online' });
-                            setCompanyNameError(undefined);
-                            setCompanyInnError(undefined);
-                          }}
-                        />
-                      </div>
                     )}
-
-                    <CallbackPreferenceSelector
-                      value={draft.callbackPreference}
-                      onChange={(nextPref) =>
-                        orderDraftStore.updateDraft({ callbackPreference: nextPref })
-                      }
-                      mode="production_only"
-                      workSchedule={workSchedule}
-                    />
 
                     {companyError && (
                       <p
@@ -1976,6 +2740,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
 
                     {(taskError ||
                       contactError ||
+                      deliveryError ||
                       companyNameError ||
                       companyInnError ||
                       companyError ||
@@ -1987,10 +2752,11 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                       >
                         <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" aria-hidden="true" />
                         <span>
-                          Заполните и подтвердите:{' '}
+                          Проверьте:{' '}
                           {[
                             taskError ? 'описание задачи' : null,
                             contactError ? 'контакт' : null,
+                            deliveryError ? 'куда отправить ролик' : null,
                             companyNameError ? 'название компании' : null,
                             companyInnError ? 'ИНН' : null,
                             companyError ? 'реквизиты' : null,
@@ -2006,26 +2772,24 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                       type="submit"
                       disabled={isSubmittingLead}
                       data-testid="drawer-submit-btn"
-                      className="w-full sm:w-auto min-w-0 min-h-[52px] py-3.5 px-4 sm:px-8 rounded-2xl sm:rounded-full bg-[#FF4820] hover:bg-[#E63C17] disabled:opacity-65 active:scale-[0.99] text-white text-sm sm:text-base font-semibold transition-all cursor-pointer disabled:cursor-default text-center leading-snug whitespace-normal sm:whitespace-nowrap"
+                      className="w-full sm:w-auto min-w-0 min-h-[52px] py-3.5 px-6 sm:px-8 rounded-2xl sm:rounded-full bg-[#FF4820] hover:bg-[#E63C17] disabled:opacity-65 active:scale-[0.99] text-white text-sm sm:text-base font-semibold transition-all cursor-pointer disabled:cursor-default text-center leading-snug whitespace-normal sm:whitespace-nowrap"
                     >
                       {isSubmittingLead
-                        ? 'Проверка и фиксация заявки…'
+                        ? 'Отправка заявки…'
                         : rateLimitCountdownSec > 0
                           ? `Повторная отправка через ${rateLimitCountdownSec} сек`
-                          : draft.selectedFormat === 'custom_consult'
-                            ? 'Отправить задачу на оценку продюсеру'
-                            : draft.paymentChannel === 'card_online'
-                              ? 'Оформить заявку и получить ссылку оплаты'
-                              : 'Оформить и получить договор и счёт'}
+                          : draft.wantsInvoiceNow
+                            ? 'Отправить заявку и получить счёт'
+                            : 'Отправить заявку'}
                     </button>
 
                     <p
                       data-testid="order-antispam-caption"
-                      className="text-xs text-[#111111]/54 dark:text-[#F4F3EF]/54 flex flex-wrap items-center gap-1.5 tabular-nums"
+                      className="text-xs leading-relaxed text-[#111111]/54 dark:text-[#F4F3EF]/54 flex items-start gap-2 tabular-nums"
                     >
-                      <ShieldCheck className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
+                      <ShieldCheck className="w-3.5 h-3.5 mt-0.5 text-[#FF4820] shrink-0" aria-hidden="true" />
                       <span>
-                        Проверка ИНН по алгоритму ФНС · Мгновенное формирование рамочного договора и счёта
+                        Без спама · Продюсер уточнит детали, а статус и готовые файлы появятся в Личном кабинете
                       </span>
                     </p>
                   </div>
@@ -2033,8 +2797,8 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
               )}
             </div>
 
-            {/* ПРАВАЯ КОЛОНКА (5 колонок, липкая при скролле): Живая смета и спецификация под ЭДО */}
-            <aside className="lg:col-span-5 lg:sticky lg:top-24 space-y-5">
+            {/* ПРАВАЯ КОЛОНКА (5 колонок, липкая при скролле): Лаконичная сводка */}
+            <aside className="lg:col-span-5 lg:sticky lg:top-24 space-y-4">
               {isMediaBookingMode && mediaReservation && reservationTotals ? (
                 <div
                   data-testid="drawer-media-grid-card"
@@ -2118,7 +2882,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                     </div>
 
                     <div className="pt-3 border-t border-[#111111]/10 dark:border-white/10 flex items-baseline justify-between gap-2">
-                      <span className="font-semibold">Единый счёт в ЭДО:</span>
+                      <span className="font-semibold">Итого к оплате:</span>
                       <span
                         data-testid="drawer-unified-total"
                         className="text-2xl font-bold text-[#111111] dark:text-[#F4F3EF]"
@@ -2148,11 +2912,11 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
               ) : (
                 <div
                   data-testid="order-studio-summary-card"
-                  className="rounded-3xl p-6 sm:p-7 bg-[#EFECE5] dark:bg-[#16161B] border border-[#111111]/10 dark:border-white/10 space-y-5 tabular-nums"
+                  className="rounded-3xl p-6 sm:p-7 bg-[#EFECE5] dark:bg-[#16161B] border border-[#111111]/10 dark:border-white/10 space-y-4 tabular-nums"
                 >
                   <div className="pb-4 border-b border-[#111111]/10 dark:border-white/10 space-y-1">
                     <p className="text-xs font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                      Сводка студийного заказа
+                      Ваш заказ
                     </p>
                     <h2 className="text-xl font-bold tracking-tight">
                       {selectedFormatMeta.title}
@@ -2162,7 +2926,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                   <div className="space-y-2.5 text-sm">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[#111111]/62 dark:text-[#F4F3EF]/62">
-                        Стоимость пакета:
+                        Стоимость:
                       </span>
                       <span
                         data-testid="order-summary-price"
@@ -2183,52 +2947,41 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
 
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[#111111]/62 dark:text-[#F4F3EF]/62">
-                        Способ оплаты:
-                      </span>
-                      <span className="font-semibold text-right">
-                        {draft.paymentChannel === 'card_online'
-                          ? 'Карта / СБП (54-ФЗ)'
-                          : 'Рамочный договор · ЭДО'}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[#111111]/62 dark:text-[#F4F3EF]/62">
-                        Целевой хронометраж:
+                        Хронометраж:
                       </span>
                       <span className="font-semibold">{draft.spotDurationSec} сек</span>
                     </div>
 
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[#111111]/62 dark:text-[#F4F3EF]/62">
-                        Юридический пакет:
+                        Выдача файлов:
                       </span>
-                      <span className="font-semibold">Договор · Паспорт РАО/ВОИС</span>
+                      <span className="font-semibold text-right">
+                        {resolveDeliveryChannelLabel(
+                          draft.preferredDeliveryChannel,
+                          resolvedDeliveryDetail
+                        )}
+                      </span>
                     </div>
                   </div>
 
-                  <div className="pt-4 border-t border-[#111111]/10 dark:border-white/10 space-y-1.5 text-xs">
-                    <p className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
-                      Порядок запуска и защиты авторских прав
-                    </p>
-                    <p className="text-[#111111]/72 dark:text-[#F4F3EF]/72 leading-relaxed">
-                      Разработка сценариев, кастинг и запись начинаются строго после проверки контрагента, заключения рамочного договора-оферты и 100% предоплаты.
-                    </p>
-                  </div>
+                  <p className="pt-3 border-t border-[#111111]/10 dark:border-white/10 text-xs text-[#111111]/68 dark:text-[#F4F3EF]/68 leading-relaxed">
+                    Продюсер свяжется, уточнит детали и поможет со стартом. Статус заказа, счёт и готовые файлы всегда доступны в Личном кабинете.
+                  </p>
 
                   {activeIndustrySpec && (
-                    <div className="pt-4 border-t border-[#111111]/10 dark:border-white/10 space-y-1.5 text-xs">
+                    <div className="pt-3 border-t border-[#111111]/10 dark:border-white/10 space-y-1 text-xs">
                       <p className="font-semibold text-[#FF4820] flex items-center gap-1.5">
                         <ShieldCheck className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                        <span>Пре-чек модерации · {activeIndustrySpec.shortTitle}</span>
+                        <span>{activeIndustrySpec.shortTitle}</span>
                       </p>
-                      <p className="text-[#111111]/70 dark:text-[#F4F3EF]/70 leading-relaxed">
+                      <p className="text-[#111111]/68 dark:text-[#F4F3EF]/68 leading-relaxed">
                         {activeIndustrySpec.legalComplianceRules[0]}
                       </p>
                     </div>
                   )}
 
-                  <div className="pt-4 border-t border-[#111111]/10 dark:border-white/10">
+                  <div className="pt-3 border-t border-[#111111]/10 dark:border-white/10">
                     {AIRTIME_SALES_ENABLED ? (
                       <button
                         type="button"
@@ -2244,31 +2997,26 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                     ) : (
                       <button
                         type="button"
-                        onClick={() => onNavigate({ kind: 'cases' })}
-                        className="w-full min-h-[42px] px-4 py-2.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center justify-between transition-colors cursor-pointer"
+                        data-testid="order-sidebar-cabinet-link"
+                        onClick={() => onNavigate({ kind: 'cabinet' })}
+                        className="w-full min-h-[42px] px-3.5 sm:px-4 py-2.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 hover:border-[#FF4820] text-xs font-semibold flex flex-wrap items-center justify-between gap-x-3 gap-y-1 transition-colors cursor-pointer text-left"
                       >
-                        <span>Примеры партитур сценариев и кейсы</span>
-                        <ArrowUpRight className="w-4 h-4 text-[#FF4820] shrink-0" aria-hidden="true" />
+                        <span className="inline-flex items-center gap-2 min-w-0">
+                          <FolderOpen className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
+                          <span>Уже заказывали у нас?</span>
+                        </span>
+                        <span className="text-[#FF4820] whitespace-nowrap">Личный кабинет →</span>
                       </button>
                     )}
                   </div>
                 </div>
               )}
-
-              <div className="px-2 flex items-center justify-between gap-2 text-xs text-[#111111]/55 dark:text-[#F4F3EF]/55">
-                <span>
-                  {draft.paymentChannel === 'card_online'
-                    ? 'ЮKassa / Робокасса · Чек 54-ФЗ'
-                    : 'Договор-оферта и счёт ЭДО сразу после заявки'}
-                </span>
-                <span className="font-medium shrink-0">Договор · 100% предоплата</span>
-              </div>
             </aside>
           </form>
         )}
       </div>
 
-      {/* Диалоговое модальное окно подтверждения заявки со статусом SLA и автономным счётом ЭДО */}
+      {/* Диалоговое модальное окно подтверждения заявки со статусом SLA и автономным счётом */}
       <ReservationConfirmedModal
         isOpen={isConfirmedModalOpen}
         confirmed={confirmedOrder}
@@ -2279,6 +3027,34 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
             : undefined
         }
       />
+
+      {isDocModalOpen && confirmedOrder && (
+        <Suspense fallback={null}>
+          <BrandedDocumentSuiteModal
+            isOpen={isDocModalOpen}
+            onClose={() => setIsDocModalOpen(false)}
+            mode="client"
+            initialDoc="invoice"
+            legalProfiles={legalProfiles}
+            order={{
+              orderNumber: confirmedOrder.orderNumber,
+              createdAtIso: new Date(confirmedOrder.confirmedAtMs).toISOString(),
+              formatLabel: confirmedOrder.formatLabel,
+              baseBudgetRub:
+                confirmedOrder.lockedTotals?.unifiedTotalRub ??
+                (typeof confirmedOrder.selectedBudgetRub === 'number'
+                  ? confirmedOrder.selectedBudgetRub
+                  : 0),
+              defaultDurationSec: confirmedOrder.spotDurationSec || 15,
+              contact: confirmedOrder.contactLine,
+              companyOrInn: confirmedOrder.companyLine,
+              briefText: confirmedOrder.briefNote,
+              documentMeta:
+                confirmedOrder.documentMeta ?? draft.resolvedCounterpartyMeta ?? null,
+            }}
+          />
+        </Suspense>
+      )}
     </section>
   );
 }

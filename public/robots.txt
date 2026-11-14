@@ -16,6 +16,8 @@ Disallow: /admin/
 Disallow: /order
 Disallow: /booking
 Disallow: /checkout
+Disallow: /cabinet
+Disallow: /account
 Disallow: /api/
 Disallow: /hot-air
 Disallow: /hot-air/
@@ -35,6 +37,8 @@ Disallow: /admin/
 Disallow: /order
 Disallow: /booking
 Disallow: /checkout
+Disallow: /cabinet
+Disallow: /account
 Disallow: /api/
 Disallow: /hot-air
 Disallow: /hot-air/
@@ -55,6 +59,8 @@ Disallow: /admin/
 Disallow: /order
 Disallow: /booking
 Disallow: /checkout
+Disallow: /cabinet
+Disallow: /account
 Disallow: /api/
 Disallow: /hot-air
 Disallow: /hot-air/
@@ -75,6 +81,8 @@ Disallow: /admin/
 Disallow: /order
 Disallow: /booking
 Disallow: /checkout
+Disallow: /cabinet
+Disallow: /account
 Disallow: /api/
 Disallow: /hot-air
 Disallow: /hot-air/

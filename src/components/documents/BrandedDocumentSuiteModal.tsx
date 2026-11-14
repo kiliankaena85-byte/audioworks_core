@@ -11,6 +11,12 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  counterpartyToDocumentMetaPatch,
+  type CounterpartyLookupResult,
+  formatKonturExternInvoiceCsv,
+  resolveOfflineCounterpartyByInn,
+} from '../../data/konturIntegrationCore';
+import {
   assembleProductionDocumentSuite,
   BrandedDocumentKind,
   createDefaultStudioLegalProfiles,
@@ -179,6 +185,54 @@ export function BrandedDocumentSuiteModal({
     link.click();
     document.body.removeChild(link);
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const handleDownloadKonturExternCsv = () => {
+    const csv = formatKonturExternInvoiceCsv(suite);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `FMWorks-KonturExtern-${order.orderNumber}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const handleAutoFillByInn = async (rawInnInput?: string) => {
+    const digits = (rawInnInput ?? metaDraft.customerInn ?? suite.customer.inn ?? '')
+      .replace(/\D/g, '')
+      .slice(0, 12);
+    if (digits.length !== 10 && digits.length !== 12) {
+      setSaveFeedback('Введите 10 цифр (юрлицо) или 12 цифр (ИП) для автозаполнения по ИНН.');
+      return;
+    }
+    const offline = resolveOfflineCounterpartyByInn(digits);
+    if (offline) {
+      updateMeta(counterpartyToDocumentMetaPatch(offline));
+      setSaveFeedback(`Реквизиты по ИНН ${digits} подставлены в счёт.`);
+    }
+    try {
+      const res = await fetch(
+        `/api/public/counterparty-by-inn?inn=${encodeURIComponent(digits)}`,
+        { headers: { Accept: 'application/json' } }
+      );
+      if (res.ok) {
+        const data = (await res.json()) as {
+          ok?: boolean;
+          counterparty?: CounterpartyLookupResult;
+        };
+        if (data?.ok && data.counterparty) {
+          updateMeta(counterpartyToDocumentMetaPatch(data.counterparty));
+          setSaveFeedback(
+            `Реквизиты ${data.counterparty.shortName} (ИНН ${digits}) обновлены.`
+          );
+        }
+      }
+    } catch {
+      // Офлайн-разбор по ФНС уже применён
+    }
   };
 
   const handleSaveMetaToOrder = async () => {
@@ -480,24 +534,97 @@ export function BrandedDocumentSuiteModal({
               </div>
 
               <div className="space-y-1">
-                <label
-                  htmlFor="suite-cust-inn"
-                  className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72"
-                >
-                  ИНН Заказчика (10/12 цифр)
-                </label>
+                <div className="flex items-center justify-between gap-2">
+                  <label
+                    htmlFor="suite-cust-inn"
+                    className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72"
+                  >
+                    ИНН Заказчика (10/12 цифр)
+                  </label>
+                  <button
+                    type="button"
+                    data-testid="suite-autofill-inn-btn"
+                    onClick={() => void handleAutoFillByInn()}
+                    className="text-[11px] font-semibold text-[#FF4820] hover:underline cursor-pointer"
+                  >
+                    Заполнить по ИНН
+                  </button>
+                </div>
                 <input
                   id="suite-cust-inn"
                   data-testid="suite-cust-inn-input"
                   type="text"
                   inputMode="numeric"
                   value={metaDraft.customerInn ?? suite.customer.inn}
-                  onChange={(e) =>
-                    updateMeta({
-                      customerInn: e.target.value.replace(/\D/g, '').slice(0, 12),
-                    })
-                  }
-                  placeholder="6950123456"
+                  onChange={(e) => {
+                    const nextDigits = e.target.value.replace(/\D/g, '').slice(0, 12);
+                    updateMeta({ customerInn: nextDigits });
+                    if (nextDigits.length === 10 || nextDigits.length === 12) {
+                      const resolved = resolveOfflineCounterpartyByInn(nextDigits);
+                      if (resolved) {
+                        void handleAutoFillByInn(nextDigits);
+                      }
+                    }
+                  }}
+                  placeholder="6663003127"
+                  className="w-full min-h-[40px] px-3 rounded-xl bg-white dark:bg-[#101014] border border-[#111111]/16 dark:border-white/16 text-xs tabular-nums"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label
+                  htmlFor="suite-cust-kpp-ogrn"
+                  className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72"
+                >
+                  КПП / ОГРН Заказчика
+                </label>
+                <div className="flex gap-1.5">
+                  <input
+                    id="suite-cust-kpp-ogrn"
+                    data-testid="suite-cust-kpp-input"
+                    type="text"
+                    inputMode="numeric"
+                    disabled={suite.customer.isIpByInn}
+                    value={suite.customer.isIpByInn ? '' : metaDraft.customerKpp ?? suite.customer.kpp}
+                    onChange={(e) =>
+                      updateMeta({
+                        customerKpp: e.target.value.replace(/\D/g, '').slice(0, 9),
+                      })
+                    }
+                    placeholder={suite.customer.isIpByInn ? 'ИП без КПП' : 'КПП'}
+                    className="w-[44%] min-w-0 min-h-[40px] px-2.5 rounded-xl bg-white dark:bg-[#101014] border border-[#111111]/16 dark:border-white/16 text-xs tabular-nums disabled:opacity-50"
+                  />
+                  <input
+                    aria-label="ОГРН или ОГРНИП Заказчика"
+                    data-testid="suite-cust-ogrn-input"
+                    type="text"
+                    inputMode="numeric"
+                    value={metaDraft.customerOgrn ?? suite.customer.ogrn}
+                    onChange={(e) =>
+                      updateMeta({
+                        customerOgrn: e.target.value.replace(/\D/g, '').slice(0, 15),
+                      })
+                    }
+                    placeholder={suite.customer.isIpByInn ? 'ОГРНИП (15)' : 'ОГРН (13)'}
+                    className="flex-1 min-w-0 min-h-[40px] px-2.5 rounded-xl bg-white dark:bg-[#101014] border border-[#111111]/16 dark:border-white/16 text-xs tabular-nums"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label
+                  htmlFor="suite-cust-address"
+                  className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72"
+                >
+                  Юридический адрес Заказчика
+                </label>
+                <input
+                  id="suite-cust-address"
+                  data-testid="suite-cust-address-input"
+                  type="text"
+                  value={metaDraft.customerAddress ?? suite.customer.address}
+                  onChange={(e) => updateMeta({ customerAddress: e.target.value })}
+                  placeholder="Индекс, город, улица, дом, офис"
                   className="w-full min-h-[40px] px-3 rounded-xl bg-white dark:bg-[#101014] border border-[#111111]/16 dark:border-white/16 text-xs"
                 />
               </div>
@@ -529,9 +656,9 @@ export function BrandedDocumentSuiteModal({
                 <input
                   id="suite-cust-signatory"
                   type="text"
-                  value={metaDraft.customerSignatory ?? ''}
+                  value={metaDraft.customerSignatory ?? suite.customer.signatory}
                   onChange={(e) => updateMeta({ customerSignatory: e.target.value })}
-                  placeholder="Иванов И. И."
+                  placeholder="Генеральный директор Иванов И. И."
                   className="w-full min-h-[40px] px-3 rounded-xl bg-white dark:bg-[#101014] border border-[#111111]/16 dark:border-white/16 text-xs"
                 />
               </div>
@@ -659,34 +786,48 @@ export function BrandedDocumentSuiteModal({
               </button>
             )}
 
-            <button
-              type="button"
-              data-testid="suite-copy-btn"
-              onClick={() => void handleCopySummary()}
-              className="w-full sm:w-auto min-h-[42px] px-3.5 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-            >
-              {copiedText ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-[#16A34A] shrink-0" aria-hidden="true" />
-                  <span>Скопировано</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                  <span>Скопировать текст</span>
-                </>
-              )}
-            </button>
+            <div className="grid grid-cols-2 sm:flex items-center gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                data-testid="suite-copy-btn"
+                onClick={() => void handleCopySummary()}
+                className="min-h-[40px] sm:min-h-[42px] px-3 sm:px-3.5 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                {copiedText ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-[#16A34A] shrink-0" aria-hidden="true" />
+                    <span>Скопировано</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    <span>Скопировать</span>
+                  </>
+                )}
+              </button>
 
-            <button
-              type="button"
-              data-testid="suite-download-txt-btn"
-              onClick={handleDownloadTxt}
-              className="w-full sm:w-auto min-h-[42px] px-3.5 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-              <span>Скачать (.txt)</span>
-            </button>
+              <button
+                type="button"
+                data-testid="suite-download-txt-btn"
+                onClick={handleDownloadTxt}
+                className="min-h-[40px] sm:min-h-[42px] px-3 sm:px-3.5 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>Скачать (.txt)</span>
+              </button>
+            </div>
+
+            {mode === 'admin' && !suite.isNegotiablePendingPrice && (
+              <button
+                type="button"
+                data-testid="suite-download-extern-csv-btn"
+                onClick={handleDownloadKonturExternCsv}
+                className="w-full sm:w-auto min-h-[40px] sm:min-h-[42px] px-3.5 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>CSV для Контур.Экстерна</span>
+              </button>
+            )}
 
             <button
               type="button"

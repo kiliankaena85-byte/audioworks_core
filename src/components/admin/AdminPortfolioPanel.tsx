@@ -17,6 +17,7 @@ import {
 } from '../../cms/studioCmsStore';
 import { formatAudioTime } from '../../data/audioworksCommercial';
 import { getCasePreviewWindow } from '../../data/casesData';
+import { OptimizedImage } from '../OptimizedImage';
 import {
   applyThreeSecondPreviewTiming,
   computePreviewWindowTimeline,
@@ -1129,18 +1130,10 @@ export function AdminPortfolioPanel({
             <div
               className={`sm:col-span-4 min-h-[150px] relative overflow-hidden ${activeCase.posterGradientClass}`}
             >
-              <img
+              <OptimizedImage
                 src={activeCase.coverImageUrl}
+                fallbackSrc="/src/assets/images/hero_studio_editorial_1794399404984.jpg"
                 alt={activeCase.coverImageAlt}
-                referrerPolicy="no-referrer"
-                onError={(e) => {
-                  const img = e.currentTarget;
-                  if (!img.dataset.fallbackApplied) {
-                    img.dataset.fallbackApplied = '1';
-                    img.src =
-                      '/src/assets/images/hero_studio_editorial_1794399404984.jpg';
-                  }
-                }}
                 className="w-full h-full object-cover"
               />
             </div>

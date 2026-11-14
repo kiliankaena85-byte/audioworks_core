@@ -12,7 +12,7 @@ export interface VoiceBriefSnapshot {
 }
 
 interface VoiceBriefRecorderProps {
-  variant?: 'primary' | 'secondary';
+  variant?: 'primary' | 'secondary' | 'compact';
   idleLabel?: string;
   idleHint?: string;
   resetSignal?: number;
@@ -263,33 +263,52 @@ export function VoiceBriefRecorder({
     }, durSec * 1000);
   };
 
-  const containerClass =
-    variant === 'primary'
+  const isCompactIdle = variant === 'compact' && voiceStatus === 'idle';
+
+  const containerClass = isCompactIdle
+    ? 'inline-flex items-center'
+    : variant === 'primary'
       ? 'rounded-2xl p-4 sm:p-5 bg-[#EFECE5] dark:bg-[#16161B] border border-[#111111]/10 dark:border-white/10'
-      : 'rounded-2xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10';
+      : variant === 'compact'
+        ? 'w-full rounded-2xl p-3 sm:p-3.5 bg-[#EFECE5]/80 dark:bg-[#15151A] border border-[#111111]/12 dark:border-white/12'
+        : 'rounded-2xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10';
 
   const recordButtonClass =
-    variant === 'primary'
-      ? 'min-h-[44px] inline-flex items-center gap-2.5 px-5 py-2.5 rounded-full bg-[#FF4820] hover:bg-[#E63C17] text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0'
-      : 'min-h-[42px] inline-flex items-center gap-2.5 px-4 py-2 rounded-full bg-[#111111] hover:bg-[#FF4820] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0';
+    variant === 'compact'
+      ? 'min-h-[42px] inline-flex items-center gap-2 px-4 py-2 rounded-full border border-[#111111]/16 dark:border-[#F4F3EF]/16 bg-[#EFECE5]/75 dark:bg-[#15151A] hover:border-[#FF4820] text-[#111111] dark:text-[#F4F3EF] text-xs sm:text-sm font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0'
+      : variant === 'primary'
+        ? 'min-h-[44px] inline-flex items-center gap-2.5 px-5 py-2.5 rounded-full bg-[#FF4820] hover:bg-[#E63C17] text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0'
+        : 'min-h-[42px] inline-flex items-center gap-2.5 px-4 py-2 rounded-full bg-[#111111] hover:bg-[#FF4820] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0';
 
   return (
     <div className={containerClass}>
       {voiceStatus === 'idle' && (
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        variant === 'compact' ? (
           <button
             type="button"
             data-testid="drawer-voice-record-btn"
             onClick={() => void startVoiceRecording()}
             className={recordButtonClass}
           >
-            <Mic className="w-4 h-4 shrink-0" aria-hidden="true" />
+            <Mic className="w-4 h-4 text-[#FF4820] shrink-0" aria-hidden="true" />
             <span>{idleLabel}</span>
           </button>
-          <span className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58">
-            {idleHint}
-          </span>
-        </div>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <button
+              type="button"
+              data-testid="drawer-voice-record-btn"
+              onClick={() => void startVoiceRecording()}
+              className={recordButtonClass}
+            >
+              <Mic className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span>{idleLabel}</span>
+            </button>
+            <span className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58">
+              {idleHint}
+            </span>
+          </div>
+        )
       )}
 
       {voiceStatus === 'recording' && (

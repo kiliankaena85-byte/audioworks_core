@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { OrderMediaPlanSnapshot } from '../data/orderCrmTypes';
+import type { ClientDeliveryChannel } from '../data/clientCabinetHelpers';
 import type { StudioPaymentChannel } from '../data/orderDraftStore';
 import { ClientCallbackPreference } from '../data/slaWorkCalendar';
+import type { OrderDocumentMeta } from '../data/studioDocumentsCore';
 import {
   DEFAULT_LEAD_MAX_ATTEMPTS,
   DEFAULT_LEAD_MIN_INTERVAL_MS,
@@ -25,6 +27,9 @@ export interface SubmitProtectedLeadInput {
   source: 'order_page' | 'standalone_hold_modal' | 'quick_order_drawer';
   checkoutMode: 'air_plus_production' | 'production_only';
   paymentChannel?: StudioPaymentChannel;
+  preferredDeliveryChannel?: ClientDeliveryChannel;
+  preferredDeliveryDetail?: string;
+  cabinetEmail?: string;
   orderNumberCandidate: string;
   formatLabel: string;
   totalBudgetRub?: number;
@@ -40,6 +45,8 @@ export interface SubmitProtectedLeadInput {
   isReturningFastTrack: boolean;
   requireBriefOrVoice: boolean;
   pdnConsentAccepted?: boolean;
+  wantsDiadocDuplicate?: boolean;
+  documentMeta?: OrderDocumentMeta | null;
   /** Если вызывающий компонент (например, OrderPage) уже зафиксировал попытку через useRateLimit */
   skipClientRateConsume?: boolean;
 }
@@ -56,6 +63,9 @@ export interface SubmitProtectedLeadResult {
   slaDeadlineAtMs?: number;
   promisedWindowLabel?: string;
   rescueToken?: string | null;
+  documentMeta?: OrderDocumentMeta | null;
+  clientEmail?: string | null;
+  clientSession?: { authenticated: boolean; email: string | null };
   remainingAttempts?: number;
   retryAfterSec?: number;
   contactError?: string;
@@ -282,6 +292,9 @@ export function useLeadShieldForm(
           slaDeadlineAt?: string;
           promisedWindowLabel?: string;
           rescueToken?: string | null;
+          documentMeta?: OrderDocumentMeta | null;
+          clientEmail?: string | null;
+          clientSession?: { authenticated?: boolean; email?: string | null };
           contactError?: string;
           companyError?: string;
           taskError?: string;
@@ -375,6 +388,14 @@ export function useLeadShieldForm(
           slaDeadlineAtMs: Number.isFinite(parsedSlaDead) ? parsedSlaDead : undefined,
           promisedWindowLabel: payload.promisedWindowLabel,
           rescueToken: payload.rescueToken ?? null,
+          documentMeta: payload.documentMeta ?? input.documentMeta ?? null,
+          clientEmail: payload.clientEmail ?? null,
+          clientSession: payload.clientSession
+            ? {
+                authenticated: Boolean(payload.clientSession.authenticated),
+                email: payload.clientSession.email ?? null,
+              }
+            : undefined,
           remainingAttempts:
             payload.rateLimit?.remainingAttempts ??
             consumedLocalRate.remainingAttempts ??
@@ -422,6 +443,7 @@ export function useLeadShieldForm(
           conversionAllowed: fallbackEval.conversionAllowed,
           verifiedConversionSeal: null,
           innVerified: fallbackEval.innVerified,
+          documentMeta: input.documentMeta ?? null,
           remainingAttempts: consumedLocalRate.remainingAttempts,
         };
       } finally {

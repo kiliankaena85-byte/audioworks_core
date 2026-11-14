@@ -6,6 +6,7 @@ import {
 } from './faqData.ts';
 import { isAirtimeSalesEnabled } from './platformFeatures.ts';
 import {
+  buildBreadcrumbListJsonLd,
   buildRouteSchemaGraph,
   DEFAULT_OG_IMAGE_PATH,
   parsePlatformRoute,
@@ -15,6 +16,14 @@ import {
   type RouteSeoMetadata,
   VALID_INDUSTRY_SLUGS,
 } from './platformRouter.ts';
+import {
+  buildLocalBusinessJsonLd,
+  buildOrganizationJsonLd,
+  buildWebSiteJsonLd,
+  LOCAL_BUSINESS_JSONLD_SCRIPT_ID,
+  ORGANIZATION_JSONLD_SCRIPT_ID,
+  WEBSITE_JSONLD_SCRIPT_ID,
+} from './seoUtils.ts';
 import { CUSTOM_CONSULT_PRICING_ROW, EDITORIAL_PRICING_ROWS } from './pricingData.ts';
 import { BROADCAST_TECH_STANDARD_ROWS } from './studioDocumentsCore.ts';
 
@@ -118,6 +127,8 @@ export function buildRobotsTxt(
     'Disallow: /order',
     'Disallow: /booking',
     'Disallow: /checkout',
+    'Disallow: /cabinet',
+    'Disallow: /account',
     'Disallow: /api/',
     ...(!airtimeEnabled ? ['Disallow: /hot-air', 'Disallow: /hot-air/'] : []),
   ];
@@ -159,14 +170,14 @@ export function buildLlmsTxt(origin: string): string {
   return [
     '# FMWorks — Студийный аудиопродакшн для радио и бизнеса',
     '',
-    '> Студия аудиорекламы полного цикла (г. Тверь, работаем онлайн по всей России). Создаём коммерческие аудиоролики с нуля по рамочному договору, с паспортом прав РАО/ВОИС и гарантией прохождения модерации радиостанций по ФЗ-38 «О рекламе».',
+    '> Студия аудиорекламы полного цикла (г. Тверь, работаем онлайн по всей России). Создаём коммерческие аудиоролики с нуля по договору, с паспортом прав РАО/ВОИС и гарантией прохождения модерации радиостанций по ФЗ-38 «О рекламе».',
     '',
     '## Ключевые факты о компании',
     '- **Название:** FMWorks (Аудиопродакшн-студия FMWorks®)',
     '- **География:** г. Тверь, ул. Советская, д. 45, оф. 308 · приём и выпуск проектов по всей России (RU)',
     '- **Режим работы:** Пн–Пт, 09:00–19:00 (МСК)',
     '- **Контакты:** hello@fmworks.ru · +7 (4822) 75-04-20',
-    '- **Оплата и документооборот:** Рамочный договор + Приложение со сметой и объёмом работ, ЭДО (Диадок, СБИС, Контур), оплата по счёту для юрлиц/ИП (УСН без НДС / НДС 5% / НДС 7% / ОСНО) или банковской картой / СБП (чек по 54-ФЗ). Работа начинается после договора и 100% предоплаты.',
+    '- **Оплата и документооборот:** Договор и счёт со сметой для юрлиц/ИП (УСН без НДС / НДС 5% / НДС 7% / ОСНО, ЭДО Диадок/СБИС/Контур) или оплата банковской картой / СБП (чек по 54-ФЗ). Работа начинается после согласования договора и 100% предоплаты.',
     '',
     '## Тарифы и сроки производства',
     ...EDITORIAL_PRICING_ROWS.map(
@@ -186,7 +197,7 @@ export function buildLlmsTxt(origin: string): string {
     `- [Отрасль: Ритейл и FMCG](${cleanOrigin}/cases/industry/retail-fmcg)`,
     `- [Отрасль: B2B и финансы](${cleanOrigin}/cases/industry/b2b-finance)`,
     `- [Подход и нейроисследования внимания](${cleanOrigin}/approach): как удерживать внимание в автопотоке и разбор 5 ошибок радиорекламы.`,
-    `- [Частые вопросы (FAQ)](${cleanOrigin}/faq): проверка контрагента, рамочный договор в ЭДО, оплата картой 54-ФЗ, сроки, индивидуальные проекты.`,
+    `- [Частые вопросы (FAQ)](${cleanOrigin}/faq): оформление договора и счёта для юрлиц, оплата картой или по СБП, сроки, индивидуальные проекты.`,
     '',
   ].join('\n');
 }
@@ -546,6 +557,30 @@ export function injectRouteSeoIntoHtml(
     'fmworks-route-jsonld',
     buildRouteSchemaGraph(meta, cleanOrigin)
   );
+  out = upsertHeadJsonLdScript(
+    out,
+    ORGANIZATION_JSONLD_SCRIPT_ID,
+    buildOrganizationJsonLd(cleanOrigin, DEFAULT_OG_IMAGE_PATH)
+  );
+  out = upsertHeadJsonLdScript(
+    out,
+    LOCAL_BUSINESS_JSONLD_SCRIPT_ID,
+    buildLocalBusinessJsonLd(cleanOrigin, DEFAULT_OG_IMAGE_PATH)
+  );
+  out = upsertHeadJsonLdScript(
+    out,
+    WEBSITE_JSONLD_SCRIPT_ID,
+    buildWebSiteJsonLd(cleanOrigin)
+  );
+
+  const breadcrumbSchema = buildBreadcrumbListJsonLd(meta, cleanOrigin);
+  if (breadcrumbSchema) {
+    out = upsertHeadJsonLdScript(
+      out,
+      'fmworks-breadcrumb-jsonld',
+      breadcrumbSchema
+    );
+  }
 
   if (route.kind === 'faq') {
     const faqSchema = buildFaqPageJsonLd(HOME_PROCESS_FAQ_ITEMS, {

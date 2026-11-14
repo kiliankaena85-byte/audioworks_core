@@ -18,7 +18,12 @@ import {
   injectRouteSeoIntoHtml,
   resolveServerRouteLookup,
 } from './src/data/seoServerTemplates.ts';
+import { convertRasterFileToWebp } from './scripts/generate-webp.mjs';
 import { buildTurboPagesXml } from './src/data/turboFeed.ts';
+import {
+  validateWebVitalsBeaconPayload,
+  type WebVitalReportPayload,
+} from './src/utils/performance.ts';
 import {
   validateAndNormalizeCmsSnapshot,
   type StudioCmsSnapshot,
@@ -91,7 +96,9 @@ import {
 } from './src/security/serverSecurity.ts';
 import { VERIFIED_LIVE_REGIONAL_STATIONS } from './src/data/broadcastAircheckData.ts';
 import {
+  assembleProductionDocumentSuite,
   createDefaultStudioLegalProfiles,
+  formatProductionSuitePlainSummary,
   sanitizeOrderDocumentMeta,
   sanitizeStudioLegalProfilesConfig,
 } from './src/data/studioDocumentsCore.ts';
@@ -99,6 +106,56 @@ import type {
   OrderDocumentMeta,
   StudioLegalProfilesConfig,
 } from './src/data/studioDocumentsCore.ts';
+import {
+  formatStructuredCompanyLine,
+  inspectInnDigits,
+  parseCompanyNameAndInn,
+} from './src/components/order/companyDetailsHelpers.ts';
+import {
+  buildDiadocDraftPostMessagePayload,
+  counterpartyToDocumentMetaPatch,
+  DEFAULT_DIADOC_API_URL,
+  parseDadataPartyResponse,
+  parseDiadocGetOrganizationsResponse,
+  parseKonturFocusReqResponse,
+  resolveOfflineCounterpartyByInn,
+} from './src/data/konturIntegrationCore.ts';
+import type {
+  CounterpartyLookupResult,
+  KonturIntegrationStatus,
+} from './src/data/konturIntegrationCore.ts';
+import {
+  matchesOrderLookupVerifier,
+  normalizeDeliveryPreferences,
+  sanitizeCloudDiskUrl,
+  sanitizeDeliveryDetail,
+} from './src/data/clientCabinetHelpers.ts';
+import type {
+  ClientCabinetOrderSummary,
+  ClientDeliveryChannel,
+  ClientUploadedAttachment,
+  OrderDeliverableFile,
+  OrderDeliverableKind,
+} from './src/data/clientCabinetHelpers.ts';
+import {
+  buildClientSessionClearCookieHeader,
+  buildClientSessionSetCookieHeader,
+  CLIENT_SESSION_COOKIE_NAME,
+  CLIENT_SESSION_MAX_AGE_SEC,
+  collectOrdersForClientEmail,
+  createSeedClientAccounts,
+  doesOrderBelongToClientEmail,
+  issueClientMagicLinkToken,
+  issueClientSessionToken,
+  normalizeClientEmail,
+  resolveOrderSubmissionClientEmail,
+  sanitizeClientAccountRecord,
+  toClientAccountPublicProfile,
+  upsertClientAccountRecord,
+  verifyClientMagicLinkToken,
+  verifyClientSessionToken,
+} from './src/data/clientAuthCore.ts';
+import type { ClientAccountRecord } from './src/data/clientAuthCore.ts';
 
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
@@ -131,6 +188,8 @@ const CMS_SNAPSHOT_FILE = path.join(CMS_DATA_DIR, 'studio-cms.json');
 const CMS_BACKUP_FILE = path.join(CMS_DATA_DIR, 'studio-cms.last-reset.bak.json');
 const SECURITY_LEADS_FILE = path.join(CMS_DATA_DIR, 'studio-security-leads.json');
 const ORDERS_CRM_FILE = path.join(CMS_DATA_DIR, 'studio-orders-crm.json');
+const ORDER_DELIVERABLES_DIR = path.join(CMS_DATA_DIR, 'order-deliverables');
+const ORDER_UPLOADS_DIR = path.join(CMS_DATA_DIR, 'order-uploads');
 
 const MAIN_PROMO_FILENAME = 'Audioworks_75c6023f.wav';
 const CANONICAL_RADIO_FILE = 'zerno_radio_15.wav';
@@ -165,19 +224,39 @@ let cachedCmsSnapshot: StudioCmsSnapshot | null | undefined = undefined;
 
 const SESSION_SECRET_FILE = path.join(CMS_DATA_DIR, '.cms-session-secret');
 const REVOKED_SESSIONS_FILE = path.join(CMS_DATA_DIR, '.revoked-sessions.json');
+const CLIENT_AUTH_NONCES_FILE = path.join(CMS_DATA_DIR, '.client-auth-nonces.json');
 const sessionRevocationRegistry = createSessionRevocationRegistry();
+const clientSessionRevocationRegistry = createSessionRevocationRegistry();
+const consumedMagicLinkRegistry = createSessionRevocationRegistry();
 let cachedRandomSessionSecret: string | null = null;
 let cachedDevAutoPassword: string | null = null;
 
 function hydratePersistedRevocations(): void {
   try {
-    if (!fs.existsSync(REVOKED_SESSIONS_FILE)) return;
-    const raw = JSON.parse(fs.readFileSync(REVOKED_SESSIONS_FILE, 'utf8'));
-    if (Array.isArray(raw)) {
-      sessionRevocationRegistry.hydrate(raw as [string, number][]);
+    if (fs.existsSync(REVOKED_SESSIONS_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(REVOKED_SESSIONS_FILE, 'utf8'));
+      if (Array.isArray(raw)) {
+        sessionRevocationRegistry.hydrate(raw as [string, number][]);
+      }
     }
   } catch {
     // Ignore malformed revocation store
+  }
+  try {
+    if (fs.existsSync(CLIENT_AUTH_NONCES_FILE)) {
+      const rawClient = JSON.parse(fs.readFileSync(CLIENT_AUTH_NONCES_FILE, 'utf8')) as {
+        revokedSessions?: [string, number][];
+        consumedMagicLinks?: [string, number][];
+      };
+      if (Array.isArray(rawClient?.revokedSessions)) {
+        clientSessionRevocationRegistry.hydrate(rawClient.revokedSessions);
+      }
+      if (Array.isArray(rawClient?.consumedMagicLinks)) {
+        consumedMagicLinkRegistry.hydrate(rawClient.consumedMagicLinks);
+      }
+    }
+  } catch {
+    // Ignore malformed client auth nonce store
   }
 }
 
@@ -187,6 +266,22 @@ function persistRevocations(): void {
     fs.writeFileSync(
       REVOKED_SESSIONS_FILE,
       JSON.stringify(sessionRevocationRegistry.exportEntries()),
+      { encoding: 'utf8', mode: 0o600 }
+    );
+  } catch {
+    // Ignore read-only fs errors
+  }
+}
+
+function persistClientAuthNonces(): void {
+  try {
+    fs.mkdirSync(CMS_DATA_DIR, { recursive: true });
+    fs.writeFileSync(
+      CLIENT_AUTH_NONCES_FILE,
+      JSON.stringify({
+        revokedSessions: clientSessionRevocationRegistry.exportEntries(),
+        consumedMagicLinks: consumedMagicLinkRegistry.exportEntries(),
+      }),
       { encoding: 'utf8', mode: 0o600 }
     );
   } catch {
@@ -324,6 +419,29 @@ function extractStudioToken(req: Request): string | undefined {
   const cookies = parseCookieHeader(req.headers.cookie);
   const fromCookie = cookies[STUDIO_SESSION_COOKIE_NAME];
   return fromCookie && fromCookie.trim() ? fromCookie.trim() : undefined;
+}
+
+function extractClientSessionCookieToken(req: Request): string | undefined {
+  const cookies = parseCookieHeader(req.headers.cookie);
+  const fromCookie = cookies[CLIENT_SESSION_COOKIE_NAME];
+  return fromCookie && fromCookie.trim() ? fromCookie.trim() : undefined;
+}
+
+function getVerifiedClientSession(req: Request) {
+  const rawToken = extractClientSessionCookieToken(req);
+  return verifyClientSessionToken(rawToken, getSessionSecret(), {
+    isNonceRevoked: (nonce) => clientSessionRevocationRegistry.isRevoked(nonce),
+  });
+}
+
+function isBlockedCrossOriginMutation(req: Request): boolean {
+  return isCrossOriginBrowserRequest({
+    originHeader: req.headers.origin,
+    refererHeader: req.headers.referer,
+    hostHeader:
+      (process.env.TRUST_PROXY === 'true' ? req.headers['x-forwarded-host'] : undefined) ||
+      req.headers.host,
+  });
 }
 
 function isHttpsRequest(req: Request): boolean {
@@ -679,6 +797,7 @@ function recordSecurityAudit(
 
 interface PersistedOrdersCrmStore {
   orders: CrmOrderRecord[];
+  clientAccounts: ClientAccountRecord[];
   settings: OrderDispatchSettings;
   dispatchLogs: DispatchAttemptLog[];
   legalProfiles: StudioLegalProfilesConfig;
@@ -712,6 +831,23 @@ function createDefaultDispatchSettings(): OrderDispatchSettings {
   };
 }
 
+function hydratePersistedClientAccounts(rawAccounts: unknown): ClientAccountRecord[] {
+  const seeds = createSeedClientAccounts();
+  if (!Array.isArray(rawAccounts) || rawAccounts.length === 0) {
+    return seeds;
+  }
+  const sanitized = rawAccounts
+    .map((item) => sanitizeClientAccountRecord(item))
+    .filter((item): item is ClientAccountRecord => item !== null);
+  const existingEmails = new Set(sanitized.map((a) => a.email));
+  for (const seed of seeds) {
+    if (!existingEmails.has(seed.email)) {
+      sanitized.push(seed);
+    }
+  }
+  return sanitized;
+}
+
 function readOrdersCrmStore(): PersistedOrdersCrmStore {
   if (cachedOrdersCrmStore) return cachedOrdersCrmStore;
   try {
@@ -719,6 +855,7 @@ function readOrdersCrmStore(): PersistedOrdersCrmStore {
       const defaults = createDefaultDispatchSettings();
       cachedOrdersCrmStore = {
         orders: createSeedCrmOrders(),
+        clientAccounts: createSeedClientAccounts(),
         settings: defaults,
         dispatchLogs: [],
         legalProfiles: createDefaultStudioLegalProfiles(),
@@ -732,12 +869,49 @@ function readOrdersCrmStore(): PersistedOrdersCrmStore {
     const workSchedule = sanitizeWorkScheduleConfig(
       raw.settings?.workSchedule ?? defaults.workSchedule
     );
+    const seedById = new Map(createSeedCrmOrders().map((s) => [s.id, s]));
     const rawOrders =
       Array.isArray(raw.orders) && raw.orders.length > 0
         ? raw.orders
         : createSeedCrmOrders();
     cachedOrdersCrmStore = {
-      orders: rawOrders.map((ord) => ensureCrmOrderSlaFields(ord, workSchedule)),
+      orders: rawOrders.map((ord) => {
+        const withSla = ensureCrmOrderSlaFields(ord, workSchedule);
+        const seedMatch = seedById.get(withSla.id);
+        const normPref = normalizeDeliveryPreferences(
+          withSla.preferredDeliveryChannel ?? seedMatch?.preferredDeliveryChannel,
+          withSla.preferredDeliveryDetail ?? seedMatch?.preferredDeliveryDetail,
+          'messenger'
+        );
+        const resolvedSeedEmail =
+          withSla.pdnAnonymizedAt
+            ? null
+            : withSla.clientEmail !== undefined
+              ? normalizeClientEmail(withSla.clientEmail)
+              : normalizeClientEmail(seedMatch?.clientEmail);
+        if (seedMatch && withSla.deliverables === undefined) {
+          return {
+            ...withSla,
+            clientEmail: resolvedSeedEmail,
+            preferredDeliveryChannel: normPref.channel,
+            preferredDeliveryDetail: normPref.detail,
+            cloudDiskUrl:
+              withSla.cloudDiskUrl !== undefined
+                ? withSla.cloudDiskUrl
+                : seedMatch.cloudDiskUrl,
+            deliverables: seedMatch.deliverables ?? [],
+            clientUploads:
+              withSla.clientUploads ?? seedMatch.clientUploads ?? [],
+          };
+        }
+        return {
+          ...withSla,
+          clientEmail: resolvedSeedEmail,
+          preferredDeliveryChannel: normPref.channel,
+          preferredDeliveryDetail: normPref.detail,
+        };
+      }),
+      clientAccounts: hydratePersistedClientAccounts(raw.clientAccounts),
       settings: {
         telegram: {
           ...defaults.telegram,
@@ -756,6 +930,7 @@ function readOrdersCrmStore(): PersistedOrdersCrmStore {
   } catch {
     cachedOrdersCrmStore = {
       orders: createSeedCrmOrders(),
+      clientAccounts: createSeedClientAccounts(),
       settings: createDefaultDispatchSettings(),
       dispatchLogs: [],
       legalProfiles: createDefaultStudioLegalProfiles(),
@@ -801,6 +976,252 @@ function verifyOrderRescueToken(
   if (!providedToken || typeof providedToken !== 'string') return false;
   const expected = issueOrderRescueToken(orderNumber);
   return safeCompareStrings(providedToken.trim(), expected);
+}
+
+function canClientAccessOrder(
+  req: Request,
+  order: CrmOrderRecord,
+  providedRescueToken: string | undefined | null,
+  crmStore: PersistedOrdersCrmStore
+): boolean {
+  if (verifyOrderRescueToken(order.orderNumber, providedRescueToken)) {
+    return true;
+  }
+  const clientSession = getVerifiedClientSession(req);
+  if (!clientSession) return false;
+  const account = crmStore.clientAccounts.find((a) => a.email === clientSession.email);
+  return doesOrderBelongToClientEmail(
+    order,
+    clientSession.email,
+    account?.linkedOrderNumbers ?? []
+  );
+}
+
+const clientMagicLinkIpLimiter = new RateLimiter({
+  maxAttempts: 12,
+  windowMs: 10 * 60 * 1000,
+  minIntervalMs: 350,
+});
+
+const clientMagicLinkEmailLimiter = new RateLimiter({
+  maxAttempts: 8,
+  windowMs: 10 * 60 * 1000,
+  minIntervalMs: 350,
+});
+
+const DELIVERABLE_ALLOWED_EXTS = new Set([
+  '.wav',
+  '.mp3',
+  '.ogg',
+  '.m4a',
+  '.pdf',
+  '.txt',
+  '.doc',
+  '.docx',
+  '.zip',
+]);
+
+const CLIENT_UPLOAD_ALLOWED_EXTS = new Set([
+  '.txt',
+  '.pdf',
+  '.doc',
+  '.docx',
+  '.rtf',
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.wav',
+  '.mp3',
+  '.ogg',
+  '.m4a',
+]);
+
+function inferMimeTypeByExt(ext: string): string {
+  switch (ext) {
+    case '.wav':
+      return 'audio/wav';
+    case '.mp3':
+      return 'audio/mpeg';
+    case '.ogg':
+      return 'audio/ogg';
+    case '.m4a':
+      return 'audio/mp4';
+    case '.pdf':
+      return 'application/pdf';
+    case '.txt':
+      return 'text/plain; charset=utf-8';
+    case '.doc':
+      return 'application/msword';
+    case '.docx':
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    case '.rtf':
+      return 'application/rtf';
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg';
+    case '.png':
+      return 'image/png';
+    case '.zip':
+      return 'application/zip';
+    default:
+      return 'application/octet-stream';
+  }
+}
+
+function resolveContainedStoragePath(
+  storageDir: string,
+  storageKey: string
+): string | null {
+  if (!storageKey || typeof storageKey !== 'string') return null;
+  const cleanKey = path.basename(storageKey.trim());
+  if (!cleanKey || cleanKey !== storageKey.trim() || cleanKey.includes('..')) {
+    return null;
+  }
+  const baseResolved = path.resolve(storageDir);
+  const fullResolved = path.resolve(storageDir, cleanKey);
+  if (!fullResolved.startsWith(`${baseResolved}${path.sep}`)) {
+    return null;
+  }
+  return fullResolved;
+}
+
+function resolveSeedPublicAudioPath(staticAssetUrl: string): string | null {
+  if (!staticAssetUrl || typeof staticAssetUrl !== 'string') return null;
+  const cleanName = path.basename(staticAssetUrl.trim());
+  if (!cleanName || cleanName !== staticAssetUrl.trim()) return null;
+  const candidates = [PUBLIC_AUDIO_DIR, DIST_AUDIO_DIR];
+  for (const dir of candidates) {
+    const resolvedDir = path.resolve(dir);
+    const resolvedFile = path.resolve(dir, cleanName);
+    if (
+      resolvedFile.startsWith(`${resolvedDir}${path.sep}`) &&
+      fs.existsSync(resolvedFile)
+    ) {
+      return resolvedFile;
+    }
+  }
+  return null;
+}
+
+function decodeBase64FilePayload(
+  rawDataUrlOrBase64: string
+): { mimeFromHeader: string | null; buffer: Buffer } | null {
+  if (!rawDataUrlOrBase64 || typeof rawDataUrlOrBase64 !== 'string') return null;
+  const trimmed = rawDataUrlOrBase64.trim();
+  let mimeFromHeader: string | null = null;
+  let b64 = trimmed;
+  const dataUrlMatch = trimmed.match(/^data:([^;]+);base64,(.+)$/i);
+  if (dataUrlMatch) {
+    mimeFromHeader = dataUrlMatch[1].toLowerCase().trim();
+    b64 = dataUrlMatch[2];
+  }
+  if (!b64 || b64.length > 22_000_000) return null;
+  try {
+    const buffer = Buffer.from(b64, 'base64');
+    if (buffer.length === 0) return null;
+    return { mimeFromHeader, buffer };
+  } catch {
+    return null;
+  }
+}
+
+function saveBase64OrderAttachment(params: {
+  storageDir: string;
+  orderNumber: string;
+  rawFileName: string;
+  dataBase64: string;
+  allowedExts: Set<string>;
+  maxBytes: number;
+  fallbackPrefix: string;
+}):
+  | {
+      ok: true;
+      storageKey: string;
+      safeFileName: string;
+      mimeType: string;
+      sizeBytes: number;
+    }
+  | { ok: false; error: string } {
+  const originalBase = path.basename((params.rawFileName || '').trim()) || 'file';
+  const ext = path.extname(originalBase).toLowerCase();
+  if (!ext || !params.allowedExts.has(ext)) {
+    return {
+      ok: false,
+      error: `Неподдерживаемый формат файла (${ext || 'без расширения'}). Разрешены: ${Array.from(
+        params.allowedExts
+      ).join(', ')}`,
+    };
+  }
+  const decoded = decodeBase64FilePayload(params.dataBase64);
+  if (!decoded) {
+    return { ok: false, error: 'Не удалось декодировать файл для сохранения' };
+  }
+  if (decoded.buffer.length > params.maxBytes) {
+    const maxMb = Math.round(params.maxBytes / (1024 * 1024));
+    return {
+      ok: false,
+      error: `Размер файла превышает лимит ${maxMb} МБ`,
+    };
+  }
+  const safeStem = sanitizeSafeFileStem(originalBase, params.fallbackPrefix);
+  const safeFileName = `${safeStem}${ext}`;
+  const orderStem = sanitizeSafeFileStem(params.orderNumber, 'order');
+  const storageKey = `${orderStem}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}${ext}`;
+  const targetPath = resolveContainedStoragePath(params.storageDir, storageKey);
+  if (!targetPath) {
+    return { ok: false, error: 'Небезопасное имя файла' };
+  }
+
+  fs.mkdirSync(params.storageDir, { recursive: true });
+  fs.writeFileSync(targetPath, decoded.buffer);
+
+  return {
+    ok: true,
+    storageKey,
+    safeFileName,
+    mimeType: decoded.mimeFromHeader || inferMimeTypeByExt(ext),
+    sizeBytes: decoded.buffer.length,
+  };
+}
+
+function toClientCabinetOrderSummary(
+  order: CrmOrderRecord,
+  rescueToken: string,
+  legalProfiles?: StudioLegalProfilesConfig | null
+): ClientCabinetOrderSummary {
+  return {
+    orderNumber: order.orderNumber,
+    rescueToken,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+    stage: order.stage,
+    formatLabel: order.formatLabel,
+    totalBudgetRub: order.totalBudgetRub,
+    contact: order.contact,
+    clientEmail: order.clientEmail ?? null,
+    companyOrInn: order.companyOrInn,
+    innVerified: order.innVerified,
+    briefText: order.briefText,
+    hasVoiceRecording: order.hasVoiceRecording,
+    voiceDurationSec: order.voiceDurationSec,
+    attachedFileName: order.attachedFileName,
+    ...(() => {
+      const norm = normalizeDeliveryPreferences(
+        order.preferredDeliveryChannel,
+        order.preferredDeliveryDetail,
+        'messenger'
+      );
+      return {
+        preferredDeliveryChannel: norm.channel,
+        preferredDeliveryDetail: norm.detail,
+      };
+    })(),
+    cloudDiskUrl: sanitizeCloudDiskUrl(order.cloudDiskUrl),
+    deliverables: Array.isArray(order.deliverables) ? order.deliverables : [],
+    clientUploads: Array.isArray(order.clientUploads) ? order.clientUploads : [],
+    documentMeta: order.documentMeta ?? null,
+    legalProfiles: legalProfiles ?? null,
+  };
 }
 
 async function dispatchOrderToExternalChannels(
@@ -1211,9 +1632,212 @@ const loginFailureLimiter = createSlidingWindowRateLimiter(8, 15 * 60 * 1000, 0)
 const orderSubmitLimiter = createSlidingWindowRateLimiter(5, 10 * 60 * 1000, 1000);
 const orderValidationBurstLimiter = createSlidingWindowRateLimiter(15, 5 * 60 * 1000, 0);
 const clientRescueLimiter = createSlidingWindowRateLimiter(8, 10 * 60 * 1000, 500);
+const clientCabinetLookupLimiter = createSlidingWindowRateLimiter(20, 10 * 60 * 1000, 300);
 const aiRecommendLimiter = createSlidingWindowRateLimiter(15, 5 * 60 * 1000, 0);
 const duelUploadLimiter = createSlidingWindowRateLimiter(12, 10 * 60 * 1000, 0);
 const radioStreamLimiter = createSlidingWindowRateLimiter(40, 5 * 60 * 1000, 0);
+const counterpartyLookupLimiter = createSlidingWindowRateLimiter(45, 5 * 60 * 1000, 0);
+
+// =========================================================================
+// Kontur.Extern («Учёт») + Kontur.Diadoc & EGRUL/EGRIP Server Connector
+// =========================================================================
+
+const counterpartyCache = new Map<
+  string,
+  { expiresAt: number; value: CounterpartyLookupResult }
+>();
+const COUNTERPARTY_CACHE_TTL_MS = 30 * 60 * 1000;
+
+let cachedDiadocPasswordToken: { token: string; expiresAt: number } | null = null;
+
+function getDiadocApiBaseUrl(): string {
+  const custom = (process.env.DIADOC_API_URL ?? '').trim().replace(/\/+$/, '');
+  return custom || DEFAULT_DIADOC_API_URL;
+}
+
+function getKonturIntegrationStatus(): KonturIntegrationStatus {
+  const dadataConfigured = Boolean((process.env.DADATA_API_KEY ?? '').trim());
+  const focusConfigured = Boolean((process.env.KONTUR_FOCUS_API_KEY ?? '').trim());
+  const diadocApiKey = (process.env.DIADOC_API_KEY ?? '').trim();
+  const hasAuthToken = Boolean((process.env.DIADOC_AUTH_TOKEN ?? '').trim());
+  const hasLoginPass = Boolean(
+    (process.env.DIADOC_LOGIN ?? '').trim() &&
+      (process.env.DIADOC_PASSWORD ?? '').trim()
+  );
+  const diadocConfigured = Boolean(diadocApiKey && (hasAuthToken || hasLoginPass));
+  const diadocBoxIdConfigured = Boolean((process.env.DIADOC_BOX_ID ?? '').trim());
+
+  return {
+    dadataConfigured,
+    focusConfigured,
+    diadocConfigured,
+    diadocBoxIdConfigured,
+    diadocApiUrl: getDiadocApiBaseUrl(),
+    externExportReady: true,
+  };
+}
+
+async function resolveDiadocAuthHeader(): Promise<string | null> {
+  const apiKey = (process.env.DIADOC_API_KEY ?? '').trim();
+  if (!apiKey) return null;
+
+  const explicitToken = (process.env.DIADOC_AUTH_TOKEN ?? '').trim();
+  if (explicitToken) {
+    return `DiadocAuth ddauth_api_client_id=${apiKey},ddauth_token=${explicitToken}`;
+  }
+
+  const login = (process.env.DIADOC_LOGIN ?? '').trim();
+  const password = (process.env.DIADOC_PASSWORD ?? '').trim();
+  if (!login || !password) return null;
+
+  const now = Date.now();
+  if (cachedDiadocPasswordToken && cachedDiadocPasswordToken.expiresAt > now) {
+    return `DiadocAuth ddauth_api_client_id=${apiKey},ddauth_token=${cachedDiadocPasswordToken.token}`;
+  }
+
+  try {
+    const authRes = await fetch(
+      `${getDiadocApiBaseUrl()}/V3/Authenticate?type=password`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `DiadocAuth ddauth_api_client_id=${apiKey}`,
+          'Content-Type': 'application/json; charset=utf-8',
+          Accept: 'text/plain',
+        },
+        body: JSON.stringify({ login, password }),
+        signal: AbortSignal.timeout(4000),
+      }
+    );
+    if (!authRes.ok) return null;
+    const tokenText = (await authRes.text()).trim();
+    if (!tokenText) return null;
+    cachedDiadocPasswordToken = {
+      token: tokenText,
+      expiresAt: now + 6 * 60 * 60 * 1000,
+    };
+    return `DiadocAuth ddauth_api_client_id=${apiKey},ddauth_token=${tokenText}`;
+  } catch {
+    return null;
+  }
+}
+
+async function lookupCounterpartyServerSide(
+  rawInn: string
+): Promise<CounterpartyLookupResult | null> {
+  const baseOffline = resolveOfflineCounterpartyByInn(rawInn);
+  if (!baseOffline) return null;
+
+  const inn = baseOffline.inn;
+  const now = Date.now();
+  const cached = counterpartyCache.get(inn);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  let resolved: CounterpartyLookupResult = {
+    ...baseOffline,
+    diadoc: { ...baseOffline.diadoc },
+  };
+
+  const dadataKey = (process.env.DADATA_API_KEY ?? '').trim();
+  const focusKey = (process.env.KONTUR_FOCUS_API_KEY ?? '').trim();
+
+  if (dadataKey) {
+    try {
+      const ddRes = await fetch(
+        'https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            Authorization: `Token ${dadataKey}`,
+          },
+          body: JSON.stringify({ query: inn, branch_type: 'MAIN' }),
+          signal: AbortSignal.timeout(3500),
+        }
+      );
+      if (ddRes.ok) {
+        const parsed = parseDadataPartyResponse(await ddRes.json(), inn);
+        if (parsed) {
+          resolved = {
+            ...resolved,
+            ...parsed,
+            legalAddress: parsed.legalAddress || resolved.legalAddress,
+            ogrn: parsed.ogrn || resolved.ogrn,
+            kpp:
+              parsed.entityKind === 'sole_proprietor'
+                ? ''
+                : parsed.kpp || resolved.kpp,
+            diadoc: resolved.diadoc,
+          };
+        }
+      }
+    } catch {
+      // Fallback to deterministic seed / Focus lookup
+    }
+  } else if (focusKey) {
+    try {
+      const fcUrl = `https://focus-api.kontur.ru/api3/req?inn=${encodeURIComponent(inn)}&key=${encodeURIComponent(focusKey)}`;
+      const fcRes = await fetch(fcUrl, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(3500),
+      });
+      if (fcRes.ok) {
+        const parsed = parseKonturFocusReqResponse(await fcRes.json(), inn);
+        if (parsed) {
+          resolved = {
+            ...resolved,
+            ...parsed,
+            legalAddress: parsed.legalAddress || resolved.legalAddress,
+            ogrn: parsed.ogrn || resolved.ogrn,
+            kpp:
+              parsed.entityKind === 'sole_proprietor'
+                ? ''
+                : parsed.kpp || resolved.kpp,
+            diadoc: resolved.diadoc,
+          };
+        }
+      }
+    } catch {
+      // Fallback to deterministic seed
+    }
+  }
+
+  const diadocAuth = await resolveDiadocAuthHeader();
+  if (diadocAuth) {
+    try {
+      const boxRes = await fetch(
+        `${getDiadocApiBaseUrl()}/GetOrganizationsByInnKpp?inn=${encodeURIComponent(inn)}`,
+        {
+          headers: {
+            Authorization: diadocAuth,
+            Accept: 'application/json',
+          },
+          signal: AbortSignal.timeout(3500),
+        }
+      );
+      if (boxRes.ok) {
+        const parsedBox = parseDiadocGetOrganizationsResponse(await boxRes.json());
+        if (parsedBox) {
+          resolved = {
+            ...resolved,
+            diadoc: parsedBox,
+          };
+        }
+      }
+    } catch {
+      // Keep existing Diadoc box info
+    }
+  }
+
+  counterpartyCache.set(inn, {
+    expiresAt: now + COUNTERPARTY_CACHE_TTL_MS,
+    value: resolved,
+  });
+  return resolved;
+}
 
 const LEAD_CHALLENGE_TTL_MS = 2 * 60 * 60 * 1000;
 const LEAD_POW_DIFFICULTY = 3;
@@ -1667,6 +2291,23 @@ async function startServer() {
       try {
         fs.writeFileSync(targetAbs, bodyBuffer);
 
+        let webpUrl: string | undefined;
+        try {
+          const webpRes = convertRasterFileToWebp(targetAbs);
+          if (webpRes.webpPath && fs.existsSync(webpRes.webpPath)) {
+            webpUrl = `/assets/cms/${encodeURIComponent(path.basename(webpRes.webpPath))}`;
+            if (fs.existsSync(path.join(__dirname, 'dist'))) {
+              fs.mkdirSync(DIST_CMS_MEDIA_DIR, { recursive: true });
+              fs.copyFileSync(
+                webpRes.webpPath,
+                path.join(DIST_CMS_MEDIA_DIR, path.basename(webpRes.webpPath))
+              );
+            }
+          }
+        } catch {
+          // Non-fatal: fallback to original uploaded format if encoder fails
+        }
+
         if (fs.existsSync(path.join(__dirname, 'dist'))) {
           fs.mkdirSync(DIST_CMS_MEDIA_DIR, { recursive: true });
           fs.copyFileSync(targetAbs, path.join(DIST_CMS_MEDIA_DIR, finalFileName));
@@ -1675,6 +2316,7 @@ async function startServer() {
         res.json({
           ok: true,
           url: `/assets/cms/${encodeURIComponent(finalFileName)}`,
+          webpUrl,
           fileName: decodedName,
         });
       } catch (err) {
@@ -1685,6 +2327,75 @@ async function startServer() {
       }
     }
   );
+
+  // =========================================================================
+  // Core Web Vitals Monitoring Gateway (CLS, LCP, FID, INP, FCP, TTFB)
+  // =========================================================================
+
+  const MAX_WEB_VITALS_SAMPLES = 200;
+  const webVitalsSamples: WebVitalReportPayload[] = [];
+
+  app.post(
+    '/api/monitoring/web-vitals',
+    express.json({ limit: '4kb' }),
+    (req, res) => {
+      const normalized = validateWebVitalsBeaconPayload(req.body);
+      if (!normalized) {
+        res.status(400).json({ error: 'Некорректный формат метрики Web Vitals' });
+        return;
+      }
+
+      webVitalsSamples.push(normalized);
+      if (webVitalsSamples.length > MAX_WEB_VITALS_SAMPLES) {
+        webVitalsSamples.splice(
+          0,
+          webVitalsSamples.length - MAX_WEB_VITALS_SAMPLES
+        );
+      }
+
+      res.status(202).json({
+        ok: true,
+        recorded: {
+          name: normalized.name,
+          value: normalized.value,
+          rating: normalized.rating,
+          route: normalized.route,
+        },
+      });
+    }
+  );
+
+  app.get('/api/cms/monitoring/web-vitals', requireStudioAuth, (_req, res) => {
+    const byMetric: Record<
+      string,
+      { count: number; p75: number; latest: WebVitalReportPayload | null }
+    > = {};
+
+    for (const metricName of ['CLS', 'LCP', 'FID', 'INP', 'FCP', 'TTFB']) {
+      const matching = webVitalsSamples.filter((s) => s.name === metricName);
+      if (matching.length === 0) {
+        byMetric[metricName] = { count: 0, p75: 0, latest: null };
+        continue;
+      }
+      const sorted = matching.map((s) => s.value).sort((a, b) => a - b);
+      const p75Idx = Math.min(
+        sorted.length - 1,
+        Math.floor(sorted.length * 0.75)
+      );
+      byMetric[metricName] = {
+        count: matching.length,
+        p75: sorted[p75Idx],
+        latest: matching[matching.length - 1],
+      };
+    }
+
+    res.json({
+      ok: true,
+      totalSamples: webVitalsSamples.length,
+      summary: byMetric,
+      recent: webVitalsSamples.slice(-25).reverse(),
+    });
+  });
 
   // =========================================================================
   // Anti-Spam, Anti-Bot & Paid-Traffic Lead Shield Gateway
@@ -1716,17 +2427,61 @@ async function startServer() {
     });
   });
 
-  app.post('/api/orders/submit', express.json({ limit: '64kb' }), (req, res) => {
+  app.get('/api/public/counterparty-by-inn', async (req, res) => {
+    const clientIp = resolveClientIp(req);
+    const rate = counterpartyLookupLimiter.consume(clientIp);
+    if (!rate.allowed) {
+      res.setHeader('Retry-After', String(rate.retryAfterSec));
+      res.status(429).json({
+        ok: false,
+        error: `Слишком частые запросы проверки ИНН. Подождите ${rate.retryAfterSec} сек.`,
+      });
+      return;
+    }
+
+    const rawInn = typeof req.query.inn === 'string' ? req.query.inn.trim() : '';
+    const innInfo = inspectInnDigits(rawInn);
+    if (!innInfo.isCompleteLength || !innInfo.checksumValid) {
+      res.status(400).json({
+        ok: false,
+        error:
+          innInfo.statusMessage ??
+          'Укажите корректный ИНН организации (10 цифр) или ИП (12 цифр)',
+      });
+      return;
+    }
+
+    const counterparty = await lookupCounterpartyServerSide(innInfo.digits);
+    if (!counterparty) {
+      res.status(404).json({
+        ok: false,
+        error: 'По указанному ИНН сведения не найдены',
+      });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      counterparty,
+    });
+  });
+
+  app.post('/api/orders/submit', express.json({ limit: '64kb' }), async (req, res) => {
     const clientIp = resolveClientIp(req);
     const body = (req.body ?? {}) as {
       source?: OrderEntrySource;
       checkoutMode?: 'air_plus_production' | 'production_only';
       paymentChannel?: 'edo_invoice' | 'card_online';
+      preferredDeliveryChannel?: ClientDeliveryChannel;
+      preferredDeliveryDetail?: string;
+      cabinetEmail?: string;
       orderNumberCandidate?: string;
       formatLabel?: string;
       totalBudgetRub?: number;
       contactLine?: string;
       companyLine?: string;
+      wantsDiadocDuplicate?: boolean;
+      documentMeta?: Partial<OrderDocumentMeta> | null;
       callbackPreference?: ClientCallbackPreference;
       briefText?: string;
       hasVoiceRecording?: boolean;
@@ -2012,6 +2767,67 @@ async function startServer() {
     const resolvedPaymentChannel: 'edo_invoice' | 'card_online' =
       body.paymentChannel === 'card_online' ? 'card_online' : 'edo_invoice';
 
+    // Автообогащение реквизитов покупателя (ЕГРЮЛ/ЕГРИП + BoxId Диадока) по ИНН на стороне сервера
+    const parsedSubmittedCompany = parseCompanyNameAndInn(evaluation.normalizedCompany);
+    const candidateInnDigits = (
+      body.documentMeta?.customerInn ??
+      parsedSubmittedCompany.companyInn ??
+      ''
+    )
+      .replace(/\D/g, '')
+      .slice(0, 12);
+
+    const lookedUpCounterparty =
+      candidateInnDigits.length === 10 || candidateInnDigits.length === 12
+        ? await lookupCounterpartyServerSide(candidateInnDigits)
+        : null;
+
+    let enrichedCompanyOrInn = evaluation.normalizedCompany;
+    if (lookedUpCounterparty) {
+      const customCompanyLabel = parsedSubmittedCompany.companyName.trim();
+      const chosenName =
+        customCompanyLabel && !/^\d+$/.test(customCompanyLabel)
+          ? customCompanyLabel
+          : lookedUpCounterparty.shortName;
+      enrichedCompanyOrInn = formatStructuredCompanyLine(
+        chosenName,
+        lookedUpCounterparty.inn
+      );
+    }
+
+    const wantsDiadocFlag =
+      typeof body.wantsDiadocDuplicate === 'boolean'
+        ? body.wantsDiadocDuplicate
+        : Boolean(body.documentMeta?.wantsDiadocDuplicate);
+
+    const hasIncomingDocMeta =
+      Boolean(lookedUpCounterparty) ||
+      wantsDiadocFlag ||
+      Boolean(body.documentMeta && typeof body.documentMeta === 'object');
+
+    const initialDocumentMeta: OrderDocumentMeta | undefined = hasIncomingDocMeta
+      ? sanitizeOrderDocumentMeta({
+          ...(lookedUpCounterparty
+            ? counterpartyToDocumentMetaPatch(lookedUpCounterparty, {
+                wantsDiadocDuplicate: wantsDiadocFlag,
+              })
+            : {}),
+          ...(body.documentMeta && typeof body.documentMeta === 'object'
+            ? body.documentMeta
+            : {}),
+          ...(wantsDiadocFlag ? { wantsDiadocDuplicate: true } : {}),
+        })
+      : undefined;
+
+    const activeClientSession = getVerifiedClientSession(req);
+    const resolvedClientEmail = resolveOrderSubmissionClientEmail({
+      cabinetEmail: body.cabinetEmail,
+      preferredDeliveryChannel: body.preferredDeliveryChannel,
+      preferredDeliveryDetail: body.preferredDeliveryDetail,
+      contactLine: evaluation.normalizedContact,
+      sessionEmail: activeClientSession?.email ?? null,
+    });
+
     const newCrmOrder: CrmOrderRecord = {
       id: `crm-${now}-${crypto.randomBytes(3).toString('hex')}`,
       orderNumber,
@@ -2025,10 +2841,12 @@ async function startServer() {
       formatLabel: newVerifiedRecord.formatLabel,
       totalBudgetRub: resolvedBudgetRub,
       contact: evaluation.normalizedContact,
+      clientEmail: resolvedClientEmail,
       detectedChannel: evaluation.detectedChannel ?? 'phone',
       callbackPreference: resolvedCallbackPref,
-      companyOrInn: evaluation.normalizedCompany,
-      innVerified: evaluation.innVerified,
+      companyOrInn: enrichedCompanyOrInn,
+      innVerified: evaluation.innVerified || Boolean(lookedUpCounterparty),
+      ...(initialDocumentMeta ? { documentMeta: initialDocumentMeta } : {}),
       briefText: evaluation.sanitizedBrief.slice(0, 1500),
       hasVoiceRecording: Boolean(body.hasVoiceRecording),
       voiceDurationSec:
@@ -2040,6 +2858,20 @@ async function startServer() {
           ? body.attachedFileName.trim().slice(0, 180)
           : null,
       producerNotes: '',
+      ...(() => {
+        const norm = normalizeDeliveryPreferences(
+          body.preferredDeliveryChannel,
+          body.preferredDeliveryDetail,
+          'messenger'
+        );
+        return {
+          preferredDeliveryChannel: norm.channel,
+          preferredDeliveryDetail: norm.detail,
+        };
+      })(),
+      cloudDiskUrl: null,
+      deliverables: [],
+      clientUploads: [],
       compliance: {
         trafficConfirmed: false,
         fz38Checked: false,
@@ -2075,6 +2907,33 @@ async function startServer() {
       },
     };
 
+    let autoSignedInEmail: string | null = null;
+    if (resolvedClientEmail) {
+      const upserted = upsertClientAccountRecord(crmStore.clientAccounts, {
+        email: resolvedClientEmail,
+        orderNumbersToLink: [orderNumber],
+        contactLine: evaluation.normalizedContact,
+        companyOrInn: enrichedCompanyOrInn,
+        markLoggedIn: true,
+        nowIso,
+      });
+      crmStore.clientAccounts = upserted.accounts;
+      const issuedClientSession = issueClientSessionToken(
+        resolvedClientEmail,
+        getSessionSecret(),
+        { nowMs: now }
+      );
+      res.setHeader(
+        'Set-Cookie',
+        buildClientSessionSetCookieHeader(
+          issuedClientSession.token,
+          CLIENT_SESSION_MAX_AGE_SEC,
+          isHttpsRequest(req)
+        )
+      );
+      autoSignedInEmail = resolvedClientEmail;
+    }
+
     crmStore.orders = [newCrmOrder, ...crmStore.orders].slice(0, 200);
     writeOrdersCrmStore(crmStore);
 
@@ -2095,7 +2954,9 @@ async function startServer() {
       crmOrderId: newCrmOrder.id,
       conversionAllowed: true,
       verifiedConversionSeal,
-      innVerified: evaluation.innVerified,
+      innVerified: newCrmOrder.innVerified,
+      companyOrInn: newCrmOrder.companyOrInn,
+      documentMeta: newCrmOrder.documentMeta ?? null,
       detectedChannel: evaluation.detectedChannel,
       holdExpiresAt: holdExpiresIso,
       slaWindowStartAt: slaWindowStartIso,
@@ -2103,6 +2964,12 @@ async function startServer() {
       promisedWindowLabel: slaWindow.promisedWindowLabel,
       operatingRegime: regimeAtCreation,
       rescueToken,
+      preferredDeliveryChannel: newCrmOrder.preferredDeliveryChannel,
+      preferredDeliveryDetail: newCrmOrder.preferredDeliveryDetail,
+      clientEmail: resolvedClientEmail,
+      clientSession: autoSignedInEmail
+        ? { authenticated: true, email: autoSignedInEmail }
+        : { authenticated: false, email: null },
       rateLimit: {
         remainingAttempts: rate.remainingAttempts,
         maxAttempts: rate.maxAttempts,
@@ -2324,6 +3191,877 @@ async function startServer() {
   );
 
   // =========================================================================
+  // Passwordless Client Auth (Auto-Registration by Email + Magic-Link Login)
+  // =========================================================================
+
+  app.get('/api/client-auth/session', (req, res) => {
+    const crmStore = readOrdersCrmStore();
+    const legalProfiles = sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles);
+    const session = getVerifiedClientSession(req);
+    if (!session) {
+      res.json({
+        ok: true,
+        authenticated: false,
+        account: null,
+        orders: [],
+        legalProfiles,
+      });
+      return;
+    }
+
+    const existingAccount = crmStore.clientAccounts.find(
+      (a) => a.email === session.email
+    );
+    const matchedOrders = collectOrdersForClientEmail(
+      crmStore.orders,
+      session.email,
+      existingAccount
+    );
+
+    let activeAccount = existingAccount;
+    if (!activeAccount) {
+      const upserted = upsertClientAccountRecord(crmStore.clientAccounts, {
+        email: session.email,
+        orderNumbersToLink: matchedOrders.map((o) => o.orderNumber),
+        contactLine: matchedOrders[0]?.contact ?? '',
+        companyOrInn: matchedOrders[0]?.companyOrInn ?? '',
+        markLoggedIn: false,
+      });
+      crmStore.clientAccounts = upserted.accounts;
+      activeAccount = upserted.account;
+      writeOrdersCrmStore(crmStore);
+    }
+
+    const summaries = matchedOrders.map((ord) =>
+      toClientCabinetOrderSummary(
+        ord,
+        issueOrderRescueToken(ord.orderNumber),
+        legalProfiles
+      )
+    );
+
+    res.json({
+      ok: true,
+      authenticated: true,
+      account: toClientAccountPublicProfile(activeAccount, summaries.length),
+      orders: summaries,
+      legalProfiles,
+    });
+  });
+
+  app.post(
+    '/api/client-auth/request-magic-link',
+    express.json({ limit: '16kb' }),
+    async (req, res) => {
+      if (isBlockedCrossOriginMutation(req)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Кросс-доменный запрос отклонён политикой безопасности',
+        });
+        return;
+      }
+
+      const clientIp = resolveClientIp(req);
+      const ipRate = clientMagicLinkIpLimiter.consume(clientIp);
+      if (!ipRate.allowed) {
+        res.setHeader('Retry-After', String(ipRate.retryAfterSec));
+        res.status(429).json({
+          ok: false,
+          error: `Слишком много запросов ссылки входа. Подождите ${ipRate.retryAfterSec} сек.`,
+        });
+        return;
+      }
+
+      const body = (req.body ?? {}) as { email?: string };
+      const email = normalizeClientEmail(body.email);
+      if (!email) {
+        res.status(400).json({
+          ok: false,
+          error: 'Укажите корректный адрес электронной почты (например, name@company.ru)',
+        });
+        return;
+      }
+
+      const emailRate = clientMagicLinkEmailLimiter.consume(email);
+      if (!emailRate.allowed) {
+        res.setHeader('Retry-After', String(emailRate.retryAfterSec));
+        res.status(429).json({
+          ok: false,
+          error: `Ссылка на этот адрес уже запрашивалась недавно. Подождите ${emailRate.retryAfterSec} сек.`,
+        });
+        return;
+      }
+
+      // Автоматически создаём профиль клиента по почте, если он входит впервые
+      const crmStore = readOrdersCrmStore();
+      const matchedOrders = collectOrdersForClientEmail(
+        crmStore.orders,
+        email,
+        crmStore.clientAccounts.find((a) => a.email === email)
+      );
+      const upserted = upsertClientAccountRecord(crmStore.clientAccounts, {
+        email,
+        orderNumbersToLink: matchedOrders.map((o) => o.orderNumber),
+        contactLine: matchedOrders[0]?.contact ?? '',
+        companyOrInn: matchedOrders[0]?.companyOrInn ?? '',
+        markLoggedIn: false,
+      });
+      crmStore.clientAccounts = upserted.accounts;
+      writeOrdersCrmStore(crmStore);
+
+      const magic = issueClientMagicLinkToken(email, getSessionSecret());
+      const publicOrigin = resolveSafePublicOrigin({
+        configuredOrigin: process.env.APP_URL,
+        hostHeader: req.headers.host,
+        forwardedHost: req.headers['x-forwarded-host'],
+        protocol: req.protocol,
+        forwardedProto: req.headers['x-forwarded-proto'],
+        trustProxy: process.env.TRUST_PROXY === 'true',
+        fallbackOrigin: `http://localhost:${PORT}`,
+      });
+      const magicLinkPath = `/cabinet?magic=${encodeURIComponent(magic.token)}`;
+      const magicLinkUrl = `${publicOrigin}${magicLinkPath}`;
+
+      const configuredGatewayUrl = process.env.MAGIC_LINK_WEBHOOK_URL?.trim() || '';
+      if (configuredGatewayUrl) {
+        const targetCheck = validateOutboundWebhookTarget(configuredGatewayUrl, {
+          allowInternalLoopbackSink: false,
+          localPort: PORT,
+        });
+        const rfSafety = evaluateWebhookEndpointRfSafety(configuredGatewayUrl);
+        if (
+          targetCheck.ok &&
+          rfSafety.isValidUrl &&
+          !rfSafety.isBannedForeignService
+        ) {
+          try {
+            const mailRes = await fetch(configuredGatewayUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                event: 'client.magic_link',
+                to: email,
+                subject: 'Вход в личный кабинет заказов FMWorks (без пароля)',
+                magicLinkUrl,
+                expiresInMinutes: 30,
+              }),
+              signal: AbortSignal.timeout(5000),
+            });
+            if (mailRes.ok) {
+              res.json({
+                ok: true,
+                email,
+                deliveryMode: 'email_gateway',
+                expiresAt: new Date(magic.expiresAt).toISOString(),
+              });
+              return;
+            }
+          } catch {
+            // Fall through to local preview link if mail gateway is unreachable in dev
+          }
+        }
+      }
+
+      res.json({
+        ok: true,
+        email,
+        deliveryMode: 'local_preview',
+        magicLinkPath,
+        magicLinkUrl,
+        expiresAt: new Date(magic.expiresAt).toISOString(),
+      });
+    }
+  );
+
+  app.post(
+    '/api/client-auth/verify-magic-link',
+    express.json({ limit: '32kb' }),
+    (req, res) => {
+      if (isBlockedCrossOriginMutation(req)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Кросс-доменный запрос входа отклонён политикой безопасности',
+        });
+        return;
+      }
+
+      const body = (req.body ?? {}) as {
+        token?: string;
+        localItems?: Array<{ orderNumber?: string; rescueToken?: string }>;
+      };
+
+      const check = verifyClientMagicLinkToken(body.token, getSessionSecret(), {
+        isNonceConsumed: (nonce) => consumedMagicLinkRegistry.isRevoked(nonce),
+      });
+
+      if (!check.ok) {
+        const errorText =
+          check.reason === 'already_used'
+            ? 'Эта одноразовая ссылка уже была использована. Запросите новую ссылку для входа.'
+            : check.reason === 'expired'
+              ? 'Срок действия ссылки истёк (30 минут). Запросите свежую ссылку.'
+              : 'Ссылка для входа недействительна или повреждена.';
+        res.status(400).json({
+          ok: false,
+          reason: check.reason,
+          error: errorText,
+        });
+        return;
+      }
+
+      // Сразу погашаем одноразовый nonce
+      consumedMagicLinkRegistry.revoke(check.payload.nonce, check.payload.exp);
+      persistClientAuthNonces();
+
+      const email = check.payload.email;
+      const crmStore = readOrdersCrmStore();
+      const legalProfiles = sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles);
+      const nowIso = new Date().toISOString();
+
+      // Если на этом устройстве были локальные заказы с валидным rescueToken без почты — склеиваем их с профилем
+      const verifiedDeviceOrders: string[] = [];
+      const rawLocalItems = Array.isArray(body.localItems)
+        ? body.localItems.slice(0, 30)
+        : [];
+      for (const item of rawLocalItems) {
+        const ordNum =
+          typeof item?.orderNumber === 'string' ? item.orderNumber.trim() : '';
+        const tok =
+          typeof item?.rescueToken === 'string' ? item.rescueToken.trim() : '';
+        if (!ordNum || !tok || !verifyOrderRescueToken(ordNum, tok)) continue;
+        const ordIdx = crmStore.orders.findIndex(
+          (o) => o.orderNumber === ordNum && !o.pdnAnonymizedAt
+        );
+        if (ordIdx >= 0) {
+          verifiedDeviceOrders.push(ordNum);
+          if (!crmStore.orders[ordIdx].clientEmail) {
+            crmStore.orders[ordIdx] = {
+              ...crmStore.orders[ordIdx],
+              clientEmail: email,
+              updatedAt: nowIso,
+            };
+          }
+        }
+      }
+
+      const preMatched = collectOrdersForClientEmail(
+        crmStore.orders,
+        email,
+        crmStore.clientAccounts.find((a) => a.email === email)
+      );
+      const allOrderNums = Array.from(
+        new Set([...verifiedDeviceOrders, ...preMatched.map((o) => o.orderNumber)])
+      );
+
+      const upserted = upsertClientAccountRecord(crmStore.clientAccounts, {
+        email,
+        orderNumbersToLink: allOrderNums,
+        contactLine: preMatched[0]?.contact ?? '',
+        companyOrInn: preMatched[0]?.companyOrInn ?? '',
+        markLoggedIn: true,
+        nowIso,
+      });
+      crmStore.clientAccounts = upserted.accounts;
+      writeOrdersCrmStore(crmStore);
+
+      const matchedOrders = collectOrdersForClientEmail(
+        crmStore.orders,
+        email,
+        upserted.account
+      );
+
+      const sessionToken = issueClientSessionToken(email, getSessionSecret());
+      res.setHeader(
+        'Set-Cookie',
+        buildClientSessionSetCookieHeader(
+          sessionToken.token,
+          CLIENT_SESSION_MAX_AGE_SEC,
+          isHttpsRequest(req)
+        )
+      );
+
+      const summaries = matchedOrders.map((ord) =>
+        toClientCabinetOrderSummary(
+          ord,
+          issueOrderRescueToken(ord.orderNumber),
+          legalProfiles
+        )
+      );
+
+      res.json({
+        ok: true,
+        authenticated: true,
+        account: toClientAccountPublicProfile(upserted.account, summaries.length),
+        orders: summaries,
+        legalProfiles,
+      });
+    }
+  );
+
+  app.post(
+    '/api/client-auth/bind-email',
+    express.json({ limit: '32kb' }),
+    (req, res) => {
+      if (isBlockedCrossOriginMutation(req)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Кросс-доменный запрос отклонён политикой безопасности',
+        });
+        return;
+      }
+
+      const body = (req.body ?? {}) as {
+        email?: string;
+        orderNumber?: string;
+        rescueToken?: string;
+        items?: Array<{ orderNumber?: string; rescueToken?: string }>;
+      };
+
+      const email = normalizeClientEmail(body.email);
+      if (!email) {
+        res.status(400).json({
+          ok: false,
+          error: 'Укажите корректный адрес электронной почты (например, name@company.ru)',
+        });
+        return;
+      }
+
+      const candidateItems: Array<{ orderNumber?: string; rescueToken?: string }> = [];
+      if (body.orderNumber && body.rescueToken) {
+        candidateItems.push({
+          orderNumber: body.orderNumber,
+          rescueToken: body.rescueToken,
+        });
+      }
+      if (Array.isArray(body.items)) {
+        candidateItems.push(...body.items.slice(0, 30));
+      }
+
+      const crmStore = readOrdersCrmStore();
+      const legalProfiles = sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles);
+      const nowIso = new Date().toISOString();
+      const boundNumbers: string[] = [];
+      let primaryContact = '';
+      let primaryCompany = '';
+
+      for (const item of candidateItems) {
+        const ordNum =
+          typeof item?.orderNumber === 'string' ? item.orderNumber.trim() : '';
+        const tok =
+          typeof item?.rescueToken === 'string' ? item.rescueToken.trim() : '';
+        if (!ordNum || !tok || !verifyOrderRescueToken(ordNum, tok)) continue;
+        const idx = crmStore.orders.findIndex(
+          (o) => o.orderNumber === ordNum && !o.pdnAnonymizedAt
+        );
+        if (idx >= 0) {
+          crmStore.orders[idx] = {
+            ...crmStore.orders[idx],
+            clientEmail: email,
+            updatedAt: nowIso,
+          };
+          boundNumbers.push(ordNum);
+          if (!primaryContact) primaryContact = crmStore.orders[idx].contact;
+          if (!primaryCompany) primaryCompany = crmStore.orders[idx].companyOrInn;
+        }
+      }
+
+      if (boundNumbers.length === 0) {
+        res.status(403).json({
+          ok: false,
+          error: 'Не удалось подтвердить ключ доступа к заказу для привязки почты',
+        });
+        return;
+      }
+
+      const upserted = upsertClientAccountRecord(crmStore.clientAccounts, {
+        email,
+        orderNumbersToLink: boundNumbers,
+        contactLine: primaryContact,
+        companyOrInn: primaryCompany,
+        markLoggedIn: true,
+        nowIso,
+      });
+      crmStore.clientAccounts = upserted.accounts;
+      writeOrdersCrmStore(crmStore);
+
+      const matchedOrders = collectOrdersForClientEmail(
+        crmStore.orders,
+        email,
+        upserted.account
+      );
+
+      const sessionToken = issueClientSessionToken(email, getSessionSecret());
+      res.setHeader(
+        'Set-Cookie',
+        buildClientSessionSetCookieHeader(
+          sessionToken.token,
+          CLIENT_SESSION_MAX_AGE_SEC,
+          isHttpsRequest(req)
+        )
+      );
+
+      const summaries = matchedOrders.map((ord) =>
+        toClientCabinetOrderSummary(
+          ord,
+          issueOrderRescueToken(ord.orderNumber),
+          legalProfiles
+        )
+      );
+
+      res.json({
+        ok: true,
+        authenticated: true,
+        account: toClientAccountPublicProfile(upserted.account, summaries.length),
+        orders: summaries,
+        legalProfiles,
+      });
+    }
+  );
+
+  app.post('/api/client-auth/logout', (req, res) => {
+    if (isBlockedCrossOriginMutation(req)) {
+      res.status(403).json({ ok: false, error: 'Кросс-доменный запрос выхода отклонён' });
+      return;
+    }
+    const session = getVerifiedClientSession(req);
+    if (session?.nonce) {
+      clientSessionRevocationRegistry.revoke(session.nonce, session.exp);
+      persistClientAuthNonces();
+    }
+    res.setHeader('Set-Cookie', buildClientSessionClearCookieHeader(isHttpsRequest(req)));
+    res.json({ ok: true });
+  });
+
+  // =========================================================================
+  // Personal Client Cabinet Endpoints (Lookup, Batch Status, Preferences & Files)
+  // =========================================================================
+
+  app.post(
+    '/api/client-cabinet/lookup',
+    express.json({ limit: '32kb' }),
+    (req, res) => {
+      const clientIp = resolveClientIp(req);
+      const rate = clientCabinetLookupLimiter.consume(clientIp);
+      if (!rate.allowed) {
+        res.setHeader('Retry-After', String(rate.retryAfterSec));
+        res.status(429).json({
+          ok: false,
+          error: `Слишком много попыток поиска заказа. Подождите ${rate.retryAfterSec} сек.`,
+        });
+        return;
+      }
+
+      const body = (req.body ?? {}) as {
+        orderNumber?: string;
+        verifier?: string;
+      };
+      const orderNumber =
+        typeof body.orderNumber === 'string'
+          ? body.orderNumber.trim().toUpperCase()
+          : '';
+      const verifier =
+        typeof body.verifier === 'string' ? body.verifier.trim() : '';
+
+      if (!/^FM-[A-Z0-9-]{2,20}$/.test(orderNumber)) {
+        res.status(400).json({
+          ok: false,
+          error: 'Укажите номер заказа в формате FM-2510 или FM-HOLD-2854',
+        });
+        return;
+      }
+      if (verifier.length < 4) {
+        res.status(400).json({
+          ok: false,
+          error:
+            'Для проверки доступа укажите последние 4 цифры телефона, @Telegram или ИНН компании',
+        });
+        return;
+      }
+
+      const crmStore = readOrdersCrmStore();
+      const found = crmStore.orders.find(
+        (o) => o.orderNumber.toUpperCase() === orderNumber && !o.pdnAnonymizedAt
+      );
+
+      if (
+        !found ||
+        !matchesOrderLookupVerifier(found.contact, found.companyOrInn, verifier)
+      ) {
+        res.status(404).json({
+          ok: false,
+          error:
+            'Заказ не найден или проверочные данные (телефон / ИНН / @Telegram) не совпали',
+        });
+        return;
+      }
+
+      const rescueToken = issueOrderRescueToken(found.orderNumber);
+      res.json({
+        ok: true,
+        orderNumber: found.orderNumber,
+        rescueToken,
+        order: toClientCabinetOrderSummary(
+          found,
+          rescueToken,
+          sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles)
+        ),
+      });
+    }
+  );
+
+  app.post(
+    '/api/client-cabinet/batch-status',
+    express.json({ limit: '64kb' }),
+    (req, res) => {
+      const body = (req.body ?? {}) as {
+        items?: Array<{ orderNumber?: string; rescueToken?: string }>;
+      };
+      const rawItems = Array.isArray(body.items) ? body.items.slice(0, 30) : [];
+      const crmStore = readOrdersCrmStore();
+      const legalProfiles = sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles);
+      const orders: ClientCabinetOrderSummary[] = [];
+
+      for (const entry of rawItems) {
+        const ordNum =
+          typeof entry?.orderNumber === 'string' ? entry.orderNumber.trim() : '';
+        const token =
+          typeof entry?.rescueToken === 'string' ? entry.rescueToken.trim() : '';
+        if (!ordNum || !token || !verifyOrderRescueToken(ordNum, token)) {
+          continue;
+        }
+        const found = crmStore.orders.find((o) => o.orderNumber === ordNum);
+        if (found) {
+          orders.push(toClientCabinetOrderSummary(found, token, legalProfiles));
+        }
+      }
+
+      res.json({
+        ok: true,
+        orders,
+        legalProfiles,
+      });
+    }
+  );
+
+  app.patch(
+    '/api/orders/:orderNumber/preferences',
+    express.json({ limit: '32kb' }),
+    async (req, res) => {
+      const orderNumber = String(req.params.orderNumber || '').trim();
+      const body = (req.body ?? {}) as {
+        rescueToken?: string;
+        preferredDeliveryChannel?: ClientDeliveryChannel;
+        preferredDeliveryDetail?: string;
+        companyName?: string;
+        companyInn?: string;
+        companyOrInn?: string;
+        wantsDiadocDuplicate?: boolean;
+      };
+
+      const crmStore = readOrdersCrmStore();
+      const idx = crmStore.orders.findIndex((o) => o.orderNumber === orderNumber);
+      if (idx === -1) {
+        res.status(404).json({ ok: false, error: 'Заказ не найден в реестре' });
+        return;
+      }
+
+      const existing = crmStore.orders[idx];
+      if (!canClientAccessOrder(req, existing, body.rescueToken, crmStore)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Недействительный ключ доступа к заказу',
+        });
+        return;
+      }
+      let nextCompanyOrInn = existing.companyOrInn;
+      let nextInnVerified = existing.innVerified;
+      let nextDocumentMeta = existing.documentMeta;
+
+      const hasCompanyUpdate =
+        typeof body.companyName === 'string' ||
+        typeof body.companyInn === 'string' ||
+        typeof body.companyOrInn === 'string';
+
+      if (hasCompanyUpdate) {
+        const parsedFallback =
+          typeof body.companyOrInn === 'string'
+            ? parseCompanyNameAndInn(body.companyOrInn)
+            : { companyName: '', companyInn: '' };
+
+        const rawNameInput =
+          typeof body.companyName === 'string'
+            ? body.companyName
+            : parsedFallback.companyName;
+        const rawInnInput =
+          typeof body.companyInn === 'string'
+            ? body.companyInn
+            : parsedFallback.companyInn || body.companyOrInn || '';
+
+        const innInfo = inspectInnDigits(rawInnInput);
+        if (!innInfo.isCompleteLength || !innInfo.checksumValid) {
+          res.status(400).json({
+            ok: false,
+            error:
+              innInfo.statusMessage ??
+              'Укажите корректный ИНН (10 цифр для компании или 12 цифр для ИП)',
+          });
+          return;
+        }
+
+        const lookedUp = await lookupCounterpartyServerSide(innInfo.digits);
+        const cleanName =
+          rawNameInput.trim().slice(0, 120) ||
+          lookedUp?.shortName ||
+          lookedUp?.legalName ||
+          '';
+
+        if (!cleanName || cleanName.length < 2) {
+          res.status(400).json({
+            ok: false,
+            error: 'Укажите название организации или ИП (от 2 символов)',
+          });
+          return;
+        }
+
+        nextCompanyOrInn = formatStructuredCompanyLine(cleanName, innInfo.digits);
+        nextInnVerified = true;
+
+        if (lookedUp) {
+          nextDocumentMeta = sanitizeOrderDocumentMeta({
+            ...(existing.documentMeta ?? {}),
+            ...counterpartyToDocumentMetaPatch(lookedUp, {
+              wantsDiadocDuplicate:
+                typeof body.wantsDiadocDuplicate === 'boolean'
+                  ? body.wantsDiadocDuplicate
+                  : existing.documentMeta?.wantsDiadocDuplicate,
+            }),
+            customerLegalName:
+              rawNameInput.trim().length >= 2
+                ? rawNameInput.trim()
+                : lookedUp.legalName || cleanName,
+          });
+        }
+      } else if (typeof body.wantsDiadocDuplicate === 'boolean') {
+        nextDocumentMeta = sanitizeOrderDocumentMeta({
+          ...(existing.documentMeta ?? {}),
+          wantsDiadocDuplicate: body.wantsDiadocDuplicate,
+        });
+      }
+
+      const existingPrefs = normalizeDeliveryPreferences(
+        existing.preferredDeliveryChannel,
+        existing.preferredDeliveryDetail,
+        'messenger'
+      );
+      const nextPrefs =
+        body.preferredDeliveryChannel !== undefined ||
+        body.preferredDeliveryDetail !== undefined
+          ? normalizeDeliveryPreferences(
+              body.preferredDeliveryChannel ?? existingPrefs.channel,
+              body.preferredDeliveryDetail !== undefined
+                ? sanitizeDeliveryDetail(body.preferredDeliveryDetail)
+                : existingPrefs.channel === body.preferredDeliveryChannel
+                  ? existingPrefs.detail
+                  : undefined,
+              existingPrefs.channel
+            )
+          : existingPrefs;
+
+      const maybeEmailFromDelivery =
+        nextPrefs.channel === 'email'
+          ? normalizeClientEmail(nextPrefs.detail)
+          : null;
+      const nextClientEmail = existing.clientEmail || maybeEmailFromDelivery || null;
+
+      const updated: CrmOrderRecord = {
+        ...existing,
+        updatedAt: new Date().toISOString(),
+        clientEmail: nextClientEmail,
+        preferredDeliveryChannel: nextPrefs.channel,
+        preferredDeliveryDetail: nextPrefs.detail,
+        companyOrInn: nextCompanyOrInn,
+        innVerified: nextInnVerified,
+        ...(nextDocumentMeta ? { documentMeta: nextDocumentMeta } : {}),
+      };
+      crmStore.orders[idx] = updated;
+      if (nextClientEmail) {
+        const upserted = upsertClientAccountRecord(crmStore.clientAccounts, {
+          email: nextClientEmail,
+          orderNumbersToLink: [updated.orderNumber],
+          contactLine: updated.contact,
+          companyOrInn: updated.companyOrInn,
+          markLoggedIn: false,
+        });
+        crmStore.clientAccounts = upserted.accounts;
+      }
+      writeOrdersCrmStore(crmStore);
+
+      const effectiveRescueToken = issueOrderRescueToken(updated.orderNumber);
+      res.json({
+        ok: true,
+        documentMeta: updated.documentMeta ?? null,
+        order: toClientCabinetOrderSummary(
+          updated,
+          effectiveRescueToken,
+          sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles)
+        ),
+      });
+    }
+  );
+
+  app.post(
+    '/api/orders/:orderNumber/client-upload',
+    express.json({ limit: '12mb' }),
+    (req, res) => {
+      const orderNumber = String(req.params.orderNumber || '').trim();
+      const body = (req.body ?? {}) as {
+        rescueToken?: string;
+        fileName?: string;
+        dataBase64?: string;
+        note?: string;
+      };
+
+      const crmStore = readOrdersCrmStore();
+      const idx = crmStore.orders.findIndex((o) => o.orderNumber === orderNumber);
+      if (idx === -1) {
+        res.status(404).json({ ok: false, error: 'Заказ не найден в реестре' });
+        return;
+      }
+
+      const existing = crmStore.orders[idx];
+      if (!orderNumber || !canClientAccessOrder(req, existing, body.rescueToken, crmStore)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Недействительный ключ доступа для загрузки файла в заказ',
+        });
+        return;
+      }
+
+      const saved = saveBase64OrderAttachment({
+        storageDir: ORDER_UPLOADS_DIR,
+        orderNumber,
+        rawFileName: body.fileName || 'client-material.txt',
+        dataBase64: body.dataBase64 || '',
+        allowedExts: CLIENT_UPLOAD_ALLOWED_EXTS,
+        maxBytes: 7 * 1024 * 1024,
+        fallbackPrefix: 'client-file',
+      });
+
+      if (!saved.ok) {
+        res.status(400).json({ ok: false, error: saved.error });
+        return;
+      }
+
+      const attachment: ClientUploadedAttachment = {
+        id: `cup-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+        fileName: saved.safeFileName,
+        mimeType: saved.mimeType,
+        sizeBytes: saved.sizeBytes,
+        uploadedAt: new Date().toISOString(),
+        note: typeof body.note === 'string' ? body.note.trim().slice(0, 240) : undefined,
+        storageKey: saved.storageKey,
+      };
+
+      const nextUploads = [attachment, ...(existing.clientUploads ?? [])].slice(0, 20);
+      const updated: CrmOrderRecord = {
+        ...existing,
+        updatedAt: attachment.uploadedAt,
+        clientUploads: nextUploads,
+      };
+      crmStore.orders[idx] = updated;
+      writeOrdersCrmStore(crmStore);
+
+      const effectiveRescueToken = issueOrderRescueToken(updated.orderNumber);
+      res.json({
+        ok: true,
+        attachment,
+        order: toClientCabinetOrderSummary(
+          updated,
+          effectiveRescueToken,
+          sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles)
+        ),
+      });
+    }
+  );
+
+  app.get('/api/orders/:orderNumber/deliverables/:fileId', (req, res) => {
+    const orderNumber = String(req.params.orderNumber || '').trim();
+    const fileId = String(req.params.fileId || '').trim();
+    const token =
+      typeof req.query.token === 'string' ? req.query.token.trim() : '';
+    const isAdmin = verifyAdminToken(extractStudioToken(req));
+    const crmStore = readOrdersCrmStore();
+    const order = crmStore.orders.find((o) => o.orderNumber === orderNumber);
+    const deliverable = order?.deliverables?.find((d) => d.id === fileId);
+    if (!order || !deliverable) {
+      res.status(404).json({ ok: false, error: 'Файл не найден' });
+      return;
+    }
+
+    if (!isAdmin && !canClientAccessOrder(req, order, token, crmStore)) {
+      res.status(403).json({ ok: false, error: 'Доступ к файлу заказа закрыт' });
+      return;
+    }
+
+    const absPath = deliverable.storageKey
+      ? resolveContainedStoragePath(ORDER_DELIVERABLES_DIR, deliverable.storageKey)
+      : deliverable.staticAssetUrl
+        ? resolveSeedPublicAudioPath(deliverable.staticAssetUrl)
+        : null;
+
+    if (!absPath || !fs.existsSync(absPath)) {
+      res.status(404).json({ ok: false, error: 'Файл отсутствует на диске' });
+      return;
+    }
+
+    const isAudioPreview =
+      req.query.preview === '1' && deliverable.mimeType.startsWith('audio/');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Type', deliverable.mimeType || 'application/octet-stream');
+    res.setHeader(
+      'Content-Disposition',
+      `${isAudioPreview ? 'inline' : 'attachment'}; filename="${encodeURIComponent(
+        path.basename(deliverable.fileName)
+      )}"`
+    );
+    res.sendFile(absPath);
+  });
+
+  app.get('/api/orders/:orderNumber/client-uploads/:fileId', (req, res) => {
+    const orderNumber = String(req.params.orderNumber || '').trim();
+    const fileId = String(req.params.fileId || '').trim();
+    const token =
+      typeof req.query.token === 'string' ? req.query.token.trim() : '';
+    const isAdmin = verifyAdminToken(extractStudioToken(req));
+    const crmStore = readOrdersCrmStore();
+    const order = crmStore.orders.find((o) => o.orderNumber === orderNumber);
+    const attachment = order?.clientUploads?.find((u) => u.id === fileId);
+    if (!order || !attachment || !attachment.storageKey) {
+      res.status(404).json({ ok: false, error: 'Файл не найден' });
+      return;
+    }
+
+    if (!isAdmin && !canClientAccessOrder(req, order, token, crmStore)) {
+      res.status(403).json({ ok: false, error: 'Доступ к файлу клиента закрыт' });
+      return;
+    }
+
+    const absPath = resolveContainedStoragePath(ORDER_UPLOADS_DIR, attachment.storageKey);
+    if (!absPath || !fs.existsSync(absPath)) {
+      res.status(404).json({ ok: false, error: 'Файл отсутствует на диске' });
+      return;
+    }
+
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Type', attachment.mimeType || 'application/octet-stream');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(path.basename(attachment.fileName))}"`
+    );
+    res.sendFile(absPath);
+  });
+
+  // =========================================================================
   // Studio CRM Orders Funnel & Outbox Dispatch Endpoints
   // =========================================================================
 
@@ -2379,6 +4117,7 @@ async function startServer() {
       dispatchLogs: crmStore.dispatchLogs.slice(0, 25),
       operatingRegime: resolveStudioOperatingRegime(Date.now(), workSchedule),
       legalProfiles: sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles),
+      konturStatus: getKonturIntegrationStatus(),
       settings: {
         telegram: {
           enabled: telegram.enabled,
@@ -2399,6 +4138,13 @@ async function startServer() {
         },
         workSchedule,
       },
+    });
+  });
+
+  app.get('/api/cms/kontur/status', requireStudioAuth, (_req, res) => {
+    res.json({
+      ok: true,
+      konturStatus: getKonturIntegrationStatus(),
     });
   });
 
@@ -2447,6 +4193,10 @@ async function startServer() {
         markContacted?: boolean;
         extendHoldHours?: number;
         callbackPreference?: ClientCallbackPreference;
+        preferredDeliveryChannel?: ClientDeliveryChannel;
+        preferredDeliveryDetail?: string;
+        cloudDiskUrl?: string | null;
+        removeDeliverableId?: string;
       };
 
       const crmStore = readOrdersCrmStore();
@@ -2515,12 +4265,51 @@ async function startServer() {
             ? nextDocumentMeta.customPriceRub
             : existing.totalBudgetRub;
 
+      const nextCloudDiskUrl =
+        body.cloudDiskUrl !== undefined
+          ? sanitizeCloudDiskUrl(body.cloudDiskUrl)
+          : existing.cloudDiskUrl ?? null;
+
+      const nextDeliverables =
+        typeof body.removeDeliverableId === 'string' && body.removeDeliverableId.trim()
+          ? (existing.deliverables ?? []).filter(
+              (d) => d.id !== body.removeDeliverableId?.trim()
+            )
+          : existing.deliverables ?? [];
+
       const updatedOrder: CrmOrderRecord = {
         ...existing,
         stage: nextStage,
         updatedAt: nowIso,
         holdExpiresAt: nextHoldExpiresAt,
         callbackPreference: nextCallbackPref,
+        ...(() => {
+          const existingPrefs = normalizeDeliveryPreferences(
+            existing.preferredDeliveryChannel,
+            existing.preferredDeliveryDetail,
+            'messenger'
+          );
+          if (
+            body.preferredDeliveryChannel !== undefined ||
+            body.preferredDeliveryDetail !== undefined
+          ) {
+            const norm = normalizeDeliveryPreferences(
+              body.preferredDeliveryChannel ?? existingPrefs.channel,
+              body.preferredDeliveryDetail,
+              existingPrefs.channel
+            );
+            return {
+              preferredDeliveryChannel: norm.channel,
+              preferredDeliveryDetail: norm.detail,
+            };
+          }
+          return {
+            preferredDeliveryChannel: existingPrefs.channel,
+            preferredDeliveryDetail: existingPrefs.detail,
+          };
+        })(),
+        cloudDiskUrl: nextCloudDiskUrl,
+        deliverables: nextDeliverables,
         slaState: nextSlaState,
         totalBudgetRub: nextTotalBudgetRub,
         documentMeta: nextDocumentMeta,
@@ -2560,6 +4349,252 @@ async function startServer() {
       res.json({
         ok: true,
         order: updatedOrder,
+      });
+    }
+  );
+
+  app.post(
+    '/api/cms/orders/:orderId/diadoc-draft',
+    requireStudioAuth,
+    express.json({ limit: '32kb' }),
+    async (req, res) => {
+      const { orderId } = req.params;
+      const crmStore = readOrdersCrmStore();
+      const idx = crmStore.orders.findIndex((o) => o.id === orderId);
+      if (idx === -1) {
+        res.status(404).json({ ok: false, error: 'Заказ не найден в реестре CRM' });
+        return;
+      }
+
+      const existing = crmStore.orders[idx];
+      const legalProfiles = sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles);
+      const parsedComp = parseCompanyNameAndInn(existing.companyOrInn);
+      const candidateInn = (
+        existing.documentMeta?.customerInn ||
+        parsedComp.companyInn ||
+        ''
+      )
+        .replace(/\D/g, '')
+        .slice(0, 12);
+
+      let workingMeta: OrderDocumentMeta = sanitizeOrderDocumentMeta(
+        existing.documentMeta ?? {}
+      );
+      if (candidateInn.length === 10 || candidateInn.length === 12) {
+        const lookedUp = await lookupCounterpartyServerSide(candidateInn);
+        if (lookedUp) {
+          workingMeta = sanitizeOrderDocumentMeta({
+            ...counterpartyToDocumentMetaPatch(lookedUp),
+            ...workingMeta,
+            customerEdoBoxId:
+              workingMeta.customerEdoBoxId || lookedUp.diadoc.boxId || undefined,
+            customerEdoOperator:
+              workingMeta.customerEdoOperator ||
+              (lookedUp.diadoc.hasBox ? lookedUp.diadoc.operatorLabel : undefined),
+          });
+        }
+      }
+
+      const suite = assembleProductionDocumentSuite({
+        orderNumber: existing.orderNumber,
+        createdAtIso: existing.createdAt,
+        formatLabel: existing.formatLabel,
+        baseBudgetRub: existing.totalBudgetRub,
+        defaultDurationSec: existing.mediaPlanSnapshot?.spotDurationSec ?? 20,
+        contact: existing.contact,
+        companyOrInn: existing.companyOrInn,
+        briefText: existing.briefText,
+        legalProfiles,
+        documentMeta: workingMeta,
+      });
+
+      if (suite.isNegotiablePendingPrice) {
+        res.status(400).json({
+          ok: false,
+          error:
+            'Для формирования счёта в Контур.Диадок сначала укажите согласованную сумму в карточке пакета документов A4.',
+        });
+        return;
+      }
+
+      const fromBoxId =
+        (process.env.DIADOC_BOX_ID ?? '').trim() || suite.studio.edoParticipantId;
+      const toBoxId = suite.customer.edoBoxId || undefined;
+      const invoiceTextContent = formatProductionSuitePlainSummary(suite, 'invoice');
+      const diadocPayload = buildDiadocDraftPostMessagePayload({
+        suite,
+        fromBoxId,
+        toBoxId,
+        invoiceTextContent,
+      });
+
+      const nowIso = new Date().toISOString();
+      const diadocAuth = await resolveDiadocAuthHeader();
+
+      let nextDraftState: NonNullable<OrderDocumentMeta['diadocDraftState']>;
+      let responseMessage: string;
+      let mode: 'draft_created' | 'queued_local' = 'queued_local';
+
+      if (diadocAuth) {
+        try {
+          const postRes = await fetch(`${getDiadocApiBaseUrl()}/V3/PostMessage`, {
+            method: 'POST',
+            headers: {
+              Authorization: diadocAuth,
+              'Content-Type': 'application/json; charset=utf-8',
+              Accept: 'application/json',
+            },
+            body: JSON.stringify(diadocPayload),
+            signal: AbortSignal.timeout(6000),
+          });
+
+          if (!postRes.ok) {
+            const errText = (await postRes.text()).slice(0, 240);
+            res.status(502).json({
+              ok: false,
+              error: `Ответ шлюза Контур.Диадок HTTP ${postRes.status}: ${errText || 'не удалось сохранить черновик'}`,
+            });
+            return;
+          }
+
+          const respJson = (await postRes.json()) as { MessageId?: string };
+          const msgId =
+            String(respJson?.MessageId || '').trim() ||
+            `DIADOC-${existing.orderNumber}`;
+          mode = 'draft_created';
+          nextDraftState = {
+            status: 'draft_created',
+            draftMessageId: msgId,
+            toBoxId,
+            fromBoxId,
+            documentNumber: suite.invoiceNumber,
+            updatedAt: nowIso,
+            detail: `Черновик счёта № ${suite.invoiceNumber} помещён в папку «Черновики» Контур.Диадока (MessageId: ${msgId}) без списания пакета ЭДО.`,
+          };
+          responseMessage = nextDraftState.detail!;
+        } catch (err) {
+          res.status(502).json({
+            ok: false,
+            error:
+              err instanceof Error
+                ? `Сетевой сбой при обращении к API Контур.Диадок: ${err.message}`
+                : 'Не удалось связаться с API Контур.Диадок',
+          });
+          return;
+        }
+      } else {
+        const localDraftId = `DRAFT-${existing.orderNumber}-${Date.now().toString(36).slice(-4).toUpperCase()}`;
+        nextDraftState = {
+          status: 'queued_local',
+          draftMessageId: localDraftId,
+          toBoxId,
+          fromBoxId,
+          documentNumber: suite.invoiceNumber,
+          updatedAt: nowIso,
+          detail: `Пакет PostMessage (IsDraft=true) для счёта № ${suite.invoiceNumber} подготовлен (${localDraftId}). Для прямой выгрузки в ящик укажите DIADOC_API_KEY в окружении сервера или импортируйте CSV в «Учёт Контур.Экстерна».`,
+        };
+        responseMessage = nextDraftState.detail!;
+      }
+
+      const updatedOrder: CrmOrderRecord = {
+        ...existing,
+        updatedAt: nowIso,
+        documentMeta: sanitizeOrderDocumentMeta({
+          ...workingMeta,
+          diadocDraftState: nextDraftState,
+        }),
+      };
+
+      crmStore.orders[idx] = updatedOrder;
+      writeOrdersCrmStore(crmStore);
+
+      res.json({
+        ok: true,
+        mode,
+        order: updatedOrder,
+        payloadPreview: diadocPayload,
+        message: responseMessage,
+      });
+    }
+  );
+
+  app.post(
+    '/api/cms/orders/:orderId/deliverables',
+    requireStudioAuth,
+    express.json({ limit: '16mb' }),
+    (req, res) => {
+      const { orderId } = req.params;
+      const body = (req.body ?? {}) as {
+        title?: string;
+        kind?: OrderDeliverableKind;
+        fileName?: string;
+        dataBase64?: string;
+      };
+
+      const crmStore = readOrdersCrmStore();
+      const idx = crmStore.orders.findIndex((o) => o.id === orderId);
+      if (idx === -1) {
+        res.status(404).json({ ok: false, error: 'Заказ не найден в реестре CRM' });
+        return;
+      }
+
+      const existing = crmStore.orders[idx];
+      const saved = saveBase64OrderAttachment({
+        storageDir: ORDER_DELIVERABLES_DIR,
+        orderNumber: existing.orderNumber,
+        rawFileName: body.fileName || 'master-spot.wav',
+        dataBase64: body.dataBase64 || '',
+        allowedExts: DELIVERABLE_ALLOWED_EXTS,
+        maxBytes: 10 * 1024 * 1024,
+        fallbackPrefix: 'studio-deliverable',
+      });
+
+      if (!saved.ok) {
+        res.status(400).json({ ok: false, error: saved.error });
+        return;
+      }
+
+      const validKinds: readonly OrderDeliverableKind[] = [
+        'audio_master',
+        'script',
+        'invoice',
+        'passport',
+        'archive',
+      ];
+      const kind: OrderDeliverableKind = validKinds.includes(
+        body.kind as OrderDeliverableKind
+      )
+        ? (body.kind as OrderDeliverableKind)
+        : saved.mimeType.startsWith('audio/')
+          ? 'audio_master'
+          : 'archive';
+
+      const deliverable: OrderDeliverableFile = {
+        id: `deliv-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+        title:
+          typeof body.title === 'string' && body.title.trim()
+            ? body.title.trim().slice(0, 140)
+            : saved.safeFileName,
+        kind,
+        fileName: saved.safeFileName,
+        mimeType: saved.mimeType,
+        sizeBytes: saved.sizeBytes,
+        uploadedAt: new Date().toISOString(),
+        storageKey: saved.storageKey,
+      };
+
+      const updated: CrmOrderRecord = {
+        ...existing,
+        updatedAt: deliverable.uploadedAt,
+        deliverables: [deliverable, ...(existing.deliverables ?? [])].slice(0, 20),
+      };
+      crmStore.orders[idx] = updated;
+      writeOrdersCrmStore(crmStore);
+
+      res.json({
+        ok: true,
+        order: updated,
+        deliverable,
       });
     }
   );

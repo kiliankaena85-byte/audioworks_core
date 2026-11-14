@@ -1,4 +1,10 @@
 import {
+  ClientDeliveryChannel,
+  DeliveryCloudId,
+  DeliveryMessengerId,
+  validateDeliveryEmail,
+} from '../../data/clientCabinetHelpers.ts';
+import {
   inspectBriefForSpamSignals,
   validateCompanyOrInnField,
   validateHumanLeadContact,
@@ -13,6 +19,7 @@ import {
 export type OrderValidationFieldKey =
   | 'brief'
   | 'contact'
+  | 'delivery'
   | 'companyName'
   | 'companyInn'
   | 'companyLine'
@@ -33,6 +40,18 @@ export interface ValidateOrderSubmissionInput {
   isReturningFastTrack: boolean;
   honeypotFilled: boolean;
   pdnConsentAccepted?: boolean;
+  /**
+   * В Варианте 2 («быстрый лид + счёт по желанию») реквизиты компании
+   * проверяются только если клиент явно раскрыл блок счёта или начал вводить ИНН/название.
+   * Если параметр не передан, сохраняется строгая проверка для канала `edo_invoice`.
+   */
+  requireCompanyDetails?: boolean;
+  preferredDeliveryChannel?: ClientDeliveryChannel;
+  deliveryMessenger?: DeliveryMessengerId;
+  deliveryMessengerOther?: string;
+  deliveryCloud?: DeliveryCloudId;
+  deliveryCloudOther?: string;
+  deliveryEmail?: string;
 }
 
 export interface ValidateOrderSubmissionResult {
@@ -41,6 +60,7 @@ export interface ValidateOrderSubmissionResult {
   effectiveCompany: string;
   taskError?: string;
   contactError?: string;
+  deliveryError?: string;
   companyNameError?: string;
   companyInnError?: string;
   companyError?: string;
@@ -60,12 +80,13 @@ export function validateOrderSubmissionFields(
   const hasStructuredCompany = Boolean(
     input.companyName.trim() || input.companyInn.trim()
   );
-  const effectiveCompany = hasStructuredCompany
+  let effectiveCompany = hasStructuredCompany
     ? formatStructuredCompanyLine(input.companyName, input.companyInn)
     : input.legacyCompanyLine.trim() || input.savedVipCompany?.trim() || '';
 
   let taskError: string | undefined;
   let contactError: string | undefined;
+  let deliveryError: string | undefined;
   let companyNameError: string | undefined;
   let companyInnError: string | undefined;
   let companyError: string | undefined;
@@ -107,27 +128,61 @@ export function validateOrderSubmissionFields(
       }
     }
 
+    if (input.preferredDeliveryChannel === 'email') {
+      if (!validateDeliveryEmail(input.deliveryEmail ?? '')) {
+        deliveryError =
+          'Укажите корректный e-mail для отправки готового ролика';
+      }
+    } else if (
+      input.preferredDeliveryChannel === 'messenger' &&
+      input.deliveryMessenger === 'other' &&
+      !(input.deliveryMessengerOther ?? '').trim()
+    ) {
+      deliveryError =
+        'Укажите название мессенджера (например, Viber или VK Мессенджер)';
+    } else if (
+      input.preferredDeliveryChannel === 'cloud' &&
+      input.deliveryCloud === 'other' &&
+      !(input.deliveryCloudOther ?? '').trim()
+    ) {
+      deliveryError =
+        'Укажите удобное облачное хранилище (например, Облако Mail или Nextcloud)';
+    }
+
     const effectivePaymentChannel: PaymentChannelKind =
       input.mode === 'air_plus_production' ? 'edo_invoice' : input.paymentChannel;
 
     const shouldValidateCompanyForm =
-      !input.isReturningFastTrack ||
-      hasStructuredCompany ||
-      (effectivePaymentChannel === 'edo_invoice' && !input.savedVipCompany?.trim());
+      input.mode === 'air_plus_production'
+        ? !input.isReturningFastTrack ||
+          hasStructuredCompany ||
+          !input.savedVipCompany?.trim()
+        : input.requireCompanyDetails !== undefined
+          ? input.requireCompanyDetails || hasStructuredCompany
+          : !input.isReturningFastTrack ||
+            hasStructuredCompany ||
+            (effectivePaymentChannel === 'edo_invoice' && !input.savedVipCompany?.trim());
 
     if (shouldValidateCompanyForm) {
       const detailsValidation = inspectCompanyDetails({
         companyName: input.companyName,
         companyInn: input.companyInn,
-        paymentChannel: effectivePaymentChannel,
+        paymentChannel:
+          input.requireCompanyDetails === false && !hasStructuredCompany
+            ? 'card_online'
+            : input.requireCompanyDetails === true
+              ? 'edo_invoice'
+              : effectivePaymentChannel,
       });
       if (!detailsValidation.valid) {
         companyNameError = detailsValidation.nameError;
         companyInnError = detailsValidation.innError;
+      } else if (hasStructuredCompany && detailsValidation.combinedCompanyLine) {
+        effectiveCompany = detailsValidation.combinedCompanyLine;
       }
     }
 
-    if (!companyNameError && !companyInnError) {
+    if (!companyNameError && !companyInnError && effectiveCompany) {
       const companyValidation = validateCompanyOrInnField(effectiveCompany);
       if (!companyValidation.valid) {
         companyError = companyValidation.error;
@@ -145,6 +200,7 @@ export function validateOrderSubmissionFields(
       ? [
           ['brief', taskError],
           ['contact', contactError],
+          ['delivery', deliveryError],
           ['companyName', companyNameError],
           ['companyInn', companyInnError],
           ['companyLine', companyError],
@@ -152,6 +208,7 @@ export function validateOrderSubmissionFields(
         ]
       : [
           ['contact', contactError],
+          ['delivery', deliveryError],
           ['companyName', companyNameError],
           ['companyInn', companyInnError],
           ['companyLine', companyError],
@@ -168,6 +225,7 @@ export function validateOrderSubmissionFields(
     effectiveCompany,
     taskError,
     contactError,
+    deliveryError,
     companyNameError,
     companyInnError,
     companyError,

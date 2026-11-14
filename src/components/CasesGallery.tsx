@@ -11,6 +11,7 @@ import { PointerEvent as ReactPointerEvent, RefObject, useEffect, useRef, useSta
 import { CasePlayerSnapshot } from '../audio/casePlayerEngine';
 import { useStudioCms } from '../cms/StudioCmsContext';
 import { formatAudioTime } from '../data/audioworksCommercial';
+import { OptimizedImage } from './OptimizedImage';
 import {
   BrandCasePoster,
   buildCaseShareUrl,
@@ -370,20 +371,11 @@ function StudioCommercialStrip({
         isHighlighted ? 'border-[#FF4820]' : 'border-white/10'
       }`}
     >
-      <motion.img
+      <OptimizedImage
         src={reel.coverImageUrl}
+        fallbackSrc={LOCAL_CASE_FALLBACK_IMAGE}
         alt={reel.coverImageAlt}
-        referrerPolicy="no-referrer"
-        loading="lazy"
-        decoding="async"
-        onError={(e) => {
-          const img = e.currentTarget;
-          if (!img.dataset.fallbackApplied) {
-            img.dataset.fallbackApplied = '1';
-            img.src = LOCAL_CASE_FALLBACK_IMAGE;
-          }
-        }}
-        style={imageMotionStyle}
+        motionStyle={imageMotionStyle}
         className="pointer-events-none absolute -inset-6 w-[calc(100%+3rem)] h-[calc(100%+3rem)] max-w-none object-cover opacity-75 brightness-105 will-change-transform"
       />
       <div
@@ -663,20 +655,11 @@ function BrandCaseCard({
         <div
           className={`lg:col-span-6 relative min-h-[260px] sm:min-h-[300px] lg:min-h-full overflow-hidden ${item.posterGradientClass}`}
         >
-          <motion.img
+          <OptimizedImage
             src={item.coverImageUrl}
+            fallbackSrc={LOCAL_CASE_FALLBACK_IMAGE}
             alt={item.coverImageAlt}
-            referrerPolicy="no-referrer"
-            loading="lazy"
-            decoding="async"
-            onError={(e) => {
-              const img = e.currentTarget;
-              if (!img.dataset.fallbackApplied) {
-                img.dataset.fallbackApplied = '1';
-                img.src = LOCAL_CASE_FALLBACK_IMAGE;
-              }
-            }}
-            style={imageMotionStyle}
+            motionStyle={imageMotionStyle}
             className="pointer-events-none absolute -inset-7 w-[calc(100%+3.5rem)] h-[calc(100%+3.5rem)] max-w-none object-cover will-change-transform"
           />
           <div
@@ -711,20 +694,11 @@ function BrandCaseCard({
           : 'border-[#111111]/10 dark:border-white/10'
       }`}
     >
-      <motion.img
+      <OptimizedImage
         src={item.coverImageUrl}
+        fallbackSrc={LOCAL_CASE_FALLBACK_IMAGE}
         alt={item.coverImageAlt}
-        referrerPolicy="no-referrer"
-        loading="lazy"
-        decoding="async"
-        onError={(e) => {
-          const img = e.currentTarget;
-          if (!img.dataset.fallbackApplied) {
-            img.dataset.fallbackApplied = '1';
-            img.src = LOCAL_CASE_FALLBACK_IMAGE;
-          }
-        }}
-        style={imageMotionStyle}
+        motionStyle={imageMotionStyle}
         className="pointer-events-none absolute -inset-7 w-[calc(100%+3.5rem)] h-[calc(100%+3.5rem)] max-w-none object-cover will-change-transform"
       />
 

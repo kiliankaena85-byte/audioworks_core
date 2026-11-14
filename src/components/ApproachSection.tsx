@@ -1,6 +1,7 @@
 import { useSiteTextBlocks } from '../cms/SiteTextBlocksContext';
 import { useStudioCms } from '../cms/StudioCmsContext';
 import { SiteTextBlockId } from '../data/siteTextBlocksData';
+import { OptimizedImage } from './OptimizedImage';
 
 const LOCAL_STUDIO_MIC_FALLBACK =
   '/src/assets/images/hero_studio_editorial_1794399404984.jpg';
@@ -116,19 +117,10 @@ export function ApproachSection() {
             data-testid="approach-studio-card"
             className="group lg:col-span-5 relative overflow-hidden rounded-3xl min-h-[420px] sm:min-h-[480px] lg:h-full bg-[#181514] border border-[#111111]/10 dark:border-white/10 flex flex-col justify-end p-7 sm:p-9"
           >
-            <img
+            <OptimizedImage
               src={neuro.studioPhotoUrl}
+              fallbackSrc={LOCAL_STUDIO_MIC_FALLBACK}
               alt={neuro.studioPhotoAlt}
-              referrerPolicy="no-referrer"
-              loading="lazy"
-              decoding="async"
-              onError={(e) => {
-                const img = e.currentTarget;
-                if (!img.dataset.fallbackApplied) {
-                  img.dataset.fallbackApplied = '1';
-                  img.src = LOCAL_STUDIO_MIC_FALLBACK;
-                }
-              }}
               className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
             />
             <div

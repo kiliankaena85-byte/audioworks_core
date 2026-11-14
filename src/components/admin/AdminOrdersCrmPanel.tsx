@@ -4,15 +4,23 @@ import {
   CheckCircle2,
   Clock,
   Download,
+  ExternalLink,
   FileSpreadsheet,
   FlaskConical,
   RefreshCw,
   Send,
   ShieldCheck,
+  Trash2,
+  Upload,
   UserX,
   Webhook,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  formatFileSizeReadable,
+  OrderDeliverableKind,
+  resolveDeliveryChannelLabel,
+} from '../../data/clientCabinetHelpers';
 import {
   buildWebhookOrderEnvelope,
   computeOrderHoldStatus,
@@ -29,6 +37,11 @@ import {
 import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
 import { formatNumberSpaced, formatRubCompact } from '../../data/radioInventory';
 import {
+  formatKonturExternInvoiceCsv,
+  type KonturIntegrationStatus,
+} from '../../data/konturIntegrationCore';
+import {
+  assembleProductionDocumentSuite,
   createDefaultStudioLegalProfiles,
   OrderDocumentMeta,
   StudioEntityKind,
@@ -150,10 +163,21 @@ export function AdminOrdersCrmPanel({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedOrderId, setSelectedOrderId] = useState<string>('');
 
-  // Локальный черновик заметки продюсера для выбранного заказа
+  // Локальный черновик заметки продюсера и файлов выдачи для выбранного заказа
   const [notesDraft, setNotesDraft] = useState<string>('');
+  const [cloudDiskDraft, setCloudDiskDraft] = useState<string>('');
+  const [deliverableTitleDraft, setDeliverableTitleDraft] = useState<string>('');
+  const [deliverableKindDraft, setDeliverableKindDraft] =
+    useState<OrderDeliverableKind>('audio_master');
+  const [isUploadingDeliverable, setIsUploadingDeliverable] =
+    useState<boolean>(false);
+  const deliverableFileRef = useRef<HTMLInputElement | null>(null);
   const [isUpdatingOrder, setIsUpdatingOrder] = useState<boolean>(false);
   const [isRedelivering, setIsRedelivering] = useState<boolean>(false);
+  const [isCreatingDiadocDraft, setIsCreatingDiadocDraft] = useState<boolean>(false);
+  const [konturStatus, setKonturStatus] = useState<KonturIntegrationStatus | null>(
+    null
+  );
 
   // Модальное окно фирменного пакета документов A4 (КП, Договор + Приложение, Счёт, Паспорт)
   const [edoModalOrder, setEdoModalOrder] = useState<CrmOrderRecord | null>(null);
@@ -223,11 +247,15 @@ export function AdminOrdersCrmPanel({
           dispatchLogs: DispatchAttemptLog[];
           settings: AdminDispatchSettingsResponse;
           legalProfiles?: StudioLegalProfilesConfig;
+          konturStatus?: KonturIntegrationStatus;
         };
 
         setOrders(json.orders);
         setDispatchLogs(json.dispatchLogs);
         applyServerSettings(json.settings);
+        if (json.konturStatus) {
+          setKonturStatus(json.konturStatus);
+        }
         if (json.legalProfiles) {
           setLegalProfiles(json.legalProfiles);
           setLegalDraft(json.legalProfiles);
@@ -299,7 +327,13 @@ export function AdminOrdersCrmPanel({
 
   useEffect(() => {
     setNotesDraft(selectedOrder?.producerNotes ?? '');
-  }, [selectedOrder?.id, selectedOrder?.producerNotes]);
+    setCloudDiskDraft(selectedOrder?.cloudDiskUrl ?? '');
+    setDeliverableTitleDraft('');
+  }, [
+    selectedOrder?.id,
+    selectedOrder?.producerNotes,
+    selectedOrder?.cloudDiskUrl,
+  ]);
 
   // Агрегированные KPI верхнего ряда
   const kpiMetrics = useMemo(() => {
@@ -339,6 +373,8 @@ export function AdminOrdersCrmPanel({
       compliance?: Partial<OrderComplianceChecklist>;
       documentMeta?: OrderDocumentMeta;
       totalBudgetRub?: number;
+      cloudDiskUrl?: string | null;
+      removeDeliverableId?: string;
     },
     successMessage?: string
   ) => {
@@ -376,6 +412,79 @@ export function AdminOrdersCrmPanel({
       });
     } finally {
       setIsUpdatingOrder(false);
+    }
+  };
+
+  const handleUploadDeliverable = async (
+    order: CrmOrderRecord,
+    file: File | null
+  ) => {
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      setFeedbackBanner({
+        kind: 'error',
+        text: 'Файл превышает лимит 10 МБ для прямой загрузки в личный кабинет.',
+      });
+      return;
+    }
+    setIsUploadingDeliverable(true);
+    setFeedbackBanner(null);
+    try {
+      const dataBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const str = typeof reader.result === 'string' ? reader.result : '';
+          const idx = str.indexOf(',');
+          resolve(idx >= 0 ? str.slice(idx + 1) : str);
+        };
+        reader.onerror = () => reject(new Error('Не удалось прочитать файл'));
+        reader.readAsDataURL(file);
+      });
+
+      const res = await fetch(
+        `/api/cms/orders/${encodeURIComponent(order.id)}/deliverables`,
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            ...studioCmsStore.getAuthHeaders(),
+          },
+          body: JSON.stringify({
+            title: deliverableTitleDraft.trim() || file.name,
+            kind: deliverableKindDraft,
+            fileName: file.name,
+            dataBase64,
+          }),
+        }
+      );
+      const json = (await res.json()) as {
+        ok?: boolean;
+        order?: CrmOrderRecord;
+        error?: string;
+      };
+      if (!res.ok || !json.ok || !json.order) {
+        throw new Error(json.error ?? 'Не удалось прикрепить файл выдачи');
+      }
+      setOrders((prev) =>
+        prev.map((o) => (o.id === json.order!.id ? json.order! : o))
+      );
+      setDeliverableTitleDraft('');
+      setFeedbackBanner({
+        kind: 'ok',
+        text: `Файл «${file.name}» загружен в личный кабинет заказа #${order.orderNumber}.`,
+      });
+    } catch (err) {
+      setFeedbackBanner({
+        kind: 'error',
+        text:
+          err instanceof Error ? err.message : 'Ошибка загрузки файла выдачи',
+      });
+    } finally {
+      setIsUploadingDeliverable(false);
+      if (deliverableFileRef.current) {
+        deliverableFileRef.current.value = '';
+      }
     }
   };
 
@@ -657,6 +766,78 @@ export function AdminOrdersCrmPanel({
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadOrderKonturExternCsv = (order: CrmOrderRecord) => {
+    const suite = assembleProductionDocumentSuite({
+      orderNumber: order.orderNumber,
+      createdAtIso: order.createdAt,
+      formatLabel: order.formatLabel,
+      baseBudgetRub: order.totalBudgetRub,
+      defaultDurationSec: order.mediaPlanSnapshot?.spotDurationSec ?? 20,
+      contact: order.contact,
+      companyOrInn: order.companyOrInn,
+      briefText: order.briefText,
+      legalProfiles,
+      documentMeta: order.documentMeta ?? null,
+    });
+    const csv = formatKonturExternInvoiceCsv(suite);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `FMWorks-KonturExtern-${order.orderNumber}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const handleCreateDiadocDraft = async (order: CrmOrderRecord) => {
+    setIsCreatingDiadocDraft(true);
+    setFeedbackBanner(null);
+    try {
+      const res = await fetch(`/api/cms/orders/${order.id}/diadoc-draft`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          ...studioCmsStore.getAuthHeaders(),
+        },
+        body: JSON.stringify({}),
+      });
+      const json = (await res.json()) as {
+        ok: boolean;
+        order?: CrmOrderRecord;
+        message?: string;
+        error?: string;
+      };
+      if (!res.ok || !json.ok || !json.order) {
+        throw new Error(
+          json.error ?? 'Не удалось сформировать черновик счёта для Контур.Диадока'
+        );
+      }
+      setOrders((prev) => prev.map((o) => (o.id === json.order!.id ? json.order! : o)));
+      if (edoModalOrder?.id === json.order.id) {
+        setEdoModalOrder(json.order);
+      }
+      setFeedbackBanner({
+        kind: 'ok',
+        text:
+          json.message ??
+          `Черновик счёта по сделке #${order.orderNumber} сформирован для Контур.Диадока (IsDraft).`,
+      });
+    } catch (err) {
+      setFeedbackBanner({
+        kind: 'error',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Ошибка подготовки черновика Контур.Диадока',
+      });
+    } finally {
+      setIsCreatingDiadocDraft(false);
+    }
   };
 
   const samplePreviewOrder = selectedOrder ?? orders[0] ?? null;
@@ -1362,6 +1543,307 @@ export function AdminOrdersCrmPanel({
                                 <span className="leading-snug">{item.label}</span>
                               </label>
                             ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Контур.Диадок (ЭДО IsDraft) и Учёт в Контур.Экстерне */}
+                      {(() => {
+                        const orderSuite = assembleProductionDocumentSuite({
+                          orderNumber: selectedOrder.orderNumber,
+                          createdAtIso: selectedOrder.createdAt,
+                          formatLabel: selectedOrder.formatLabel,
+                          baseBudgetRub: selectedOrder.totalBudgetRub,
+                          defaultDurationSec:
+                            selectedOrder.mediaPlanSnapshot?.spotDurationSec ?? 20,
+                          contact: selectedOrder.contact,
+                          companyOrInn: selectedOrder.companyOrInn,
+                          briefText: selectedOrder.briefText,
+                          legalProfiles,
+                          documentMeta: selectedOrder.documentMeta ?? null,
+                        });
+                        const draftState = selectedOrder.documentMeta?.diadocDraftState;
+                        return (
+                          <div
+                            data-testid="crm-kontur-edo-panel"
+                            className="pb-5 border-b border-[#111111]/10 dark:border-white/10 space-y-3"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div className="space-y-1 min-w-0">
+                                <h3 className="text-xs font-bold uppercase tracking-wider text-[#111111]/58 dark:text-[#F4F3EF]/58">
+                                  Контур.Диадок (ЭДО) и Учёт в Контур.Экстерне
+                                </h3>
+                                <p className="text-xs text-[#111111] dark:text-[#F4F3EF]">
+                                  <strong>{orderSuite.customer.displayName}</strong>
+                                  {orderSuite.customer.inn
+                                    ? ` · ИНН ${orderSuite.customer.inn}`
+                                    : ' · ИНН не указан клиентом'}
+                                  {orderSuite.customer.kpp
+                                    ? ` · КПП ${orderSuite.customer.kpp}`
+                                    : ''}
+                                  {orderSuite.customer.ogrn
+                                    ? ` · ${
+                                        orderSuite.customer.isIpByInn ? 'ОГРНИП' : 'ОГРН'
+                                      } ${orderSuite.customer.ogrn}`
+                                    : ''}
+                                </p>
+                                <p className="text-[11px] text-[#111111]/62 dark:text-[#F4F3EF]/62">
+                                  {orderSuite.customer.edoBoxId
+                                    ? `Ящик Диадока Заказчика: ${orderSuite.customer.edoBoxId}`
+                                    : 'Ящик ЭДО определяется по ИНН при отправке'}
+                                  {selectedOrder.documentMeta?.wantsDiadocDuplicate
+                                    ? ' · Клиент запросил дубликат счёта в Диадок'
+                                    : ''}
+                                  {konturStatus?.diadocConfigured
+                                    ? ' · API Диадока подключён'
+                                    : ' · Безопасный режим IsDraft (без КЭП на сайте)'}
+                                </p>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                                <button
+                                  type="button"
+                                  disabled={
+                                    isCreatingDiadocDraft ||
+                                    orderSuite.isNegotiablePendingPrice
+                                  }
+                                  data-testid="crm-create-diadoc-draft-btn"
+                                  onClick={() => void handleCreateDiadocDraft(selectedOrder)}
+                                  className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                                >
+                                  <Building2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                                  <span>
+                                    {isCreatingDiadocDraft
+                                      ? 'Формирование…'
+                                      : 'В черновики Диадока (IsDraft)'}
+                                  </span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  disabled={orderSuite.isNegotiablePendingPrice}
+                                  data-testid="crm-download-extern-csv-btn"
+                                  onClick={() =>
+                                    handleDownloadOrderKonturExternCsv(selectedOrder)
+                                  }
+                                  className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                                >
+                                  <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                                  <span>CSV для Контур.Экстерна</span>
+                                </button>
+                              </div>
+                            </div>
+
+                            {draftState && draftState.status !== 'not_sent' && (
+                              <p
+                                data-testid="crm-diadoc-draft-status"
+                                className={`text-xs font-medium ${
+                                  draftState.status === 'error'
+                                    ? 'text-[#DC2626] dark:text-[#F87171]'
+                                    : 'text-[#15803D] dark:text-[#4ADE80]'
+                                }`}
+                              >
+                                {draftState.detail ||
+                                  `Черновик № ${draftState.documentNumber ?? orderSuite.invoiceNumber} сохранён (${draftState.draftMessageId ?? 'IsDraft'}).`}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                      {/* Выдача материалов клиенту (Личный кабинет + Яндекс / Google Диск) */}
+                      <div
+                        data-testid="crm-client-deliverables-panel"
+                        className="pb-5 border-b border-[#111111]/10 dark:border-white/10 space-y-4"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <h3 className="text-xs font-bold uppercase tracking-wider text-[#111111]/58 dark:text-[#F4F3EF]/58">
+                              Выдача материалов клиенту (Личный кабинет)
+                            </h3>
+                            <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72 mt-0.5">
+                              Предпочитаемый способ клиента:{' '}
+                              <strong>
+                                {resolveDeliveryChannelLabel(
+                                  selectedOrder.preferredDeliveryChannel,
+                                  selectedOrder.preferredDeliveryDetail
+                                )}
+                              </strong>
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Ссылка на облачное хранилище */}
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <input
+                            type="url"
+                            aria-label="Ссылка на облачное хранилище (Яндекс Диск, Google Диск, Dropbox)"
+                            data-testid="crm-cloud-disk-input"
+                            value={cloudDiskDraft}
+                            onChange={(e) => setCloudDiskDraft(e.target.value)}
+                            placeholder="https://disk.yandex.ru/d/... или https://drive.google.com/..."
+                            className="flex-1 min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                          />
+                          <button
+                            type="button"
+                            disabled={
+                              isUpdatingOrder ||
+                              cloudDiskDraft === (selectedOrder.cloudDiskUrl ?? '')
+                            }
+                            data-testid="crm-save-cloud-disk-btn"
+                            onClick={() =>
+                              void patchOrderOnServer(
+                                selectedOrder.id,
+                                { cloudDiskUrl: cloudDiskDraft.trim() || null },
+                                'Ссылка на облачную папку сохранена для клиента.'
+                              )
+                            }
+                            className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820] disabled:opacity-40 cursor-pointer whitespace-nowrap"
+                          >
+                            Сохранить ссылку на диск
+                          </button>
+                        </div>
+
+                        {/* Загрузка файла выдачи в Личный кабинет */}
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                          <input
+                            type="text"
+                            aria-label="Название файла для клиента"
+                            value={deliverableTitleDraft}
+                            onChange={(e) => setDeliverableTitleDraft(e.target.value)}
+                            placeholder="Название (напр. Финальный мастер 20 сек WAV)"
+                            className="sm:col-span-5 min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                          />
+                          <select
+                            aria-label="Тип файла выдачи"
+                            value={deliverableKindDraft}
+                            onChange={(e) =>
+                              setDeliverableKindDraft(
+                                e.target.value as OrderDeliverableKind
+                              )
+                            }
+                            className="sm:col-span-3 min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                          >
+                            <option value="audio_master">Аудиомастер</option>
+                            <option value="script">Сценарий</option>
+                            <option value="passport">Паспорт прав</option>
+                            <option value="invoice">Счёт / документы</option>
+                            <option value="archive">Архив / прочее</option>
+                          </select>
+                          <div className="sm:col-span-4">
+                            <input
+                              ref={deliverableFileRef}
+                              type="file"
+                              data-testid="crm-deliverable-file-input"
+                              onChange={(e) =>
+                                void handleUploadDeliverable(
+                                  selectedOrder,
+                                  e.target.files?.[0] ?? null
+                                )
+                              }
+                              className="sr-only"
+                            />
+                            <button
+                              type="button"
+                              disabled={isUploadingDeliverable}
+                              data-testid="crm-upload-deliverable-btn"
+                              onClick={() => deliverableFileRef.current?.click()}
+                              className="w-full min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              <Upload className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                              <span>
+                                {isUploadingDeliverable
+                                  ? 'Загрузка…'
+                                  : 'Загрузить файл клиенту'}
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Список выданных файлов и вложений клиента */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                          <div className="space-y-1.5">
+                            <p className="font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                              Файлы в кабинете клиента (
+                              {selectedOrder.deliverables?.length ?? 0}):
+                            </p>
+                            {!selectedOrder.deliverables ||
+                            selectedOrder.deliverables.length === 0 ? (
+                              <p className="text-[#111111]/48 dark:text-[#F4F3EF]/48">
+                                Пока нет загруженных файлов выдачи.
+                              </p>
+                            ) : (
+                              <ul className="space-y-1.5">
+                                {selectedOrder.deliverables.map((d) => (
+                                  <li
+                                    key={d.id}
+                                    className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/8 dark:border-white/8"
+                                  >
+                                    <span className="truncate font-medium">
+                                      {d.title}{' '}
+                                      <span className="text-[#111111]/50 dark:text-[#F4F3EF]/50">
+                                        ({formatFileSizeReadable(d.sizeBytes)})
+                                      </span>
+                                    </span>
+                                    <button
+                                      type="button"
+                                      disabled={isUpdatingOrder}
+                                      aria-label={`Удалить файл ${d.title}`}
+                                      onClick={() =>
+                                        void patchOrderOnServer(
+                                          selectedOrder.id,
+                                          { removeDeliverableId: d.id },
+                                          'Файл удалён из выдачи заказа.'
+                                        )
+                                      }
+                                      className="p-1 text-[#111111]/50 hover:text-[#DC2626] cursor-pointer shrink-0"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <p className="font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                              Материалы от клиента (
+                              {selectedOrder.clientUploads?.length ?? 0}):
+                            </p>
+                            {!selectedOrder.clientUploads ||
+                            selectedOrder.clientUploads.length === 0 ? (
+                              <p className="text-[#111111]/48 dark:text-[#F4F3EF]/48">
+                                Клиент не догружал файлы из кабинета.
+                              </p>
+                            ) : (
+                              <ul className="space-y-1.5">
+                                {selectedOrder.clientUploads.map((u) => (
+                                  <li
+                                    key={u.id}
+                                    className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/8 dark:border-white/8"
+                                  >
+                                    <span className="truncate">
+                                      {u.fileName}
+                                      {u.note ? ` · ${u.note}` : ''}
+                                    </span>
+                                    <a
+                                      href={`/api/orders/${encodeURIComponent(
+                                        selectedOrder.orderNumber
+                                      )}/client-uploads/${encodeURIComponent(u.id)}`}
+                                      download={u.fileName}
+                                      className="text-[#FF4820] hover:underline inline-flex items-center gap-1 shrink-0"
+                                    >
+                                      <span>Скачать</span>
+                                      <ExternalLink
+                                        className="w-3 h-3"
+                                        aria-hidden="true"
+                                      />
+                                    </a>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -2145,7 +2627,7 @@ export function AdminOrdersCrmPanel({
 
                 <div className="space-y-1">
                   <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                    Идентификатор ЭДО (Диадок / СБИС)
+                    BoxId в Контур.Диадоке (Учёт в Контур.Экстерне)
                   </label>
                   <input
                     type="text"

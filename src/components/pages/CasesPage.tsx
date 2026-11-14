@@ -27,6 +27,7 @@ import {
 } from '../../data/platformRouter';
 import { formatNumberSpaced, radioInventoryStore } from '../../data/radioInventory';
 import { CasesGallery } from '../CasesGallery';
+import { OptimizedImage } from '../OptimizedImage';
 
 interface CasesPageProps {
   caseSlug?: string;
@@ -144,19 +145,10 @@ export function CasesPage({
                   className="group rounded-3xl overflow-hidden bg-[#EFECE5]/80 dark:bg-[#15151A] border border-[#111111]/10 dark:border-white/10 hover:border-[#FF4820]/60 transition-colors flex flex-col justify-between"
                 >
                   <div className="relative h-56 sm:h-64 overflow-hidden bg-[#18181D]">
-                    <img
+                    <OptimizedImage
                       src={spec.coverImageUrl}
+                      fallbackSrc={LOCAL_EDITORIAL_IMAGES.studioHero}
                       alt={spec.coverImageAlt}
-                      referrerPolicy="no-referrer"
-                      loading="lazy"
-                      decoding="async"
-                      onError={(e) => {
-                        const img = e.currentTarget;
-                        if (!img.dataset.fallbackApplied) {
-                          img.dataset.fallbackApplied = '1';
-                          img.src = LOCAL_EDITORIAL_IMAGES.studioHero;
-                        }
-                      }}
                       className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                     />
                     <div
@@ -340,20 +332,11 @@ function CaseDetailSubpage({
           </div>
 
           <div className={`lg:col-span-5 relative min-h-[280px] lg:min-h-full ${item.posterGradientClass}`}>
-            <img
+            <OptimizedImage
               src={item.coverImageUrl}
+              fallbackSrc={LOCAL_EDITORIAL_IMAGES.studioHero}
               alt={item.coverImageAlt}
-              referrerPolicy="no-referrer"
-              loading="eager"
-              decoding="async"
-              fetchPriority="high"
-              onError={(e) => {
-                const img = e.currentTarget;
-                if (!img.dataset.fallbackApplied) {
-                  img.dataset.fallbackApplied = '1';
-                  img.src = LOCAL_EDITORIAL_IMAGES.studioHero;
-                }
-              }}
+              priority
               className="w-full h-full object-cover"
             />
           </div>
@@ -639,20 +622,11 @@ function IndustrySolutionSubpage({
             </div>
 
             <div className="lg:col-span-5 rounded-3xl overflow-hidden min-h-[280px] lg:min-h-full bg-[#18181D] border border-[#111111]/10 dark:border-white/10">
-              <img
+              <OptimizedImage
                 src={spec.coverImageUrl}
+                fallbackSrc={LOCAL_EDITORIAL_IMAGES.studioHero}
                 alt={spec.coverImageAlt}
-                referrerPolicy="no-referrer"
-                loading="eager"
-                decoding="async"
-                fetchPriority="high"
-                onError={(e) => {
-                  const img = e.currentTarget;
-                  if (!img.dataset.fallbackApplied) {
-                    img.dataset.fallbackApplied = '1';
-                    img.src = LOCAL_EDITORIAL_IMAGES.studioHero;
-                  }
-                }}
+                priority
                 className="w-full h-full object-cover"
               />
             </div>

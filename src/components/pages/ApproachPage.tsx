@@ -14,6 +14,7 @@ import {
 import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
 import { PlatformRoute } from '../../data/platformRouter';
 import { ApproachSection } from '../ApproachSection';
+import { OptimizedImage } from '../OptimizedImage';
 
 interface ApproachPageProps {
   articleSlug?: string;
@@ -367,18 +368,10 @@ export function ApproachPage({
 
             <div className="lg:col-span-5">
               <div className="relative overflow-hidden rounded-3xl aspect-[16/10] bg-[#141418] border border-[#111111]/10 dark:border-white/10">
-                <img
+                <OptimizedImage
                   src={LOCAL_EDITORIAL_IMAGES.radioAttention}
+                  fallbackSrc={LOCAL_EDITORIAL_IMAGES.studioHero}
                   alt="Акустические деревянные панели вещательной студии в тёплом архитектурном свете"
-                  loading="lazy"
-                  decoding="async"
-                  onError={(e) => {
-                    const img = e.currentTarget;
-                    if (!img.dataset.fallbackApplied) {
-                      img.dataset.fallbackApplied = '1';
-                      img.src = LOCAL_EDITORIAL_IMAGES.studioHero;
-                    }
-                  }}
                   className="w-full h-full object-cover"
                 />
               </div>

@@ -252,6 +252,16 @@ export function Footer({
                     : 'Заказать аудиоролик →'}
                 </a>
               </li>
+              <li>
+                <a
+                  href="/cabinet"
+                  data-testid="footer-cabinet-link"
+                  onClick={(e) => handleRouteClick(e, { kind: 'cabinet' })}
+                  className="inline-flex py-0.5 text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors"
+                >
+                  Личный кабинет заказов
+                </a>
+              </li>
             </ul>
           </div>
 

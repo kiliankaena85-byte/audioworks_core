@@ -1,3 +1,4 @@
+import { resolveOfflineCounterpartyByInn } from '../../data/konturIntegrationCore.ts';
 import {
   sanitizePlainLeadText,
   validateCompanyOrInnField,
@@ -143,21 +144,44 @@ export function parseCompanyNameAndInn(companyLine: string): ParsedCompanyDetail
 }
 
 /**
- * Проверяет форму реквизитов компании (Название + ИНН) перед отправкой заявки.
- * Для безналичного расчёта и ЭДО оба поля обязательны, чтобы сразу сформировать договор и счёт.
- * Для оплаты картой / СБП (54-ФЗ) поля необязательны, но при заполнении проверяются.
+ * Проверяет форму реквизитов компании (ИНН + Название) перед отправкой заявки.
+ * Если клиент ввёл только валидный ИНН (10/12 цифр по ключу ФНС), название подтягивается автоматически.
+ * Если и название, и ИНН пусты (или ИНН невалиден), в режиме счёта выводятся понятные подсказки.
  */
 export function inspectCompanyDetails(params: {
   companyName: string;
   companyInn: string;
   paymentChannel: PaymentChannelKind;
 }): CompanyDetailsInspection {
-  const normalizedName = sanitizePlainLeadText(params.companyName, 120);
+  let normalizedName = sanitizePlainLeadText(params.companyName, 120);
   const normalizedInn = normalizeInnDigits(params.companyInn);
   const isEdo = params.paymentChannel === 'edo_invoice';
 
   let nameError: string | undefined;
   let innError: string | undefined;
+
+  const innInfo = inspectInnDigits(normalizedInn);
+  if (normalizedInn) {
+    if (!innInfo.isCompleteLength) {
+      innError = 'ИНН должен содержать ровно 10 цифр (юрлицо) или 12 цифр (ИП)';
+    } else if (!innInfo.checksumValid) {
+      innError =
+        'Контрольное число ИНН ФНС не совпадает — проверьте правильность цифр ИНН';
+    }
+  } else if (isEdo) {
+    innError = 'Укажите ИНН (10 или 12 цифр) для автоматического формирования договора и счёта';
+  }
+
+  const innVerified = Boolean(
+    normalizedInn && innInfo.isCompleteLength && innInfo.checksumValid
+  );
+
+  if (!normalizedName && innVerified) {
+    const resolved = resolveOfflineCounterpartyByInn(normalizedInn);
+    if (resolved?.shortName) {
+      normalizedName = sanitizePlainLeadText(resolved.shortName, 120);
+    }
+  }
 
   if (normalizedName) {
     if (normalizedName.length < 2) {
@@ -174,20 +198,6 @@ export function inspectCompanyDetails(params: {
     nameError = 'Укажите название компании или ИП для автоматического договора и счёта ЭДО';
   }
 
-  const innInfo = inspectInnDigits(normalizedInn);
-  if (normalizedInn) {
-    if (!innInfo.isCompleteLength) {
-      innError = 'ИНН должен содержать ровно 10 цифр (юрлицо) или 12 цифр (ИП)';
-    } else if (!innInfo.checksumValid) {
-      innError =
-        'Контрольное число ИНН ФНС не совпадает — проверьте правильность цифр ИНН';
-    }
-  } else if (isEdo) {
-    innError = 'Укажите ИНН (10 или 12 цифр) для автоматического формирования договора и счёта';
-  }
-
-  const innVerified = Boolean(normalizedInn && innInfo.isCompleteLength && innInfo.checksumValid);
-
   return {
     valid: !nameError && !innError,
     normalizedName,
@@ -199,3 +209,4 @@ export function inspectCompanyDetails(params: {
     innError,
   };
 }
+

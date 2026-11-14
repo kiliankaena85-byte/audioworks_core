@@ -1,37 +1,19 @@
 import { useEffect, useRef } from 'react';
 import {
-  createClsSessionWindowAccumulator,
-  createInpInteractionTracker,
-  createWebVitalSnapshot,
+  DEFAULT_WEB_VITALS_ENDPOINT,
+  WebVitals,
+} from '../utils/performance';
+import {
   DEFAULT_LONG_TASK_THRESHOLD_MS,
   extractLongTaskBottleneck,
-  extractNavigationTimingSummary,
   formatLongTaskLogLine,
-  formatWebVitalLogLine,
-  InteractionEntryLike,
-  LayoutShiftEntryLike,
   LongTaskEntryLike,
-  NavigationTimingLike,
-  WebVitalMetricName,
-  WebVitalMetricSnapshot,
 } from '../utils/performanceMetrics';
-
-interface LargestContentfulPaintEntryLike extends PerformanceEntry {
-  element?: Element | null;
-  size?: number;
-}
 
 export interface PerformanceMonitorProps {
   enabled?: boolean;
   longTaskThresholdMs?: number;
   routeKey?: string;
-}
-
-function describeElementSelector(element: Element | null | undefined): string | undefined {
-  if (!element) return undefined;
-  const tag = element.tagName.toLowerCase();
-  const idPart = element.id ? `#${element.id}` : '';
-  return `${tag}${idPart}`;
 }
 
 function isSupportedEntryType(type: string): boolean {
@@ -41,8 +23,8 @@ function isSupportedEntryType(type: string): boolean {
 }
 
 /**
- * Безголовый компонент мониторинга Core Web Vitals (TTFB, FCP, LCP, CLS, INP)
- * и длинных задач (Long Tasks > 50 мс) в консоли разработчика без вывода в UI.
+ * Безголовый компонент мониторинга Core Web Vitals (`CLS`, `LCP`, `FID`, `INP`, `FCP`, `TTFB`)
+ * через библиотеку `web-vitals` (`WebVitals`) и длинных задач (Long Tasks > 50 мс) без вывода в UI.
  */
 export function PerformanceMonitor({
   enabled = true,
@@ -53,143 +35,28 @@ export function PerformanceMonitor({
   latestRouteRef.current = routeKey;
 
   useEffect(() => {
-    if (
-      !enabled ||
-      typeof window === 'undefined' ||
-      typeof performance === 'undefined' ||
-      typeof PerformanceObserver === 'undefined'
-    ) {
+    if (!enabled || typeof window === 'undefined') {
       return;
     }
 
-    const observers: PerformanceObserver[] = [];
-    const metricsMap = new Map<WebVitalMetricName, WebVitalMetricSnapshot>();
-    const clsAccumulator = createClsSessionWindowAccumulator();
-    const inpTracker = createInpInteractionTracker();
-    let latestLcpEntry: LargestContentfulPaintEntryLike | null = null;
+    const stopWebVitals = WebVitals.init({
+      endpoint: DEFAULT_WEB_VITALS_ENDPOINT,
+      logToConsole: true,
+      reportAllChanges: false,
+      getRoute: () => latestRouteRef.current,
+    });
+
+    let longTaskObserver: PerformanceObserver | null = null;
     let longTaskCount = 0;
     let totalLongTaskBlockingMs = 0;
     let isSessionFlushed = false;
 
-    const recordMetric = (
-      snapshot: WebVitalMetricSnapshot,
-      emitNow: boolean
-    ) => {
-      metricsMap.set(snapshot.name, snapshot);
-      if (emitNow) {
-        console.info(formatWebVitalLogLine(snapshot), snapshot);
-      }
-    };
-
-    // 1. TTFB и Navigation Timing
-    try {
-      const navEntries = performance.getEntriesByType(
-        'navigation'
-      ) as unknown as NavigationTimingLike[];
-      const navSummary = extractNavigationTimingSummary(navEntries[0]);
-      if (navSummary) {
-        recordMetric(
-          createWebVitalSnapshot(
-            'TTFB',
-            navSummary.ttfbMs,
-            latestRouteRef.current,
-            navSummary.domContentLoadedMs !== null
-              ? `DCL ${navSummary.domContentLoadedMs}ms`
-              : undefined
-          ),
-          true
-        );
-      }
-    } catch {
-      // Игнорируем ограничения доступа к Navigation Timing в изолированных контекстах
-    }
-
-    // 2. First Contentful Paint (FCP)
-    if (isSupportedEntryType('paint')) {
+    if (
+      typeof performance !== 'undefined' &&
+      isSupportedEntryType('longtask')
+    ) {
       try {
-        const paintObserver = new PerformanceObserver((list) => {
-          for (const entry of list.getEntries()) {
-            if (entry.name === 'first-contentful-paint') {
-              recordMetric(
-                createWebVitalSnapshot(
-                  'FCP',
-                  entry.startTime,
-                  latestRouteRef.current
-                ),
-                true
-              );
-              paintObserver.disconnect();
-              break;
-            }
-          }
-        });
-        paintObserver.observe({ type: 'paint', buffered: true });
-        observers.push(paintObserver);
-      } catch {
-        // Не поддерживается данным браузером
-      }
-    }
-
-    // 3. Largest Contentful Paint (LCP)
-    if (isSupportedEntryType('largest-contentful-paint')) {
-      try {
-        const lcpObserver = new PerformanceObserver((list) => {
-          const entries = list.getEntries() as LargestContentfulPaintEntryLike[];
-          const last = entries[entries.length - 1];
-          if (last) {
-            latestLcpEntry = last;
-          }
-        });
-        lcpObserver.observe({
-          type: 'largest-contentful-paint',
-          buffered: true,
-        });
-        observers.push(lcpObserver);
-      } catch {
-        // Не поддерживается данным браузером
-      }
-    }
-
-    // 4. Cumulative Layout Shift (CLS)
-    if (isSupportedEntryType('layout-shift')) {
-      try {
-        const clsObserver = new PerformanceObserver((list) => {
-          const entries = list.getEntries() as unknown as LayoutShiftEntryLike[];
-          for (const entry of entries) {
-            clsAccumulator.addEntry(entry);
-          }
-        });
-        clsObserver.observe({ type: 'layout-shift', buffered: true });
-        observers.push(clsObserver);
-      } catch {
-        // Не поддерживается данным браузером
-      }
-    }
-
-    // 5. Interaction to Next Paint (INP)
-    if (isSupportedEntryType('event')) {
-      try {
-        const inpObserver = new PerformanceObserver((list) => {
-          const entries = list.getEntries() as unknown as InteractionEntryLike[];
-          for (const entry of entries) {
-            inpTracker.addEntry(entry);
-          }
-        });
-        inpObserver.observe({
-          type: 'event',
-          buffered: true,
-          durationThreshold: 16,
-        } as PerformanceObserverInit);
-        observers.push(inpObserver);
-      } catch {
-        // Не поддерживается данным браузером
-      }
-    }
-
-    // 6. Long Tasks (> 50 мс) — немедленное логирование узких мест
-    if (isSupportedEntryType('longtask')) {
-      try {
-        const longTaskObserver = new PerformanceObserver((list) => {
+        longTaskObserver = new PerformanceObserver((list) => {
           const entries = list.getEntries() as unknown as LongTaskEntryLike[];
           for (const entry of entries) {
             const bottleneck = extractLongTaskBottleneck(
@@ -208,7 +75,6 @@ export function PerformanceMonitor({
           }
         });
         longTaskObserver.observe({ type: 'longtask', buffered: true });
-        observers.push(longTaskObserver);
       } catch {
         // Не поддерживается данным браузером
       }
@@ -218,40 +84,12 @@ export function PerformanceMonitor({
       if (isSessionFlushed) return;
       isSessionFlushed = true;
 
-      if (latestLcpEntry) {
-        recordMetric(
-          createWebVitalSnapshot(
-            'LCP',
-            latestLcpEntry.startTime,
-            latestRouteRef.current,
-            describeElementSelector(latestLcpEntry.element)
-          ),
-          false
-        );
-      }
-
-      recordMetric(
-        createWebVitalSnapshot(
-          'CLS',
-          clsAccumulator.getMaxScore(),
-          latestRouteRef.current
-        ),
-        false
-      );
-
-      const inpMs = inpTracker.getInpMs();
-      if (inpMs !== null) {
-        recordMetric(
-          createWebVitalSnapshot('INP', inpMs, latestRouteRef.current),
-          false
-        );
-      }
-
-      if (metricsMap.size > 0 || longTaskCount > 0) {
+      const collectedMetrics = WebVitals.getCollectedMetrics();
+      if (Object.keys(collectedMetrics).length > 0 || longTaskCount > 0) {
         console.info(
           `[FMWorks Perf] Core Web Vitals summary (${reason}) on ${latestRouteRef.current}`,
           {
-            metrics: Object.fromEntries(metricsMap.entries()),
+            metrics: collectedMetrics,
             longTasks: {
               count: longTaskCount,
               totalBlockingTimeMs:
@@ -278,9 +116,10 @@ export function PerformanceMonitor({
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pagehide', handlePageHide);
-      for (const observer of observers) {
-        observer.disconnect();
+      if (longTaskObserver) {
+        longTaskObserver.disconnect();
       }
+      stopWebVitals();
       flushVitalsSummary('unmount');
     };
   }, [enabled, longTaskThresholdMs]);

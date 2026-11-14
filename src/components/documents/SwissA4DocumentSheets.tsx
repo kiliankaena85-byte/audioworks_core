@@ -1,9 +1,47 @@
+import { useMemo } from 'react';
+import QRCode from 'qrcode';
 import { BrandLogo } from '../BrandLogo';
 import {
   AssembledDocumentSuite,
   BrandedDocumentKind,
   BROADCAST_TECH_STANDARD_ROWS,
 } from '../../data/studioDocumentsCore';
+
+function PaymentGostQrSvg({ payload }: { payload: string }) {
+  const qrVector = useMemo(() => {
+    try {
+      const qr = QRCode.create(payload, { errorCorrectionLevel: 'M' });
+      const size = qr.modules.size;
+      let pathD = '';
+      for (let r = 0; r < size; r += 1) {
+        for (let c = 0; c < size; c += 1) {
+          if (qr.modules.get(r, c)) {
+            pathD += `M${c + 2} ${r + 2}h1v1h-1z`;
+          }
+        }
+      }
+      return { viewSize: size + 4, pathD };
+    } catch {
+      return null;
+    }
+  }, [payload]);
+
+  if (!qrVector) return null;
+
+  return (
+    <svg
+      data-testid="invoice-payment-qr-svg"
+      role="img"
+      aria-label="Двумерный штрихкод ГОСТ Р 56042-2014 для оплаты счёта"
+      viewBox={`0 0 ${qrVector.viewSize} ${qrVector.viewSize}`}
+      shapeRendering="crispEdges"
+      className="w-28 h-28 sm:w-32 sm:h-32 bg-white border border-[#111111] p-1 shrink-0"
+    >
+      <rect width={qrVector.viewSize} height={qrVector.viewSize} fill="#FFFFFF" />
+      <path d={qrVector.pathD} fill="#111111" />
+    </svg>
+  );
+}
 
 export type ContractViewVariant = 'full_with_appendix' | 'appendix_only';
 
@@ -518,8 +556,15 @@ function ContractAndAppendixSheet({
             <p className="font-semibold text-[#111111]">{customer.displayName}</p>
             <p className="text-[#5C5852]">
               {customer.inn ? `ИНН ${customer.inn}` : 'ИНН: ___________________'}
-              {customer.kpp ? ` / КПП ${customer.kpp}` : ''} · {customer.contact}
+              {customer.kpp ? ` / КПП ${customer.kpp}` : ''}
+              {customer.ogrn
+                ? ` · ${customer.isIpByInn ? 'ОГРНИП' : 'ОГРН'} ${customer.ogrn}`
+                : ''}{' '}
+              · {customer.contact}
             </p>
+            {customer.address && (
+              <p className="text-[10.5px] text-[#5C5852]">{customer.address}</p>
+            )}
             <div className="pt-5 border-b border-[#111111]/40 flex justify-between text-[#5C5852]">
               <span>Уполномоченный представитель</span>
               <span>/ {customer.signatory || '___________________'} /</span>
@@ -599,29 +644,72 @@ function InvoiceSheet({ suite }: { suite: AssembledDocumentSuite }) {
         </table>
       </div>
 
-      {/* Плательщик и ЭДО */}
-      <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 pb-4 mb-5 border-b border-[#E5E2DC] text-[11.5px]">
-        <div className="sm:col-span-8 space-y-1">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#7A756D]">
-            Плательщик (Заказчик)
-          </p>
-          <p className="font-bold text-[#111111]">
-            {customer.displayName}
-            {customer.inn ? `, ИНН ${customer.inn}` : ''}
-            {customer.kpp ? `, КПП ${customer.kpp}` : ''}
-          </p>
-          {customer.address && <p className="text-[#5C5852]">{customer.address}</p>}
-          <p className="text-[#5C5852]">Контакт по счёту: {customer.contact}</p>
+      {/* Поставщик, Плательщик (полные реквизиты ЕГРЮЛ/ЕГРИП) и ЭДО Контур.Диадок */}
+      <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 pb-4 mb-5 border-b border-[#E5E2DC] text-[11px]">
+        <div className="sm:col-span-7 space-y-2.5">
+          <div className="space-y-0.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[#7A756D]">
+              Поставщик (Исполнитель)
+            </p>
+            <p className="font-semibold text-[#111111]">
+              {studio.legalName}, ИНН {studio.inn}
+              {studio.entityKind === 'ooo' && studio.kpp ? `, КПП ${studio.kpp}` : ''},{' '}
+              {ogrnLabel} {studio.ogrnOrOgrnip}
+            </p>
+            <p className="text-[#5C5852]">{studio.legalAddress}</p>
+          </div>
+
+          <div
+            data-testid="invoice-buyer-requisites-block"
+            className="space-y-0.5 pt-2 border-t border-[#E5E2DC]/80"
+          >
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[#7A756D]">
+              Плательщик (Заказчик)
+            </p>
+            <p className="font-bold text-[#111111]">
+              {customer.displayName}
+              {customer.inn ? `, ИНН ${customer.inn}` : ''}
+              {customer.kpp ? `, КПП ${customer.kpp}` : ''}
+              {customer.ogrn
+                ? `, ${customer.isIpByInn ? 'ОГРНИП' : 'ОГРН'} ${customer.ogrn}`
+                : ''}
+            </p>
+            {customer.address && (
+              <p className="text-[#5C5852]">Юр. адрес: {customer.address}</p>
+            )}
+            <p className="text-[#5C5852]">
+              {customer.signatory ? `${customer.signatory} · ` : ''}Контакт: {customer.contact}
+            </p>
+          </div>
         </div>
 
-        <div className="sm:col-span-4 space-y-1 sm:text-right">
+        <div className="sm:col-span-5 space-y-1.5 sm:text-right">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-[#7A756D]">
-            Электронный документооборот
+            ЭДО и учёт (СКБ Контур)
           </p>
           <p className="font-semibold text-[#111111]">{studio.edoOperatorLabel}</p>
-          <p className="font-mono text-[10.5px] text-[#5C5852] break-all">
-            ID: {studio.edoParticipantId}
-          </p>
+          <div className="text-[10px] text-[#5C5852] leading-snug">
+            <span className="text-[#7A756D]">ID Поставщика: </span>
+            <span className="font-mono tracking-tight break-words">
+              {studio.edoParticipantId}
+            </span>
+          </div>
+          {customer.edoBoxId && (
+            <div
+              data-testid="invoice-buyer-edo-box"
+              className="text-[10px] text-[#111111] leading-snug"
+            >
+              <span className="text-[#7A756D]">ID Заказчика: </span>
+              <span className="font-mono tracking-tight break-words">
+                {customer.edoBoxId}
+              </span>
+            </div>
+          )}
+          {customer.wantsDiadocDuplicate && (
+            <p className="text-[10.5px] font-semibold text-[#FF4820]">
+              Дубликат счёта в Контур.Диадок запрошен
+            </p>
+          )}
         </div>
       </div>
 
@@ -678,23 +766,32 @@ function InvoiceSheet({ suite }: { suite: AssembledDocumentSuite }) {
             </table>
           </div>
 
-          {/* Итоги налога и сумма прописью */}
+          {/* QR-код ГОСТ Р 56042-2014 + Итоги налога и сумма прописью */}
           <div className="flex flex-col sm:flex-row justify-between gap-6 items-start pb-6 border-b border-[#E5E2DC]">
-            <div className="space-y-1.5 text-[11px] text-[#5C5852] max-w-md">
-              <p className="font-semibold text-[#111111]">Назначение платежа для бухгалтерии:</p>
-              <p>
-                Оплата по Счёту № {suite.invoiceNumber} от {suite.issueDateRu} (Прил. №{' '}
-                {suite.appendixNumber} к Договору № {suite.contractNumber}).{' '}
-                {tax.vatRatePercent === 0
-                  ? 'Без налога (НДС).'
-                  : `В т.ч. НДС ${tax.vatRatePercent}%.`}
-              </p>
-              <p className="pt-1 font-mono text-[10px] text-[#7A756D] break-all">
-                Реквизиты импорта (ГОСТ Р 56042-2014): {suite.paymentQrPayload}
-              </p>
+            <div
+              data-testid="invoice-payment-qr-block"
+              className="flex flex-col sm:flex-row items-start gap-4 max-w-lg"
+            >
+              <PaymentGostQrSvg payload={suite.paymentQrPayload} />
+              <div className="space-y-1.5 text-[11px] text-[#5C5852]">
+                <p className="font-bold text-[#111111]">
+                  Быстрая оплата по QR-коду (ГОСТ Р 56042-2014)
+                </p>
+                <p>
+                  Отсканируйте код в приложении банка (СберБизнес, Т-Бизнес, Точка, Альфа-Бизнес, Контур.Банк) — БИК, р/с, ИНН, сумма и назначение заполнятся без ручного ввода.
+                </p>
+                <p className="pt-0.5 text-[#111111]">
+                  <strong>Назначение платежа:</strong> Оплата по Счёту № {suite.invoiceNumber} от{' '}
+                  {suite.issueDateRu} (Прил. № {suite.appendixNumber} к Договору №{' '}
+                  {suite.contractNumber}).{' '}
+                  {tax.vatRatePercent === 0
+                    ? 'Без налога (НДС).'
+                    : `В т.ч. НДС ${tax.vatRatePercent}%.`}
+                </p>
+              </div>
             </div>
 
-            <div className="w-full sm:w-72 space-y-1.5 text-xs">
+            <div className="w-full sm:w-68 shrink-0 space-y-1.5 text-xs">
               <div className="flex justify-between">
                 <span className="text-[#5C5852]">База без НДС:</span>
                 <span className="font-medium">{tax.formattedSubtotalRub}</span>

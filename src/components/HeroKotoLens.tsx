@@ -19,6 +19,7 @@ import {
   ContrastStageSnapshot,
 } from '../audio/contrastAudioEngine';
 import { useSiteTextBlocks } from '../cms/SiteTextBlocksContext';
+import { OptimizedImage } from './OptimizedImage';
 import {
   AUDIOWORKS_TOTAL_DURATION_SEC,
   CRASH_TEST_CLUTTER_DURATION_SEC,
@@ -351,20 +352,11 @@ export function HeroKotoLens({
             aria-hidden={isExpanded}
             className="pointer-events-none absolute inset-0 bg-[#121318]"
           >
-            <img
+            <OptimizedImage
               src={HERO_GREY_TRAFFIC_IMAGE}
+              fallbackSrc={LOCAL_FALLBACK_IMAGES.traffic}
               alt="Вечерний поток машин — обычный рекламный блок"
-              referrerPolicy="no-referrer"
-              loading="eager"
-              decoding="async"
-              fetchPriority="high"
-              onError={(e) => {
-                const img = e.currentTarget;
-                if (!img.dataset.fallbackApplied) {
-                  img.dataset.fallbackApplied = '1';
-                  img.src = LOCAL_FALLBACK_IMAGES.traffic;
-                }
-              }}
+              priority
               className="w-full h-full object-cover grayscale contrast-75 brightness-50 blur-[2px] scale-[1.03]"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-[#0B0C10]/92 via-[#111216]/56 to-[#0B0C10]/68" />
@@ -398,21 +390,15 @@ export function HeroKotoLens({
                     isCurrent ? 'opacity-100' : 'opacity-0'
                   } ${frame.fallbackGradient}`}
                 >
-                  <img
+                  <OptimizedImage
                     src={frame.imageUrl}
+                    fallbackSrc={
+                      LOCAL_FALLBACK_IMAGES[frame.id] ?? LOCAL_FALLBACK_IMAGES.studio
+                    }
                     alt={frame.imageAlt}
-                    referrerPolicy="no-referrer"
+                    priority={isCurrent}
                     loading={isCurrent ? 'eager' : 'lazy'}
-                    decoding="async"
                     fetchPriority={isCurrent ? 'high' : 'low'}
-                    onError={(e) => {
-                      const img = e.currentTarget;
-                      if (!img.dataset.fallbackApplied) {
-                        img.dataset.fallbackApplied = '1';
-                        img.src =
-                          LOCAL_FALLBACK_IMAGES[frame.id] ?? LOCAL_FALLBACK_IMAGES.studio;
-                      }
-                    }}
                     className={`w-full h-full object-cover animate-ken-burns ${frame.exposureClass}`}
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-[#09090C]/88 via-[#09090C]/28 to-[#09090C]/42" />

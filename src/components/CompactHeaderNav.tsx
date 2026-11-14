@@ -284,8 +284,26 @@ export function CompactHeaderNav({
           })}
         </nav>
 
-        {/* Зона 3: Переключатель темы, мобильное меню и единственное целевое действие студии */}
+        {/* Зона 3: Личный кабинет, переключатель темы, мобильное меню и целевое действие студии */}
         <div className="flex items-center gap-1 sm:gap-2.5 shrink-0 min-w-0">
+          <a
+            href="/cabinet"
+            data-testid="header-cabinet-link"
+            aria-current={activeRoute.kind === 'cabinet' ? 'page' : undefined}
+            onClick={(e) => {
+              e.preventDefault();
+              setIsMobileMenuOpen(false);
+              onNavigate({ kind: 'cabinet' });
+            }}
+            className={`hidden sm:inline-flex items-center h-9 px-3 rounded-full text-xs font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
+              activeRoute.kind === 'cabinet'
+                ? 'bg-[#111111]/10 text-[#111111] dark:bg-white/14 dark:text-[#F4F3EF]'
+                : 'text-[#111111]/68 dark:text-[#F4F3EF]/68 hover:text-[#111111] dark:hover:text-[#F4F3EF] hover:bg-[#111111]/5 dark:hover:bg-white/6'
+            }`}
+          >
+            Кабинет
+          </a>
+
           <button
             type="button"
             onClick={onToggleTheme}
@@ -392,7 +410,23 @@ export function CompactHeaderNav({
                 })}
               </div>
 
-              <div className="mt-2 pt-2 border-t border-[#111111]/8 dark:border-white/10">
+              <div className="mt-2 pt-2 border-t border-[#111111]/8 dark:border-white/10 space-y-1.5">
+                <a
+                  href="/cabinet"
+                  data-testid="mobile-cabinet-link"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setIsMobileMenuOpen(false);
+                    onNavigate({ kind: 'cabinet' });
+                  }}
+                  className={`min-h-10 flex items-center justify-between px-3.5 rounded-xl text-sm transition-colors whitespace-nowrap ${
+                    activeRoute.kind === 'cabinet'
+                      ? 'font-semibold text-[#FF4820] bg-[#111111]/4 dark:bg-white/6'
+                      : 'font-medium text-[#111111]/82 dark:text-[#F4F3EF]/82 hover:bg-[#111111]/6 dark:hover:bg-white/8'
+                  }`}
+                >
+                  <span>Личный кабинет</span>
+                </a>
                 <button
                   type="button"
                   onClick={handlePrimaryCtaClick}

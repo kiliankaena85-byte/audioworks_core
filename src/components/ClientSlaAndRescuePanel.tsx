@@ -47,6 +47,7 @@ interface ClientSlaAndRescuePanelProps {
   legalProfiles?: Partial<StudioLegalProfilesConfig> | null;
   onUpdatedConfirmed?: (next: ConfirmedReservationSummary) => void;
   defaultExpandedEdo?: boolean;
+  hideDocumentButtons?: boolean;
 }
 
 export function ClientSlaAndRescuePanel({
@@ -55,6 +56,7 @@ export function ClientSlaAndRescuePanel({
   legalProfiles,
   onUpdatedConfirmed,
   defaultExpandedEdo = false,
+  hideDocumentButtons = false,
 }: ClientSlaAndRescuePanelProps) {
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [liveStage, setLiveStage] = useState<CrmOrderStage>('new_hold');
@@ -360,10 +362,10 @@ export function ClientSlaAndRescuePanel({
         setRescueFeedback({
           kind: 'ok',
           text: isAirBooking
-            ? 'Сделка переведена в письменный режим без звонков. Пришлём подтверждённый медиаплан и счёт в мессенджер / ЭДО.'
+            ? 'Сделка переведена в письменный режим без звонков. Пришлём подтверждённый медиаплан и счёт в мессенджер.'
             : confirmed.paymentChannel === 'card_online'
-              ? 'Заказ переведён в письменный режим без звонков. Направим ссылку на оплату картой/СБП (54-ФЗ) и рамочную оферту в мессенджер.'
-              : 'Заказ переведён в письменный режим без звонков. Направим рамочный договор и счёт-оферту в ЭДО и продублируем в мессенджер.',
+              ? 'Заказ переведён в письменный режим без звонков. Направим ссылку на оплату картой или по СБП в мессенджер.'
+              : 'Заказ переведён в письменный режим без звонков. Направим счёт на оплату и документы в мессенджер.',
         });
       } else {
         setRescueFeedback({
@@ -488,55 +490,57 @@ export function ClientSlaAndRescuePanel({
           </p>
         </div>
 
-        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 w-full lg:w-auto min-w-0">
-          <button
-            type="button"
-            data-testid="client-open-branded-suite-btn"
-            onClick={() => {
-              setSuiteInitialDoc(
-                confirmed.selectedFormatId === 'custom_consult' ||
-                  confirmed.selectedBudgetRub === 0
-                  ? 'kp'
-                  : 'invoice'
-              );
-              setIsDocSuiteOpen(true);
-            }}
-            className="w-full sm:w-auto max-w-full min-h-[44px] px-3.5 sm:px-4 py-2.5 rounded-xl bg-[#FF4820] hover:bg-[#E63C17] text-white text-xs font-semibold inline-flex items-center justify-center gap-2 text-center leading-snug transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap"
-          >
-            <FileText className="w-4 h-4 shrink-0" aria-hidden="true" />
-            <span>Бланки A4: КП · Договор · Счёт · Паспорт</span>
-          </button>
-
-          {confirmed.paymentChannel !== 'card_online' && Boolean(confirmed.companyLine) && (
+        {!hideDocumentButtons && (
+          <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 w-full lg:w-auto min-w-0">
             <button
               type="button"
-              data-testid="client-quick-download-edo-btn"
-              onClick={handleDownloadEdo}
-              className="w-full sm:w-auto max-w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[#111111]/18 dark:border-white/18 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center justify-center gap-1.5 text-center leading-snug transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap"
-            >
-              <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-              <span>Договор и счёт (.txt)</span>
-            </button>
-          )}
-          <button
-            type="button"
-            data-testid="client-toggle-autonomous-edo-btn"
-            onClick={() => setShowEdoPreview((prev) => !prev)}
-            className="w-full sm:w-auto max-w-full min-h-[44px] px-3.5 sm:px-4 py-2.5 rounded-xl bg-[#111111] hover:bg-[#27272A] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-white text-xs font-semibold inline-flex items-center justify-center gap-2 text-center leading-snug transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap"
-          >
-            <FileText className="w-4 h-4 shrink-0" aria-hidden="true" />
-            <span>
-              {showEdoPreview
-                ? 'Скрыть договор и счёт'
-                : confirmed.selectedFormatId === 'custom_consult' ||
+              data-testid="client-open-branded-suite-btn"
+              onClick={() => {
+                setSuiteInitialDoc(
+                  confirmed.selectedFormatId === 'custom_consult' ||
                     confirmed.selectedBudgetRub === 0
-                  ? 'Рамочный договор и карточка заявки'
-                  : confirmed.paymentChannel === 'card_online'
-                    ? 'Договор-оферта и условия оплаты (54-ФЗ)'
-                    : 'Открыть договор и счёт ЭДО'}
-            </span>
-          </button>
-        </div>
+                    ? 'kp'
+                    : 'invoice'
+                );
+                setIsDocSuiteOpen(true);
+              }}
+              className="w-full sm:w-auto max-w-full min-h-[44px] px-3.5 sm:px-4 py-2.5 rounded-xl bg-[#FF4820] hover:bg-[#E63C17] text-white text-xs font-semibold inline-flex items-center justify-center gap-2 text-center leading-snug transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap"
+            >
+              <FileText className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span>Счёт и документы A4</span>
+            </button>
+
+            {confirmed.paymentChannel !== 'card_online' && Boolean(confirmed.companyLine) && (
+              <button
+                type="button"
+                data-testid="client-quick-download-edo-btn"
+                onClick={handleDownloadEdo}
+                className="w-full sm:w-auto max-w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[#111111]/18 dark:border-white/18 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center justify-center gap-1.5 text-center leading-snug transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap"
+              >
+                <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>Скачать счёт (.txt)</span>
+              </button>
+            )}
+            <button
+              type="button"
+              data-testid="client-toggle-autonomous-edo-btn"
+              onClick={() => setShowEdoPreview((prev) => !prev)}
+              className="w-full sm:w-auto max-w-full min-h-[44px] px-3.5 sm:px-4 py-2.5 rounded-xl bg-[#111111] hover:bg-[#27272A] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-white text-xs font-semibold inline-flex items-center justify-center gap-2 text-center leading-snug transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap"
+            >
+              <FileText className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span>
+                {showEdoPreview
+                  ? 'Скрыть договор и счёт'
+                  : confirmed.selectedFormatId === 'custom_consult' ||
+                      confirmed.selectedBudgetRub === 0
+                    ? 'Договор и карточка заявки'
+                    : confirmed.paymentChannel === 'card_online'
+                      ? 'Договор-оферта и условия оплаты'
+                      : 'Открыть счёт и договор'}
+              </span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Активная сервисная гарантия при задержке звонка */}
@@ -550,7 +554,7 @@ export function ClientSlaAndRescuePanel({
         </div>
       )}
 
-      {/* Автономный предпросмотр рамочного договора-оферты и счёта для бухгалтерии / Диадок / СБИС */}
+      {/* Предпросмотр договора и счёта для бухгалтерии */}
       {showEdoPreview && (
         <div
           data-testid="client-autonomous-edo-box"
@@ -559,8 +563,8 @@ export function ClientSlaAndRescuePanel({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 min-w-0">
             <p className="text-xs font-bold text-[#111111] dark:text-[#F4F3EF]">
               {confirmed.paymentChannel === 'card_online'
-                ? 'Рамочный договор-оферта и бланк заказа (для онлайн-оплаты картой / СБП по 54-ФЗ)'
-                : 'Рамочный договор-оферта и счёт ЭДО (можно скачать сразу и передать в бухгалтерию / Диадок / СБИС)'}
+                ? 'Договор-оферта и бланк заказа (для оплаты картой / СБП)'
+                : 'Договор-оферта и счёт на оплату (можно скачать сразу и передать в бухгалтерию)'}
             </p>
             <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
               <button
@@ -630,8 +634,8 @@ export function ClientSlaAndRescuePanel({
               <MessageSquare className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
               <span>
                 {confirmed.paymentChannel === 'card_online'
-                  ? 'Не звонить — прислать ссылку на оплату письменно'
-                  : 'Не звонить — прислать договор и счёт в ЭДО'}
+                  ? 'Не звонить — прислать ссылку на оплату в чат'
+                  : 'Не звонить — прислать счёт в мессенджер'}
               </span>
             </button>
           )}

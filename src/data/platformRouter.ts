@@ -1,4 +1,17 @@
 import { AIRTIME_SALES_ENABLED, isAirtimeSalesEnabled } from './platformFeatures.ts';
+import {
+  buildLocalBusinessJsonLd,
+  buildOrganizationJsonLd,
+  buildWebSiteJsonLd,
+  DEFAULT_OG_IMAGE_PATH,
+  FMWORKS_BUSINESS_DETAILS,
+  injectBusinessSchemasIntoDocument,
+  injectWebSiteSchemaIntoDocument,
+  LOCAL_BUSINESS_JSONLD_SCRIPT_ID,
+  ORGANIZATION_JSONLD_SCRIPT_ID,
+  upsertJsonLdScriptInHead,
+  WEBSITE_JSONLD_SCRIPT_ID,
+} from './seoUtils.ts';
 
 export type IndustryVerticalSlug =
   | 'real-estate'
@@ -37,6 +50,7 @@ export type PlatformRoute =
   | { kind: 'mistake-detail'; articleSlug: string }
   | { kind: 'faq' }
   | { kind: 'order' }
+  | { kind: 'cabinet' }
   | { kind: 'admin' };
 
 export interface MainPlatformNavItem {
@@ -102,6 +116,10 @@ export function parsePlatformRoute(
     normalizedPath === '/checkout'
   ) {
     return { kind: 'order' };
+  }
+
+  if (normalizedPath === '/cabinet' || normalizedPath === '/account') {
+    return { kind: 'cabinet' };
   }
 
   if (normalizedPath === '/hot-air') {
@@ -224,6 +242,8 @@ export function buildPlatformPath(route: PlatformRoute): string {
       return '/faq';
     case 'order':
       return '/order';
+    case 'cabinet':
+      return '/cabinet';
     case 'admin':
       return '/admin';
   }
@@ -253,6 +273,7 @@ export function resolveActiveTopNavSection(
     case 'faq':
       return 'faq';
     case 'order':
+    case 'cabinet':
     case 'admin':
       return null;
   }
@@ -279,8 +300,18 @@ export interface RouteSeoLookupTitles {
   articleTitle?: string;
 }
 
-export const DEFAULT_OG_IMAGE_PATH =
-  '/src/assets/images/hero_studio_editorial_1794399404984.jpg';
+export {
+  buildLocalBusinessJsonLd,
+  buildOrganizationJsonLd,
+  buildWebSiteJsonLd,
+  DEFAULT_OG_IMAGE_PATH,
+  FMWORKS_BUSINESS_DETAILS,
+  injectBusinessSchemasIntoDocument,
+  injectWebSiteSchemaIntoDocument,
+  LOCAL_BUSINESS_JSONLD_SCRIPT_ID,
+  ORGANIZATION_JSONLD_SCRIPT_ID,
+  WEBSITE_JSONLD_SCRIPT_ID,
+};
 
 /**
  * Генерирует индивидуальные SEO-метаданные, OpenGraph-теги, директивы роботам, хлебные крошки
@@ -379,7 +410,7 @@ export function resolveRouteSeoMeta(
         title:
           'Тарифы на аудиоролики, сроки от 24–48ч (3–4 дня под ключ) и права — FMWorks',
         description:
-          'Фиксированная стоимость радиороликов от 15 000 ₽ по рамочному договору, этапы продакшна, паспорт прав РАО/ВОИС и эфирная модерация.',
+          'Фиксированная стоимость радиороликов от 15 000 ₽ по договору, этапы продакшна, паспорт прав РАО/ВОИС и эфирная модерация.',
         canonicalPath: '/pricing',
         schemaType: 'Service',
         noindex: false,
@@ -420,7 +451,7 @@ export function resolveRouteSeoMeta(
       return {
         title: 'Частые вопросы (FAQ) по договору, оплате и срокам — FMWorks',
         description:
-          'Как устроена проверка реквизитов, рамочный договор и счёт в ЭДО, оплата картой физлица по 54-ФЗ, договорной тариф и сроки продакшна аудиороликов.',
+          'Как устроено оформление договора и счёта для юрлиц, оплата картой и по СБП, индивидуальный формат и сроки продакшна аудиороликов.',
         canonicalPath: '/faq',
         schemaType: 'CollectionPage',
         noindex: false,
@@ -434,19 +465,40 @@ export function resolveRouteSeoMeta(
         ? {
             title: 'Оформление брони эфира и заказа аудиоролика — FMWorks',
             description:
-              'Поставьте эфирную сетку на приоритетный 4-часовой резерв или передайте голосовое ТЗ на производство радиоролика по договору и ЭДО.',
+              'Поставьте эфирную сетку на приоритетный 4-часовой резерв или передайте голосовое ТЗ на производство радиоролика по договору.',
             canonicalPath: '/order',
             schemaType: 'CheckoutPage',
             noindex: true,
+            breadcrumbs: [
+              { name: 'Главная', path: '/' },
+              { name: 'Бронь эфира и заказ ролика', path: '/order' },
+            ],
           }
         : {
             title: 'Оформление заказа аудиоролика — Студия FMWorks',
             description:
-              'Передайте задачу и реквизиты или выберите консультацию продюсера: рамочный договор и счёт в ЭДО или оплата картой (54-ФЗ), старт сценариев и записи после предоплаты.',
+              'Быстрая заявка на производство аудиоролика: формат, короткий бриф и контакт продюсера, а также моментальный счёт на оплату при необходимости.',
             canonicalPath: '/order',
             schemaType: 'CheckoutPage',
             noindex: true,
+            breadcrumbs: [
+              { name: 'Главная', path: '/' },
+              { name: 'Заказ аудиоролика', path: '/order' },
+            ],
           };
+    case 'cabinet':
+      return {
+        title: 'Личный кабинет заказов — FMWorks',
+        description:
+          'Отслеживание статуса аудиороликов, загрузка материалов, скачивание готовых файлов и счетов на оплату.',
+        canonicalPath: '/cabinet',
+        schemaType: 'WebSite',
+        noindex: true,
+        breadcrumbs: [
+          { name: 'Главная', path: '/' },
+          { name: 'Личный кабинет', path: '/cabinet' },
+        ],
+      };
     case 'admin':
       return airtimeEnabled
         ? {
@@ -456,6 +508,10 @@ export function resolveRouteSeoMeta(
             canonicalPath: '/admin',
             schemaType: 'WebSite',
             noindex: true,
+            breadcrumbs: [
+              { name: 'Главная', path: '/' },
+              { name: 'Кабинет продюсера', path: '/admin' },
+            ],
           }
         : {
             title: 'Кабинет продюсера — Управление студией и заказами FMWorks',
@@ -464,8 +520,51 @@ export function resolveRouteSeoMeta(
             canonicalPath: '/admin',
             schemaType: 'WebSite',
             noindex: true,
+            breadcrumbs: [
+              { name: 'Главная', path: '/' },
+              { name: 'Кабинет продюсера', path: '/admin' },
+            ],
           };
   }
+}
+
+export interface BreadcrumbListItemSchema {
+  '@type': 'ListItem';
+  position: number;
+  name: string;
+  item: string;
+}
+
+export interface BreadcrumbListJsonLd {
+  '@context': 'https://schema.org';
+  '@type': 'BreadcrumbList';
+  '@id': string;
+  itemListElement: BreadcrumbListItemSchema[];
+}
+
+/**
+ * Генерирует Schema.org JSON-LD (`BreadcrumbList`) для всех вложенных страниц платформы (`/cases`, `/approach`, `/pricing`, `/faq` и др.).
+ * Для корневой страницы (`/`) возвращает `null`.
+ */
+export function buildBreadcrumbListJsonLd(
+  meta: RouteSeoMetadata,
+  origin: string
+): BreadcrumbListJsonLd | null {
+  if (!meta.breadcrumbs || meta.breadcrumbs.length === 0) {
+    return null;
+  }
+  const cleanOrigin = origin.replace(/\/+$/g, '') || 'https://fmworks.ru';
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    '@id': `${cleanOrigin}${meta.canonicalPath}#breadcrumb`,
+    itemListElement: meta.breadcrumbs.map((crumb, idx) => ({
+      '@type': 'ListItem',
+      position: idx + 1,
+      name: crumb.name,
+      item: `${cleanOrigin}${crumb.path}`,
+    })),
+  };
 }
 
 /**
@@ -481,30 +580,33 @@ export function buildRouteSchemaGraph(
 
   const organizationNode: Record<string, unknown> = {
     '@type': 'ProfessionalService',
-    '@id': `${cleanOrigin}/#organization`,
-    name: 'FMWorks',
-    alternateName: 'Аудиопродакшн-студия FMWorks®',
+    '@id': `${cleanOrigin}/#service-provider`,
+    name: FMWORKS_BUSINESS_DETAILS.brandName,
+    alternateName: FMWORKS_BUSINESS_DETAILS.legalName,
     url: cleanOrigin,
-    email: 'hello@fmworks.ru',
-    telephone: '+7 (4822) 75-04-20',
+    email: FMWORKS_BUSINESS_DETAILS.email,
+    telephone: FMWORKS_BUSINESS_DETAILS.telephone,
     image: ogImageUrl,
-    priceRange: '15 000 – 35 000 ₽',
-    currenciesAccepted: 'RUB',
-    paymentAccepted: 'Безналичный расчёт (ЭДО), банковская карта (54-ФЗ), СБП',
+    priceRange: FMWORKS_BUSINESS_DETAILS.priceRange,
+    currenciesAccepted: FMWORKS_BUSINESS_DETAILS.currenciesAccepted,
+    paymentAccepted: FMWORKS_BUSINESS_DETAILS.paymentAccepted,
+    parentOrganization: {
+      '@id': `${cleanOrigin}/#organization`,
+    },
     address: {
       '@type': 'PostalAddress',
-      streetAddress: 'ул. Советская, д. 45, оф. 308',
-      postalCode: '170100',
-      addressLocality: 'Тверь',
-      addressRegion: 'Тверская область',
-      addressCountry: 'RU',
+      ...FMWORKS_BUSINESS_DETAILS.address,
+    },
+    geo: {
+      '@type': 'GeoCoordinates',
+      ...FMWORKS_BUSINESS_DETAILS.geo,
     },
     openingHoursSpecification: [
       {
         '@type': 'OpeningHoursSpecification',
-        dayOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
-        opens: '09:00',
-        closes: '19:00',
+        dayOfWeek: [...FMWORKS_BUSINESS_DETAILS.openingHours.dayOfWeek],
+        opens: FMWORKS_BUSINESS_DETAILS.openingHours.opens,
+        closes: FMWORKS_BUSINESS_DETAILS.openingHours.closes,
       },
     ],
     areaServed: {
@@ -552,7 +654,7 @@ export function buildRouteSchemaGraph(
     inLanguage: 'ru-RU',
     primaryImageOfPage: ogImageUrl,
     provider: {
-      '@id': `${cleanOrigin}/#organization`,
+      '@id': `${cleanOrigin}/#service-provider`,
     },
   };
 
@@ -563,17 +665,22 @@ export function buildRouteSchemaGraph(
     pageNode.mainEntityOfPage = fullUrl;
   }
 
+  if (meta.schemaType === 'WebSite') {
+    pageNode.potentialAction = buildWebSiteJsonLd(cleanOrigin).potentialAction;
+  }
+
+  const breadcrumbSchema = buildBreadcrumbListJsonLd(meta, cleanOrigin);
+  if (breadcrumbSchema) {
+    pageNode.breadcrumb = { '@id': breadcrumbSchema['@id'] };
+  }
+
   const graphNodes: Record<string, unknown>[] = [organizationNode, pageNode];
 
-  if (meta.breadcrumbs && meta.breadcrumbs.length > 0) {
+  if (breadcrumbSchema) {
     graphNodes.push({
-      '@type': 'BreadcrumbList',
-      itemListElement: meta.breadcrumbs.map((crumb, idx) => ({
-        '@type': 'ListItem',
-        position: idx + 1,
-        name: crumb.name,
-        item: `${cleanOrigin}${crumb.path}`,
-      })),
+      '@type': breadcrumbSchema['@type'],
+      '@id': breadcrumbSchema['@id'],
+      itemListElement: breadcrumbSchema.itemListElement,
     });
   }
 
@@ -637,13 +744,16 @@ export function applyRouteSeoToDocument(meta: RouteSeoMetadata): void {
   canonical.setAttribute('href', fullUrl);
 
   const jsonLdPayload = buildRouteSchemaGraph(meta, origin);
+  upsertJsonLdScriptInHead('fmworks-route-jsonld', jsonLdPayload);
+  injectBusinessSchemasIntoDocument(origin, DEFAULT_OG_IMAGE_PATH);
 
-  let scriptEl = document.getElementById('fmworks-route-jsonld') as HTMLScriptElement | null;
-  if (!scriptEl) {
-    scriptEl = document.createElement('script');
-    scriptEl.id = 'fmworks-route-jsonld';
-    scriptEl.type = 'application/ld+json';
-    document.head.appendChild(scriptEl);
+  const breadcrumbJsonLd = buildBreadcrumbListJsonLd(meta, origin);
+  const breadcrumbScriptEl = document.getElementById(
+    'fmworks-breadcrumb-jsonld'
+  ) as HTMLScriptElement | null;
+  if (breadcrumbJsonLd) {
+    upsertJsonLdScriptInHead('fmworks-breadcrumb-jsonld', breadcrumbJsonLd);
+  } else if (breadcrumbScriptEl) {
+    breadcrumbScriptEl.remove();
   }
-  scriptEl.textContent = JSON.stringify(jsonLdPayload);
 }

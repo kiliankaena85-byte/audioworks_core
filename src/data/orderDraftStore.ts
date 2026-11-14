@@ -2,6 +2,13 @@ import {
   formatStructuredCompanyLine,
   parseCompanyNameAndInn,
 } from '../components/order/companyDetailsHelpers';
+import {
+  ClientDeliveryChannel,
+  DeliveryCloudId,
+  DeliveryMessengerId,
+  normalizeDeliveryPreferences,
+  sanitizeDeliveryDetail,
+} from './clientCabinetHelpers';
 import { AIRTIME_SALES_ENABLED, isAirtimeSalesEnabled } from './platformFeatures';
 import { IndustryVerticalSlug, isValidIndustrySlug } from './platformRouter';
 import { OrderFormatId } from './pricingData';
@@ -15,6 +22,10 @@ import {
   ClientCallbackPreference,
   StudioWorkScheduleConfig,
 } from './slaWorkCalendar';
+import {
+  OrderDocumentMeta,
+  sanitizeOrderDocumentMeta,
+} from './studioDocumentsCore';
 
 export type OrderCheckoutMode = 'production_only' | 'air_plus_production';
 
@@ -31,9 +42,13 @@ export interface ConfirmedReservationSummary {
   holdExpiresAtMs: number;
   checkoutMode: OrderCheckoutMode;
   paymentChannel?: StudioPaymentChannel;
+  preferredDeliveryChannel?: ClientDeliveryChannel;
+  preferredDeliveryDetail?: string;
   selectedFormatId?: OrderFormatId;
   selectedBudgetRub?: number | null;
   contactLine: string;
+  clientEmail?: string | null;
+  autoSignedIn?: boolean;
   companyLine: string;
   callbackPreference?: ClientCallbackPreference;
   slaWindowStartAtMs?: number;
@@ -51,6 +66,8 @@ export interface ConfirmedReservationSummary {
   fileName: string | null;
   conversionAllowed: boolean;
   innVerified: boolean;
+  wantsDiadocDuplicate?: boolean;
+  documentMeta?: OrderDocumentMeta | null;
   lockedMediaReservation: MediaGridReservationPayload | null;
   lockedTotals: ComputedReservationTotals | null;
 }
@@ -67,6 +84,16 @@ export interface OrderDraftSnapshot {
   selectedFormat: OrderFormatId;
   isFormatPreselected: boolean;
   paymentChannel: StudioPaymentChannel;
+  preferredDeliveryChannel: ClientDeliveryChannel;
+  deliveryMessenger: DeliveryMessengerId;
+  deliveryMessengerOther: string;
+  deliveryCloud: DeliveryCloudId;
+  deliveryCloudOther: string;
+  deliveryEmail: string;
+  cabinetEmail: string;
+  wantsInvoiceNow: boolean;
+  wantsDiadocDuplicate: boolean;
+  resolvedCounterpartyMeta: OrderDocumentMeta | null;
   spotDurationSec: number;
   industryPreset: IndustryVerticalSlug | null;
   briefText: string;
@@ -169,6 +196,16 @@ export function createDefaultOrderDraft(): OrderDraftSnapshot {
     selectedFormat: 'turnkey',
     isFormatPreselected: false,
     paymentChannel: 'edo_invoice',
+    preferredDeliveryChannel: 'messenger',
+    deliveryMessenger: 'telegram',
+    deliveryMessengerOther: '',
+    deliveryCloud: 'yandex_disk',
+    deliveryCloudOther: '',
+    deliveryEmail: '',
+    cabinetEmail: '',
+    wantsInvoiceNow: false,
+    wantsDiadocDuplicate: false,
+    resolvedCounterpartyMeta: null,
     spotDurationSec: 20,
     industryPreset: null,
     briefText: '',
@@ -230,6 +267,17 @@ function sanitizeConfirmedReservation(
     )
       ? (obj.paymentChannel as StudioPaymentChannel)
       : 'edo_invoice',
+    ...(() => {
+      const norm = normalizeDeliveryPreferences(
+        obj.preferredDeliveryChannel,
+        obj.preferredDeliveryDetail,
+        'messenger'
+      );
+      return {
+        preferredDeliveryChannel: norm.channel,
+        preferredDeliveryDetail: norm.detail,
+      };
+    })(),
     selectedFormatId: VALID_ORDER_FORMATS.includes(obj.selectedFormatId as OrderFormatId)
       ? (obj.selectedFormatId as OrderFormatId)
       : undefined,
@@ -240,6 +288,11 @@ function sanitizeConfirmedReservation(
           ? null
           : undefined,
     contactLine: obj.contactLine.slice(0, 240),
+    clientEmail:
+      typeof obj.clientEmail === 'string' && obj.clientEmail.trim()
+        ? obj.clientEmail.trim().toLowerCase().slice(0, 160)
+        : null,
+    autoSignedIn: Boolean(obj.autoSignedIn),
     companyLine: typeof obj.companyLine === 'string' ? obj.companyLine.slice(0, 240) : '',
     callbackPreference: VALID_CALLBACK_PREFS.includes(
       obj.callbackPreference as ClientCallbackPreference
@@ -281,6 +334,10 @@ function sanitizeConfirmedReservation(
     fileName: typeof obj.fileName === 'string' ? obj.fileName.slice(0, 240) : null,
     conversionAllowed: obj.conversionAllowed !== false,
     innVerified: Boolean(obj.innVerified),
+    wantsDiadocDuplicate: Boolean(obj.wantsDiadocDuplicate),
+    documentMeta: obj.documentMeta
+      ? sanitizeOrderDocumentMeta(obj.documentMeta)
+      : null,
     lockedMediaReservation: obj.lockedMediaReservation ?? null,
     lockedTotals: obj.lockedTotals ?? null,
   };
@@ -364,6 +421,55 @@ function sanitizeDraftFromStorage(
     selectedFormat,
     isFormatPreselected: Boolean(obj.isFormatPreselected),
     paymentChannel,
+    ...(() => {
+      const legacyRaw = obj.preferredDeliveryChannel as string | undefined;
+      const norm = normalizeDeliveryPreferences(
+        obj.preferredDeliveryChannel,
+        undefined,
+        base.preferredDeliveryChannel
+      );
+      const validMessengerIds: readonly DeliveryMessengerId[] = [
+        'telegram',
+        'whatsapp',
+        'max',
+        'other',
+      ];
+      const validCloudIds: readonly DeliveryCloudId[] = [
+        'yandex_disk',
+        'google_disk',
+        'dropbox',
+        'other',
+      ];
+      const inferredCloud: DeliveryCloudId =
+        legacyRaw === 'google_disk'
+          ? 'google_disk'
+          : legacyRaw === 'yandex_disk'
+            ? 'yandex_disk'
+            : validCloudIds.includes(obj.deliveryCloud as DeliveryCloudId)
+              ? (obj.deliveryCloud as DeliveryCloudId)
+              : base.deliveryCloud;
+      return {
+        preferredDeliveryChannel: norm.channel,
+        deliveryMessenger: validMessengerIds.includes(
+          obj.deliveryMessenger as DeliveryMessengerId
+        )
+          ? (obj.deliveryMessenger as DeliveryMessengerId)
+          : base.deliveryMessenger,
+        deliveryMessengerOther: sanitizeDeliveryDetail(obj.deliveryMessengerOther).slice(
+          0,
+          80
+        ),
+        deliveryCloud: inferredCloud,
+        deliveryCloudOther: sanitizeDeliveryDetail(obj.deliveryCloudOther).slice(0, 80),
+        deliveryEmail: sanitizeDeliveryDetail(obj.deliveryEmail).slice(0, 160),
+        cabinetEmail: sanitizeDeliveryDetail(obj.cabinetEmail).slice(0, 160),
+      };
+    })(),
+    wantsInvoiceNow: Boolean(obj.wantsInvoiceNow),
+    wantsDiadocDuplicate: Boolean(obj.wantsDiadocDuplicate),
+    resolvedCounterpartyMeta: obj.resolvedCounterpartyMeta
+      ? sanitizeOrderDocumentMeta(obj.resolvedCounterpartyMeta)
+      : null,
     spotDurationSec,
     industryPreset,
     briefText: typeof obj.briefText === 'string' ? obj.briefText.slice(0, 2000) : '',

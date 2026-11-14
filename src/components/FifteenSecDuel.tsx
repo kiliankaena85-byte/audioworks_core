@@ -296,7 +296,7 @@ export function FifteenSecDuel() {
       <div
         className={
           isRadio
-            ? 'text-[#111111] dark:text-[#F4F3EF]'
+            ? 'pl-0 text-[#111111] dark:text-[#F4F3EF]'
             : 'text-white'
         }
       >
@@ -325,7 +325,7 @@ export function FifteenSecDuel() {
     return (
       <div
         data-testid={`duel-card-${side}`}
-        className={`relative p-6 sm:p-9 lg:p-11 flex flex-col justify-between gap-8 ${
+        className={`relative p-6 sm:p-9 lg:p-11 flex flex-col justify-between gap-8 lg:grid lg:grid-rows-subgrid lg:row-span-3 lg:gap-y-8 ${
           isRadio
             ? 'lg:col-span-5 bg-[#EFECE5] dark:bg-[#15151A] text-[#111111] dark:text-[#F4F3EF]'
             : 'lg:col-span-7 bg-[#121216] text-[#F4F3EF] border-t lg:border-t-0 lg:border-l border-[#111111]/10 dark:border-white/10'
@@ -552,7 +552,7 @@ export function FifteenSecDuel() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 items-stretch">
+          <div className="grid grid-cols-1 lg:grid-cols-12 lg:grid-rows-[auto_auto_1fr] items-stretch">
             {renderHalfPane('radio', duelCfg.radioSpot)}
             {renderHalfPane('audioworks', duelCfg.audioworksSpot)}
           </div>
