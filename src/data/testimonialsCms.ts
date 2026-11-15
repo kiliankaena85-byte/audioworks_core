@@ -521,4 +521,66 @@ export function countLocalTestimonialsChanges(
   return changes;
 }
 
+/**
+ * Безопасно ограничивает индекс активного слайда карусели в пределах `[0, total - 1]`.
+ */
+export function clampTestimonialCarouselIndex(index: number, total: number): number {
+  if (!Number.isFinite(total) || total <= 0) return 0;
+  const maxIdx = Math.floor(total) - 1;
+  if (!Number.isFinite(index)) return 0;
+  return Math.min(maxIdx, Math.max(0, Math.floor(index)));
+}
+
+/**
+ * Переключает индекс активного слайда карусели по кругу (`prev` / `next`).
+ */
+export function stepTestimonialCarouselIndex(
+  currentIndex: number,
+  total: number,
+  direction: 'prev' | 'next'
+): number {
+  if (!Number.isFinite(total) || total <= 1) return 0;
+  const count = Math.floor(total);
+  const safeCurrent = clampTestimonialCarouselIndex(currentIndex, count);
+  if (direction === 'next') {
+    return (safeCurrent + 1) % count;
+  }
+  return (safeCurrent - 1 + count) % count;
+}
+
+/**
+ * Форматирует табличный счётчик слайда карусели в виде `01 / 04`.
+ */
+export function formatTestimonialCarouselCounter(
+  currentIndex: number,
+  total: number
+): string {
+  if (!Number.isFinite(total) || total <= 0) return '00 / 00';
+  const count = Math.floor(total);
+  const safeCurrent = clampTestimonialCarouselIndex(currentIndex, count);
+  return `${String(safeCurrent + 1).padStart(2, '0')} / ${String(count).padStart(2, '0')}`;
+}
+
+/**
+ * Определяет, нужны ли интерактивные элементы переключения слайдов карусели.
+ */
+export function shouldShowTestimonialCarouselControls(total: number): boolean {
+  return Number.isFinite(total) && Math.floor(total) > 1;
+}
+
+/**
+ * Определяет направление переключения карусели по горизонтальному свайпу.
+ */
+export function resolveTestimonialCarouselSwipeDirection(
+  deltaX: number,
+  thresholdPx = 44
+): 'prev' | 'next' | null {
+  if (!Number.isFinite(deltaX)) return null;
+  const threshold = Math.max(12, Math.abs(thresholdPx));
+  if (deltaX <= -threshold) return 'next';
+  if (deltaX >= threshold) return 'prev';
+  return null;
+}
+
 export { TESTIMONIAL_FILTERS, type TestimonialCategory };
+

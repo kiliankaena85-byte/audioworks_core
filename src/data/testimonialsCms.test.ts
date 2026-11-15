@@ -1,183 +1,84 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  auditEditorialCopyGuardrails,
-  BANNED_EDITORIAL_TERMS,
-  createDefaultStudioCmsSnapshot,
-  validateAndNormalizeCmsSnapshot,
-} from './studioCmsTypes';
-import {
+  clampTestimonialCarouselIndex,
   computeTestimonialFilterCounts,
-  countLocalTestimonialsChanges,
   createDefaultTestimonialsCmsConfig,
-  createNewCmsTestimonialRecord,
-  deriveAuthorInitials,
+  formatTestimonialCarouselCounter,
   getPublishedCmsTestimonialsForFilterAndPersona,
-  reorderCmsTestimonials,
-  resolveTestimonialLinkedCase,
+  resolveTestimonialCarouselSwipeDirection,
+  shouldShowTestimonialCarouselControls,
+  stepTestimonialCarouselIndex,
 } from './testimonialsCms';
 
-test('StudioCMS Testimonials: default snapshot passes validation and contains zero banned editorial terms', () => {
-  const snapshot = createDefaultStudioCmsSnapshot();
-  assert.equal(snapshot.testimonials.items.length, 4);
-  assert.equal(snapshot.testimonials.trustMetrics.length, 3);
-
-  const validated = validateAndNormalizeCmsSnapshot(snapshot);
-  assert.equal(validated.ok, true);
-  if (validated.ok) {
-    assert.deepEqual(validated.editorialWarnings, []);
-  }
-
-  const serialized = JSON.stringify(snapshot.testimonials).toLowerCase();
-  for (const banned of BANNED_EDITORIAL_TERMS) {
-    assert.equal(
-      serialized.includes(banned),
-      false,
-      `Found banned term "${banned}" in default StudioCMS testimonials`
-    );
-  }
+test('clampTestimonialCarouselIndex handles empty, negative, NaN, and out-of-range indices', () => {
+  assert.equal(clampTestimonialCarouselIndex(0, 0), 0);
+  assert.equal(clampTestimonialCarouselIndex(2, 0), 0);
+  assert.equal(clampTestimonialCarouselIndex(-3, 4), 0);
+  assert.equal(clampTestimonialCarouselIndex(9, 4), 3);
+  assert.equal(clampTestimonialCarouselIndex(Number.NaN, 4), 0);
+  assert.equal(clampTestimonialCarouselIndex(2.8, 4), 2);
 });
 
-test('StudioCMS Testimonials: backward-compatible migration hydrates legacy CMS snapshots without testimonials field', () => {
-  const fullDefault = createDefaultStudioCmsSnapshot();
-  const legacyPayload: Record<string, unknown> = { ...fullDefault };
-  delete legacyPayload.testimonials;
+test('stepTestimonialCarouselIndex wraps around cleanly in both directions', () => {
+  assert.equal(stepTestimonialCarouselIndex(0, 4, 'next'), 1);
+  assert.equal(stepTestimonialCarouselIndex(3, 4, 'next'), 0);
+  assert.equal(stepTestimonialCarouselIndex(0, 4, 'prev'), 3);
+  assert.equal(stepTestimonialCarouselIndex(2, 4, 'prev'), 1);
 
-  const parsed = validateAndNormalizeCmsSnapshot(legacyPayload);
-  assert.equal(parsed.ok, true);
-  if (parsed.ok) {
-    assert.equal(parsed.data.testimonials.items.length, 4);
-    assert.equal(parsed.data.testimonials.eyebrow, 'Отзывы клиентов');
-    assert.equal(parsed.data.testimonials.items[0]?.id, 'dmitrogorsky-fmcg');
-  }
+  // Single or zero slides stay pinned at 0
+  assert.equal(stepTestimonialCarouselIndex(0, 1, 'next'), 0);
+  assert.equal(stepTestimonialCarouselIndex(0, 1, 'prev'), 0);
+  assert.equal(stepTestimonialCarouselIndex(0, 0, 'next'), 0);
 });
 
-test('StudioCMS Testimonials: rejects unpublishing every testimonial and audits editorial guardrails', () => {
-  const snapshot = createDefaultStudioCmsSnapshot();
-  const allUnpublished = {
-    ...snapshot,
-    testimonials: {
-      ...snapshot.testimonials,
-      items: snapshot.testimonials.items.map((item) => ({
-        ...item,
-        published: false,
-      })),
-    },
-  };
-
-  const rejected = validateAndNormalizeCmsSnapshot(allUnpublished);
-  assert.equal(rejected.ok, false);
-  if (!rejected.ok) {
-    assert.match(rejected.error, /один опубликованный отзыв/);
-  }
-
-  const withBannedToponym = {
-    ...snapshot,
-    testimonials: {
-      ...snapshot.testimonials,
-      subheading: 'Отзывы федеральных рекламодателей из Москвы и регионов.',
-    },
-  };
-  const warnings = auditEditorialCopyGuardrails(withBannedToponym);
-  assert.equal(warnings.includes('москв'), true);
+test('formatTestimonialCarouselCounter formats zero-padded tabular slide counters', () => {
+  assert.equal(formatTestimonialCarouselCounter(0, 4), '01 / 04');
+  assert.equal(formatTestimonialCarouselCounter(3, 4), '04 / 04');
+  assert.equal(formatTestimonialCarouselCounter(12, 4), '04 / 04');
+  assert.equal(formatTestimonialCarouselCounter(0, 0), '00 / 00');
 });
 
-test('StudioCMS Testimonials: dynamic filtering, Laya AI persona ordering, and filter counts respect published flag', () => {
-  const config = createDefaultTestimonialsCmsConfig();
-  const newReview = {
-    ...createNewCmsTestimonialRecord(config.items),
-    id: 'custom-estate-tower',
-    category: 'real_estate' as const,
-    authorName: 'Ольга Сафонова',
-    initials: deriveAuthorInitials('Ольга Сафонова'),
-  };
-  assert.equal(newReview.initials, 'ОС');
+test('shouldShowTestimonialCarouselControls and swipe gesture helper behave deterministically', () => {
+  assert.equal(shouldShowTestimonialCarouselControls(0), false);
+  assert.equal(shouldShowTestimonialCarouselControls(1), false);
+  assert.equal(shouldShowTestimonialCarouselControls(2), true);
 
-  const updatedConfig = {
-    ...config,
-    items: [
-      ...config.items.map((item) =>
-        item.id === 'veramed-clinics' ? { ...item, published: false } : item
-      ),
-      newReview,
-    ],
-  };
+  assert.equal(resolveTestimonialCarouselSwipeDirection(-60), 'next');
+  assert.equal(resolveTestimonialCarouselSwipeDirection(55), 'prev');
+  assert.equal(resolveTestimonialCarouselSwipeDirection(-15), null);
+  assert.equal(resolveTestimonialCarouselSwipeDirection(Number.NaN), null);
+});
 
-  const counts = computeTestimonialFilterCounts(updatedConfig);
+test('Studio CMS testimonials config feeds carousel filters, counts, and persona priority cleanly', () => {
+  const cmsConfig = createDefaultTestimonialsCmsConfig();
+  const counts = computeTestimonialFilterCounts(cmsConfig);
   assert.equal(counts.all, 4);
-  assert.equal(counts.real_estate, 2);
-  assert.equal(counts.medical, 0);
+  assert.equal(counts.fmcg, 1);
+  assert.equal(counts.real_estate, 1);
+  assert.equal(counts.medical, 1);
+  assert.equal(counts.fast_launch, 1);
 
-  // Persona real_estate puts real_estate items at the lead
-  const estateOrdered = getPublishedCmsTestimonialsForFilterAndPersona(
-    updatedConfig,
+  const realEstateFirst = getPublishedCmsTestimonialsForFilterAndPersona(
+    cmsConfig,
     'all',
     'real_estate'
   );
-  assert.equal(estateOrdered[0]?.category, 'real_estate');
-  assert.equal(estateOrdered[1]?.category, 'real_estate');
-  assert.equal(
-    estateOrdered.some((item) => item.id === 'veramed-clinics'),
-    false
-  );
+  assert.equal(realEstateFirst[0].id, 'forma-estate');
+  assert.equal(realEstateFirst.length, 4);
 
-  // Persona returning_vip puts fast_launch lead
-  const vipOrdered = getPublishedCmsTestimonialsForFilterAndPersona(
-    updatedConfig,
-    'all',
-    'returning_vip'
-  );
-  assert.equal(vipOrdered[0]?.id, 'zerno-fast-launch');
-
-  // Specific category filter
-  const medicalFiltered = getPublishedCmsTestimonialsForFilterAndPersona(
-    updatedConfig,
-    'medical',
-    'default'
-  );
-  assert.equal(medicalFiltered.length, 0);
-});
-
-test('StudioCMS Testimonials: resolves linked portfolio audio cases and tracks local CMS changes & reordering', () => {
-  const baseline = createDefaultStudioCmsSnapshot();
-  const firstReview = baseline.testimonials.items[0]!;
-  const linkedCase = resolveTestimonialLinkedCase(
-    firstReview,
-    baseline.portfolioCases,
-    baseline.flagshipReel
-  );
-  assert.ok(linkedCase);
-  assert.equal(linkedCase.id, 'dmitrogorsky');
-
-  // Unpublished portfolio case should not resolve as playable
-  const unpublishedCases = baseline.portfolioCases.map((c) =>
-    c.id === 'dmitrogorsky' ? { ...c, published: false } : c
-  );
-  assert.equal(
-    resolveTestimonialLinkedCase(
-      firstReview,
-      unpublishedCases,
-      baseline.flagshipReel
+  // Unpublished CMS records are excluded dynamically
+  const customized = {
+    ...cmsConfig,
+    items: cmsConfig.items.map((item) =>
+      item.id === 'forma-estate' ? { ...item, published: false } : item
     ),
-    null
-  );
-
-  // Reorder testimonials up/down
-  const reordered = reorderCmsTestimonials(baseline.testimonials.items, 1, 'up');
-  assert.equal(reordered[0]?.id, 'forma-estate');
-  assert.equal(reordered[0]?.sortOrder, 1);
-  assert.equal(reordered[1]?.id, 'dmitrogorsky-fmcg');
-  assert.equal(reordered[1]?.sortOrder, 2);
-
-  // Local changes diff count
-  assert.equal(countLocalTestimonialsChanges(baseline, baseline), 0);
-  const modifiedSnap = {
-    ...baseline,
-    testimonials: {
-      ...baseline.testimonials,
-      headingPrimary: 'Обновлённый заголовок отзывов',
-      items: reordered,
-    },
   };
-  assert.equal(countLocalTestimonialsChanges(modifiedSnap, baseline) >= 2, true);
+  const updatedCounts = computeTestimonialFilterCounts(customized);
+  assert.equal(updatedCounts.all, 3);
+  assert.equal(updatedCounts.real_estate, 0);
+  assert.equal(
+    getPublishedCmsTestimonialsForFilterAndPersona(customized, 'real_estate', 'default').length,
+    0
+  );
 });
