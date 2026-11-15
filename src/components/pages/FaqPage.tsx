@@ -33,7 +33,7 @@ export function FaqPage({ onNavigate, onStartOrder }: FaqPageProps) {
         pageUrl,
         name: 'Ответы на частые вопросы о договоре, оплате и этапах создания ролика — FMWorks',
         description:
-          'Как устроена проверка реквизитов, 100% предоплата по договору или картой, срочный заказ от 1 часа, договорной тариф, сроки продакшна и передача паспорта прав РАО/ВОИС.',
+          'Как устроена проверка реквизитов, 100% предоплата по договору или банковской картой, срочный заказ от 1 часа, договорной тариф, сроки продакшна и передача паспорта прав РАО/ВОИС.',
       })
     );
   }, []);
@@ -57,7 +57,7 @@ export function FaqPage({ onNavigate, onStartOrder }: FaqPageProps) {
             <span aria-hidden="true" className="opacity-40">
               ·
             </span>
-            <span>100% предоплата по договору или картой</span>
+            <span>100% предоплата по договору или банковской картой</span>
             <span aria-hidden="true" className="opacity-40">
               ·
             </span>
@@ -102,7 +102,8 @@ export function FaqPage({ onNavigate, onStartOrder }: FaqPageProps) {
             <p className="text-sm sm:text-base leading-relaxed text-[#111111]/74 dark:text-[#F4F3EF]/74 editorial-pretty">
               Если у вас уже есть утверждённый текст и нужно экстренно выйти в эфир, мы вне очереди
               записываем диктора и делаем чистовое эфирное сведение (−14 LUFS, WAV + MP3). Срочные
-              заказы оплачиваются по договорной цене — 100% предоплата по договору или картой.
+              заказы оплачиваются по договорной цене — 100% предоплата по договору или банковской
+              картой.
             </p>
           </div>
 
@@ -127,7 +128,7 @@ export function FaqPage({ onNavigate, onStartOrder }: FaqPageProps) {
         compactPadding
         eyebrow="Процесс без недосказанности"
         heading="От проверки реквизитов до готового мастера."
-        subheading="100% предоплата по договору или картой — затем разработка сценария, запись актёров кино и передача паспорта прав РАО/ВОИС."
+        subheading="100% предоплата по договору или банковской картой — затем разработка сценария, запись актёров кино и передача паспорта прав РАО/ВОИС."
         itemsOverride={HOME_PROCESS_FAQ_ITEMS}
         ctaLabel="Тарифы, сроки по пакетам и паспорт прав"
         onCtaClick={() => onNavigate({ kind: 'pricing' })}

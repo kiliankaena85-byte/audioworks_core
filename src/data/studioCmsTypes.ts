@@ -282,7 +282,7 @@ export function createDefaultStudioCmsSnapshot(): StudioCmsSnapshot {
       pricingHeadingPrimary: 'Три пакета с фикс-ценой.',
       pricingHeadingMuted: 'Плюс индивидуальный разбор.',
       pricingSubheading:
-        '100% предоплата по договору или картой (ЭДО / СБП 54-ФЗ). Для срочных заказов от 1 часа и нестандартных задач доступен тариф с договорной ценой.',
+        '100% предоплата по договору или банковской картой (ЭДО / СБП 54-ФЗ). Для срочных заказов от 1 часа и нестандартных задач доступен тариф с договорной ценой.',
       pricingRows: EDITORIAL_PRICING_ROWS.map((row) => ({ ...row })),
       faqEyebrow: 'Частые вопросы',
       faqHeading: 'Отвечаем до того, как вы спросите.',

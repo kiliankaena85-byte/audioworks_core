@@ -7865,10 +7865,48 @@ async function startServer() {
     if (fs.existsSync(distAssetsPath)) {
       app.use(
         '/assets',
-        express.static(distAssetsPath, { maxAge: '365d', immutable: true })
+        express.static(distAssetsPath, {
+          etag: true,
+          lastModified: true,
+          setHeaders: (res, filePath) => {
+            if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
+              res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+            } else {
+              res.setHeader('Cache-Control', 'public, max-age=86400');
+            }
+          },
+        })
       );
+
+      // Если открытая вкладка со старой сборкой запрашивает переименованный или объединённый JS-чанк,
+      // подставляем актуальный чанк с тем же префиксом либо инициируем мягкую перезагрузку страницы.
+      app.get('/assets/*.js', (req, res, next) => {
+        const requestedBase = path.basename(req.path);
+        const prefixMatch = requestedBase.match(/^([A-Za-z0-9_-]+)-[A-Za-z0-9_-]+\.js$/);
+        if (prefixMatch && fs.existsSync(distAssetsPath)) {
+          const prefix = `${prefixMatch[1]}-`;
+          const replacement = fs
+            .readdirSync(distAssetsPath)
+            .find((name) => name.startsWith(prefix) && name.endsWith('.js'));
+          if (replacement) {
+            res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+            res.sendFile(path.join(distAssetsPath, replacement));
+            return;
+          }
+          res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+          res
+            .status(200)
+            .send(
+              "if (typeof window !== 'undefined') { window.location.reload(); }\nexport default {};\n"
+            );
+          return;
+        }
+        next();
+      });
     }
-    app.use(express.static(distPath, { index: false, maxAge: '1h' }));
+    app.use(express.static(distPath, { index: false, maxAge: 0 }));
 
     const prodIndexPath = path.join(distPath, 'index.html');
     let cachedProdHtml: { mtimeMs: number; html: string } | null = null;

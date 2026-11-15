@@ -1,77 +1,28 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { broadcastAircheckEngine } from './audio/broadcastAircheckEngine';
 import { casePlayerEngine, CasePlayerSnapshot } from './audio/casePlayerEngine';
 import { contrastAudioEngine } from './audio/contrastAudioEngine';
 import { SiteTextBlocksProvider } from './cms/SiteTextBlocksContext';
 import { StudioCmsProvider, useStudioCms } from './cms/StudioCmsContext';
+import { AdminWorkspace } from './components/admin/AdminWorkspace';
 import { AppErrorBoundary } from './components/AppErrorBoundary';
+import { BrandKitModal } from './components/BrandKitModal';
 import { CompactHeaderNav } from './components/CompactHeaderNav';
 import { FloatingCasePlayer } from './components/FloatingCasePlayer';
 import { Footer } from './components/Footer';
 import { PerformanceMonitor } from './components/PerformanceMonitor';
+import { ApproachPage } from './components/pages/ApproachPage';
+import { CasesPage } from './components/pages/CasesPage';
+import { ClientCabinetPage } from './components/pages/ClientCabinetPage';
+import { FaqPage } from './components/pages/FaqPage';
 import { HomePage } from './components/pages/HomePage';
+import { HotAirPage } from './components/pages/HotAirPage';
+import { OrderPage } from './components/pages/OrderPage';
+import { PricingPage } from './components/pages/PricingPage';
+import { SoundEngineerDropPage } from './components/pages/SoundEngineerDropPage';
+import { RadioInventoryAdmin } from './components/RadioInventoryAdmin';
+import { ReservationConfirmedModal } from './components/ReservationConfirmedModal';
 import { BrandDomainVariant } from './data/brandKitData';
-
-const AdminWorkspace = lazy(() =>
-  import('./components/admin/AdminWorkspace').then((m) => ({
-    default: m.AdminWorkspace,
-  }))
-);
-const BrandKitModal = lazy(() =>
-  import('./components/BrandKitModal').then((m) => ({
-    default: m.BrandKitModal,
-  }))
-);
-const ApproachPage = lazy(() =>
-  import('./components/pages/ApproachPage').then((m) => ({
-    default: m.ApproachPage,
-  }))
-);
-const CasesPage = lazy(() =>
-  import('./components/pages/CasesPage').then((m) => ({
-    default: m.CasesPage,
-  }))
-);
-const FaqPage = lazy(() =>
-  import('./components/pages/FaqPage').then((m) => ({
-    default: m.FaqPage,
-  }))
-);
-const HotAirPage = lazy(() =>
-  import('./components/pages/HotAirPage').then((m) => ({
-    default: m.HotAirPage,
-  }))
-);
-const OrderPage = lazy(() =>
-  import('./components/pages/OrderPage').then((m) => ({
-    default: m.OrderPage,
-  }))
-);
-const ClientCabinetPage = lazy(() =>
-  import('./components/pages/ClientCabinetPage').then((m) => ({
-    default: m.ClientCabinetPage,
-  }))
-);
-const SoundEngineerDropPage = lazy(() =>
-  import('./components/pages/SoundEngineerDropPage').then((m) => ({
-    default: m.SoundEngineerDropPage,
-  }))
-);
-const PricingPage = lazy(() =>
-  import('./components/pages/PricingPage').then((m) => ({
-    default: m.PricingPage,
-  }))
-);
-const RadioInventoryAdmin = lazy(() =>
-  import('./components/RadioInventoryAdmin').then((m) => ({
-    default: m.RadioInventoryAdmin,
-  }))
-);
-const ReservationConfirmedModal = lazy(() =>
-  import('./components/ReservationConfirmedModal').then((m) => ({
-    default: m.ReservationConfirmedModal,
-  }))
-);
 
 function RouteLoadingFallback() {
   return (

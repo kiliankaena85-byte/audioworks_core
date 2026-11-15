@@ -16,7 +16,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { ChangeEvent, FormEvent, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildCanonicalDeliveryDetail,
   CLIENT_DELIVERY_CHANNEL_OPTIONS,
@@ -105,12 +105,7 @@ import {
   StudioLegalProfilesConfig,
 } from '../../data/studioDocumentsCore';
 import { ReservationConfirmedModal } from '../ReservationConfirmedModal';
-
-const BrandedDocumentSuiteModal = lazy(() =>
-  import('../documents/BrandedDocumentSuiteModal').then((m) => ({
-    default: m.BrandedDocumentSuiteModal,
-  }))
-);
+import { BrandedDocumentSuiteModal } from '../documents/BrandedDocumentSuiteModal';
 
 interface OrderPageProps {
   draft: OrderDraftSnapshot;
@@ -1239,7 +1234,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                 }`
               : isMediaBookingMode
                 ? `Выбрано радиостанций: ${mediaReservation?.stations.length ?? 0} · Оставьте контакт, чтобы закрепить слоты`
-                : 'Оформление заказа · Быстрый запуск'}
+                : 'Оформление заказа · 100% предоплата по договору или банковской картой'}
           </p>
           <h1
             id="order-page-heading"
@@ -2963,10 +2958,22 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                         )}
                       </span>
                     </div>
+
+                    <div className="flex items-start justify-between gap-3 pt-2 border-t border-[#111111]/8 dark:border-white/8">
+                      <span className="text-[#111111]/62 dark:text-[#F4F3EF]/62 shrink-0">
+                        Оплата:
+                      </span>
+                      <span
+                        data-testid="order-summary-payment-terms"
+                        className="font-semibold text-right text-xs sm:text-sm leading-snug"
+                      >
+                        100% предоплата по договору или банковской картой
+                      </span>
+                    </div>
                   </div>
 
                   <p className="pt-3 border-t border-[#111111]/10 dark:border-white/10 text-xs text-[#111111]/68 dark:text-[#F4F3EF]/68 leading-relaxed">
-                    Продюсер свяжется, уточнит детали и поможет со стартом. Статус заказа, счёт и готовые файлы всегда доступны в Личном кабинете.
+                    Продюсер свяжется, уточнит детали и поможет со стартом (100% предоплата по договору или банковской картой). Статус заказа, счёт и готовые файлы всегда доступны в Личном кабинете.
                   </p>
 
                   {activeIndustrySpec && (

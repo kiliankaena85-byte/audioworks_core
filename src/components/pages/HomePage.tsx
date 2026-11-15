@@ -1,43 +1,18 @@
 import { ArrowRight, Mic, Radio } from 'lucide-react';
-import { lazy, Suspense, useLayoutEffect, useRef } from 'react';
+import { Suspense, useLayoutEffect, useRef } from 'react';
 import { CasePlayerSnapshot } from '../../audio/casePlayerEngine';
 import { BrandDomainVariant } from '../../data/brandKitData';
 import { BrandCasePoster, CaseId } from '../../data/casesData';
 import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
 import { parsePlatformRoute, PlatformRoute } from '../../data/platformRouter';
 import { OrderFormatId } from '../../data/pricingData';
+import { ApproachSection } from '../ApproachSection';
+import { CasesGallery } from '../CasesGallery';
+import { FifteenSecDuel } from '../FifteenSecDuel';
 import { HeroKotoLens } from '../HeroKotoLens';
-
-const RealRadioBroadcastBench = lazy(() =>
-  import('../RealRadioBroadcastBench').then((m) => ({
-    default: m.RealRadioBroadcastBench,
-  }))
-);
-const CasesGallery = lazy(() =>
-  import('../CasesGallery').then((m) => ({
-    default: m.CasesGallery,
-  }))
-);
-const FifteenSecDuel = lazy(() =>
-  import('../FifteenSecDuel').then((m) => ({
-    default: m.FifteenSecDuel,
-  }))
-);
-const ApproachSection = lazy(() =>
-  import('../ApproachSection').then((m) => ({
-    default: m.ApproachSection,
-  }))
-);
-const TestimonialsSection = lazy(() =>
-  import('../TestimonialsSection').then((m) => ({
-    default: m.TestimonialsSection,
-  }))
-);
-const PricingSection = lazy(() =>
-  import('../PricingSection').then((m) => ({
-    default: m.PricingSection,
-  }))
-);
+import { PricingSection } from '../PricingSection';
+import { RealRadioBroadcastBench } from '../RealRadioBroadcastBench';
+import { TestimonialsSection } from '../TestimonialsSection';
 
 function SectionPlaceholder() {
   return <div className="min-h-[280px] w-full" aria-hidden="true" />;

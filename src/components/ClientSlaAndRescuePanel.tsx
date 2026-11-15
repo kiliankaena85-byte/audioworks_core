@@ -8,7 +8,7 @@ import {
   PhoneForwarded,
   ShieldCheck,
 } from 'lucide-react';
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   buildMediaPlanSnapshotFromReservation,
   CrmOrderRecord,
@@ -34,12 +34,7 @@ import {
   OrderDocumentMeta,
   StudioLegalProfilesConfig,
 } from '../data/studioDocumentsCore';
-
-const BrandedDocumentSuiteModal = lazy(() =>
-  import('./documents/BrandedDocumentSuiteModal').then((m) => ({
-    default: m.BrandedDocumentSuiteModal,
-  }))
-);
+import { BrandedDocumentSuiteModal } from './documents/BrandedDocumentSuiteModal';
 
 interface ClientSlaAndRescuePanelProps {
   confirmed: ConfirmedReservationSummary;
