@@ -1,6 +1,6 @@
 import { ArrowRight, Mic, Radio } from 'lucide-react';
 import { Suspense, useLayoutEffect } from 'react';
-import { CasePlayerSnapshot } from '../../audio/casePlayerEngine';
+import type { CasePlayerSnapshot } from '../../audio/lazyAudioEngines';
 import { BrandDomainVariant } from '../../data/brandKitData';
 import { BrandCasePoster, CaseId } from '../../data/casesData';
 import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
@@ -25,6 +25,8 @@ interface HomePageProps {
   onOpenBrandKit?: () => void;
   playerSnap: CasePlayerSnapshot;
   onToggleCase: (item: BrandCasePoster) => void;
+  onSeekCase?: (item: BrandCasePoster, ratio: number) => void;
+  onWarmCasePlayer?: () => void;
   onStartPreview: (item: BrandCasePoster) => void;
   onStopPreview: (caseId: CaseId) => void;
   onNavigate: (route: PlatformRoute) => void;
@@ -38,6 +40,8 @@ export function HomePage({
   onOpenBrandKit,
   playerSnap,
   onToggleCase,
+  onSeekCase,
+  onWarmCasePlayer,
   onStartPreview,
   onStopPreview,
   onNavigate,
@@ -81,6 +85,8 @@ export function HomePage({
         <CasesGallery
           playerSnap={playerSnap}
           onToggleCase={onToggleCase}
+          onSeekCase={onSeekCase}
+          onWarmCasePlayer={onWarmCasePlayer}
           onStartPreview={onStartPreview}
           onStopPreview={onStopPreview}
           onOpenCaseDetail={(caseId) =>

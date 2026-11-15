@@ -1,8 +1,7 @@
 import { Mic, Pause, Play, Square, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createSafeAudioContext } from '../../audio/audioContextHelper';
-import { casePlayerEngine } from '../../audio/casePlayerEngine';
-import { contrastAudioEngine } from '../../audio/contrastAudioEngine';
+import { claimExclusiveAudioFocus } from '../../audio/audioFocusCoordinator';
 
 export type VoiceRecordStatus = 'idle' | 'recording' | 'recorded';
 
@@ -147,8 +146,7 @@ export function VoiceBriefRecorder({
   };
 
   const startVoiceRecording = async () => {
-    contrastAudioEngine.stopAll();
-    casePlayerEngine.stop();
+    claimExclusiveAudioFocus('voice_brief_recorder');
     onClearError?.();
 
     if (
@@ -243,8 +241,7 @@ export function VoiceBriefRecorder({
       return;
     }
 
-    contrastAudioEngine.stopAll();
-    casePlayerEngine.stop();
+    claimExclusiveAudioFocus('voice_brief_recorder');
 
     if (!isSimulatedMic && recordedBlobUrl) {
       const audio = new Audio(recordedBlobUrl);

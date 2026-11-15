@@ -12,7 +12,14 @@ import {
 } from '../data/audioworksCommercial';
 import type { ResolvedHeroStagePlayback } from '../data/heroStageCms';
 import { LayaPersonaSlot } from '../engine/layaTypes';
-import { createSafeAudioContext } from './audioContextHelper';
+import {
+  createSafeAudioContext,
+  unlockAudioContextOnGesture,
+} from './audioContextHelper';
+import {
+  claimExclusiveAudioFocus,
+  onExclusiveAudioFocusClaimed,
+} from './audioFocusCoordinator';
 import { duelAudioStore } from './duelAudioStore';
 
 export type StageMode = CommercialStageMode;
@@ -138,6 +145,17 @@ class ContrastAudioEngine {
 
   private listeners = new Set<SnapshotListener>();
   private onStartHooks = new Set<() => void>();
+
+  constructor() {
+    onExclusiveAudioFocusClaimed((channel) => {
+      if (
+        channel !== 'contrast_hero' &&
+        (this.isSoundPlaying || this.isFilmPlaying)
+      ) {
+        this.stopAll();
+      }
+    });
+  }
 
   public onBeforeStart(cb: () => void): () => void {
     this.onStartHooks.add(cb);
@@ -391,9 +409,7 @@ class ContrastAudioEngine {
       this.roadGain.connect(this.synthMasterGain);
     }
 
-    if (this.ctx.state === 'suspended') {
-      this.ctx.resume().catch(() => {});
-    }
+    unlockAudioContextOnGesture(this.ctx);
 
     if (this.htmlAudio && !this.mediaElementSource && this.analyser) {
       try {
@@ -528,6 +544,7 @@ class ContrastAudioEngine {
    * напрямую к главной сцене и живому анализатору спектра `AnalyserNode`.
    */
   public loadCustomShowreel(objectUrl: string, fileName: string, autoPlay = true): void {
+    claimExclusiveAudioFocus('contrast_hero');
     this.onStartHooks.forEach((fn) => fn());
     this.clearPlaybackOnly();
 
@@ -842,6 +859,7 @@ class ContrastAudioEngine {
     forceFocusMode = false,
     preserveSegmentStartSec?: number
   ): void {
+    claimExclusiveAudioFocus('contrast_hero');
     this.onStartHooks.forEach((fn) => fn());
     this.clearPlaybackOnly();
 
@@ -920,6 +938,7 @@ class ContrastAudioEngine {
    * - Фаза 3 (с 4.5 с): чистый, объёмный мир AudioWorks со студийным звуком и живым эквалайзером.
    */
   public startCrashTest(initialClutterOffsetSec = 0): void {
+    claimExclusiveAudioFocus('contrast_hero');
     this.onStartHooks.forEach((fn) => fn());
     this.clearPlaybackOnly();
 
@@ -1242,17 +1261,24 @@ class ContrastAudioEngine {
   }
 
   public seekToRatio(ratio: number): void {
-    const clamped = Math.max(0, Math.min(0.99, ratio));
-    const targetSec = clamped * this.filmDurationSec;
+    const clamped = Math.max(0, Math.min(0.995, Number.isFinite(ratio) ? ratio : 0));
+    const safeStart = Math.max(
+      0,
+      Math.min(Math.max(0, this.filmDurationSec - 0.5), this.focusSegmentStartSec)
+    );
+    const segmentSpan = Math.max(0.5, this.filmDurationSec - safeStart);
+    const targetSec = safeStart + clamped * segmentSpan;
     const forceFocus =
       this.activeSrcUrl !== AUDIOWORKS_WAV_URL || targetSec >= AUDIOWORKS_FOCUS_ENTRY_SEC;
+    this.isLensExpanded = true;
+    this.crashPhase = 'audioworks';
     this.seekAndPlayUrl(
       this.activeSrcUrl,
       targetSec,
       this.stopSegmentAtSec,
       true,
       forceFocus,
-      this.focusSegmentStartSec
+      safeStart
     );
   }
 }

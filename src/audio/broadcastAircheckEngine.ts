@@ -5,16 +5,30 @@ import {
   BroadcastSourceMode,
   BroadcastTimelineSegment,
   buildBroadcastTimelineSegments,
+  clampTargetSlotIndex,
+  DEFAULT_AIRCHECK_DURATIONS_SEC,
+  DEFAULT_NEIGHBOR_ORDER,
+  findOptimalSpeechExitSec,
   getTotalBroadcastDurationSec,
   InsertedSpotMode,
+  NeighborBroadcastSpotSpec,
+  PROGRAM_TRANSITION_CONFIG,
+  randomizeSlotPlacement,
   resolveActiveBroadcastSegmentAtTime,
+  TargetSlotPosition,
+  TargetSpotPresetId,
   UploadedSpotBroadcastDiagnostic,
   VERIFIED_LIVE_REGIONAL_STATIONS,
   VerifiedRegionalStationSpec,
 } from '../data/broadcastAircheckData';
-import { createSafeAudioContext } from './audioContextHelper';
-import { casePlayerEngine } from './casePlayerEngine';
-import { contrastAudioEngine } from './contrastAudioEngine';
+import {
+  createSafeAudioContext,
+  unlockAudioContextOnGesture,
+} from './audioContextHelper';
+import {
+  claimExclusiveAudioFocus,
+  onExclusiveAudioFocusClaimed,
+} from './audioFocusCoordinator';
 
 export type LiveStreamConnectionState =
   | 'idle'
@@ -22,13 +36,23 @@ export type LiveStreamConnectionState =
   | 'live_air'
   | 'fallback_aircheck';
 
+export type ClientGainMode = 'as_uploaded' | 'broadcast_matched';
+
 export interface BroadcastAircheckSnapshot {
   isPlaying: boolean;
   sourceMode: BroadcastSourceMode;
   spotMode: InsertedSpotMode;
+  targetPresetId: TargetSpotPresetId;
+  targetSlotIndex: TargetSlotPosition;
+  neighborOrder: readonly NeighborBroadcastSpotSpec['id'][];
   selectedStationId: VerifiedRegionalStationSpec['id'];
   liveStreamStatus: LiveStreamConnectionState;
   roadNoiseEnabled: boolean;
+  clientGainMode: ClientGainMode;
+  isCrossfadingSplice: boolean;
+  resolvedProgramExitSec: number | null;
+  volume: number;
+  isMuted: boolean;
   elapsedSec: number;
   totalDurationSec: number;
   activeSegmentId: BroadcastSegmentId;
@@ -44,49 +68,79 @@ export interface BroadcastAircheckSnapshot {
 type AircheckListener = (snap: BroadcastAircheckSnapshot) => void;
 
 const MAX_UPLOAD_BYTES = 28 * 1024 * 1024;
+const TARGET_BROADCAST_RMS_DB = -18.5;
 
 class BroadcastAircheckEngine {
   private sourceMode: BroadcastSourceMode = 'captured_regional_host';
   private spotMode: InsertedSpotMode = 'fmworks_example';
+  private targetPresetId: TargetSpotPresetId = 'zerno_craft';
+  private targetSlotIndex: TargetSlotPosition = 2;
+  private neighborOrder: NeighborBroadcastSpotSpec['id'][] = [
+    ...DEFAULT_NEIGHBOR_ORDER,
+  ];
   private selectedStationId: VerifiedRegionalStationSpec['id'] = 'kp_reg_91';
   private liveStreamStatus: LiveStreamConnectionState = 'idle';
   private roadNoiseEnabled = false;
+  private clientGainMode: ClientGainMode = 'as_uploaded';
+  private isCrossfadingSplice = false;
+  private volume = 0.9;
+  private isMuted = false;
 
   private isPlaying = false;
   private elapsedSec = 0;
 
   private clientAudioUrl: string | null = null;
   private clientFileName: string | null = null;
+  private clientAudioBuffer: AudioBuffer | null = null;
+  private clientLeftSamples: Float32Array | null = null;
+  private clientRightSamples: Float32Array | null = null;
+  private clientSampleRate = 44100;
   private uploadedDiagnostic: UploadedSpotBroadcastDiagnostic | null = null;
   private isAnalyzingUpload = false;
   private uploadError: string | null = null;
 
+  // Единый Web Audio граф для бесшовного кроссфейда, лимитирования и шума дороги
+  private audioCtx: AudioContext | null = null;
+  private masterGain: GainNode | null = null;
+  private masterLimiter: DynamicsCompressorNode | null = null;
+  private roadGain: GainNode | null = null;
+  private roadSource: AudioBufferSourceNode | null = null;
+
+  private bufferCache = new Map<string, AudioBuffer>();
+  private loadingBuffers = new Map<string, Promise<AudioBuffer | null>>();
+  private detectedProgramExitByUrl = new Map<string, number>();
+
+  private activeBufferSource: AudioBufferSourceNode | null = null;
+  private activeBufferGain: GainNode | null = null;
+  private fadingOutNodes: Array<{
+    source: AudioBufferSourceNode;
+    gain: GainNode;
+  }> = [];
+
+  // Потоковый HTMLAudio тракт (для Live FM-потока и фоллбэка декодирования)
   private htmlAudio: HTMLAudioElement | null = null;
+  private liveMediaSource: MediaElementAudioSourceNode | null = null;
+  private liveAnalyser: AnalyserNode | null = null;
+  private liveDeckGain: GainNode | null = null;
+  private liveTimeDomainBuf: Float32Array<ArrayBuffer> | null = null;
+  private liveSpeechSamplesDb: number[] = [];
+  private livePauseLowFrames = 0;
   private preloadedNextAudio: HTMLAudioElement | null = null;
   private preloadedNextUrl: string | null = null;
 
   private activeSegmentIndex = 0;
   private segmentWallStartMs = 0;
   private segmentInitialOffsetSec = 0;
+  private crossfadeStartedForToken = -1;
   private tickTimerId: number | null = null;
   private liveConnectGuardTimerId: number | null = null;
   private sessionToken = 0;
 
-  private noiseCtx: AudioContext | null = null;
-  private roadGain: GainNode | null = null;
-  private roadSource: AudioBufferSourceNode | null = null;
-
   private listeners = new Set<AircheckListener>();
 
   constructor() {
-    contrastAudioEngine.onBeforeStart(() => {
-      if (this.isPlaying) {
-        this.stop();
-      }
-    });
-
-    casePlayerEngine.subscribe((snap) => {
-      if (snap.isPlaying && this.isPlaying) {
+    onExclusiveAudioFocusClaimed((channel) => {
+      if (channel !== 'broadcast_aircheck' && this.isPlaying) {
         this.stop();
       }
     });
@@ -102,38 +156,81 @@ class BroadcastAircheckEngine {
 
   private getSelectedStation(): VerifiedRegionalStationSpec {
     return (
-      VERIFIED_LIVE_REGIONAL_STATIONS.find((s) => s.id === this.selectedStationId) ??
-      VERIFIED_LIVE_REGIONAL_STATIONS[0]
+      VERIFIED_LIVE_REGIONAL_STATIONS.find(
+        (s) => s.id === this.selectedStationId
+      ) ?? VERIFIED_LIVE_REGIONAL_STATIONS[0]
     );
+  }
+
+  private getProgramOverrideExitSec(): number | undefined {
+    if (this.sourceMode === 'live_regional_stream') {
+      if (this.liveStreamStatus === 'fallback_aircheck') {
+        const st = this.getSelectedStation();
+        return this.detectedProgramExitByUrl.get(st.fallbackAircheckUrl);
+      }
+      return undefined;
+    }
+    const url =
+      this.sourceMode === 'captured_story_program'
+        ? AIRCHECK_AUDIO_URLS.storyProgramLeadin
+        : AIRCHECK_AUDIO_URLS.regionalHostLeadin;
+    return this.detectedProgramExitByUrl.get(url);
   }
 
   private computeSegments(): readonly BroadcastTimelineSegment[] {
     const station = this.getSelectedStation();
+    const detectedExit = this.getProgramOverrideExitSec();
+    const segmentDurationOverrides: Partial<
+      Record<BroadcastSegmentId, number>
+    > = {};
+    if (typeof detectedExit === 'number' && Number.isFinite(detectedExit)) {
+      segmentDurationOverrides.program_leadin = detectedExit;
+    }
+
     return buildBroadcastTimelineSegments({
       sourceMode: this.sourceMode,
       spotMode:
         this.spotMode === 'client_upload' && !this.clientAudioUrl
           ? 'fmworks_example'
           : this.spotMode,
+      targetPresetId: this.targetPresetId,
+      targetSlotIndex: this.targetSlotIndex,
+      neighborOrder: this.neighborOrder,
       clientSpotName: this.clientFileName,
       clientSpotDurationSec: this.uploadedDiagnostic?.durationSec ?? null,
       liveStationTitle: `${station.title} (${station.frequencyBadge})`,
+      segmentDurationOverrides,
     });
   }
 
   public getSnapshot(): BroadcastAircheckSnapshot {
     const segments = this.computeSegments();
     const totalDurationSec = getTotalBroadcastDurationSec(segments);
-    const clampedElapsed = Math.min(totalDurationSec, Math.max(0, this.elapsedSec));
-    const resolved = resolveActiveBroadcastSegmentAtTime(segments, clampedElapsed);
+    const clampedElapsed = Math.min(
+      totalDurationSec,
+      Math.max(0, this.elapsedSec)
+    );
+    const resolved = resolveActiveBroadcastSegmentAtTime(
+      segments,
+      clampedElapsed
+    );
+    const leadInSeg = segments.find((s) => s.id === 'program_leadin');
 
     return {
       isPlaying: this.isPlaying,
       sourceMode: this.sourceMode,
       spotMode: this.spotMode,
+      targetPresetId: this.targetPresetId,
+      targetSlotIndex: this.targetSlotIndex,
+      neighborOrder: [...this.neighborOrder],
       selectedStationId: this.selectedStationId,
       liveStreamStatus: this.liveStreamStatus,
       roadNoiseEnabled: this.roadNoiseEnabled,
+      clientGainMode: this.clientGainMode,
+      isCrossfadingSplice: this.isCrossfadingSplice,
+      resolvedProgramExitSec: leadInSeg ? leadInSeg.durationSec : null,
+      volume: this.volume,
+      isMuted: this.isMuted,
       elapsedSec: Math.round(clampedElapsed * 100) / 100,
       totalDurationSec,
       activeSegmentId: resolved.segment.id,
@@ -152,6 +249,70 @@ class BroadcastAircheckEngine {
     this.listeners.forEach((fn) => fn(snap));
   }
 
+  private ensureAudioGraph(): AudioContext | null {
+    if (typeof window === 'undefined') return null;
+
+    if (!this.audioCtx) {
+      const ctx = createSafeAudioContext();
+      if (!ctx) return null;
+
+      this.audioCtx = ctx;
+      this.masterGain = ctx.createGain();
+      this.masterGain.gain.value = this.isMuted ? 0 : this.volume;
+
+      this.masterLimiter = ctx.createDynamicsCompressor();
+      this.masterLimiter.threshold.value = -2.0;
+      this.masterLimiter.knee.value = 6.0;
+      this.masterLimiter.ratio.value = 12.0;
+      this.masterLimiter.attack.value = 0.002;
+      this.masterLimiter.release.value = 0.08;
+
+      this.masterLimiter.connect(this.masterGain);
+      this.masterGain.connect(ctx.destination);
+    }
+
+    unlockAudioContextOnGesture(this.audioCtx);
+
+    return this.audioCtx;
+  }
+
+  private syncMasterVolume(): void {
+    const gainVal = this.isMuted ? 0 : this.volume;
+    if (this.audioCtx && this.masterGain) {
+      try {
+        this.masterGain.gain.setTargetAtTime(
+          gainVal,
+          this.audioCtx.currentTime,
+          0.025
+        );
+      } catch {
+        this.masterGain.gain.value = gainVal;
+      }
+    }
+    if (this.htmlAudio && !this.liveMediaSource) {
+      this.htmlAudio.volume = gainVal;
+      this.htmlAudio.muted = this.isMuted;
+    }
+  }
+
+  public setVolume(next: number): void {
+    const clamped = Math.max(0, Math.min(1, Number.isFinite(next) ? next : 0.9));
+    this.volume = clamped;
+    if (clamped > 0.01 && this.isMuted) {
+      this.isMuted = false;
+    } else if (clamped === 0) {
+      this.isMuted = true;
+    }
+    this.syncMasterVolume();
+    this.emit();
+  }
+
+  public toggleMute(): void {
+    this.isMuted = !this.isMuted;
+    this.syncMasterVolume();
+    this.emit();
+  }
+
   public setSourceMode(mode: BroadcastSourceMode): void {
     if (this.sourceMode === mode) return;
     const wasPlaying = this.isPlaying;
@@ -168,7 +329,10 @@ class BroadcastAircheckEngine {
   }
 
   public setSelectedStation(stationId: VerifiedRegionalStationSpec['id']): void {
-    if (this.selectedStationId === stationId && this.sourceMode === 'live_regional_stream') {
+    if (
+      this.selectedStationId === stationId &&
+      this.sourceMode === 'live_regional_stream'
+    ) {
       return;
     }
     const wasPlaying = this.isPlaying;
@@ -195,6 +359,14 @@ class BroadcastAircheckEngine {
     const wasPlaying = this.isPlaying;
     this.clearAudioAndTimers();
     this.spotMode = mode;
+    if (mode === 'typical_cliche') {
+      this.targetPresetId = 'cliche_template';
+    } else if (
+      mode === 'fmworks_example' &&
+      this.targetPresetId === 'cliche_template'
+    ) {
+      this.targetPresetId = 'zerno_craft';
+    }
     this.elapsedSec = 0;
     this.isPlaying = false;
     this.syncRoadNoise();
@@ -202,6 +374,101 @@ class BroadcastAircheckEngine {
     if (wasPlaying) {
       this.jumpToTargetTransition();
     }
+  }
+
+  public selectTargetPreset(presetId: TargetSpotPresetId): void {
+    const nextSpotMode: InsertedSpotMode =
+      presetId === 'cliche_template' ? 'typical_cliche' : 'fmworks_example';
+    if (
+      this.targetPresetId === presetId &&
+      this.spotMode === nextSpotMode
+    ) {
+      return;
+    }
+    const wasPlaying = this.isPlaying;
+    this.clearAudioAndTimers();
+    this.targetPresetId = presetId;
+    this.spotMode = nextSpotMode;
+    this.elapsedSec = 0;
+    this.isPlaying = false;
+    this.syncRoadNoise();
+    this.emit();
+    if (wasPlaying) {
+      this.jumpToTargetTransition();
+    }
+  }
+
+  private refreshDiagnosticSlotContext(): void {
+    if (!this.clientFileName || !this.clientLeftSamples) return;
+    this.uploadedDiagnostic = analyzeUploadedSpotSamples({
+      fileName: this.clientFileName,
+      samples: this.clientLeftSamples,
+      rightSamples: this.clientRightSamples,
+      sampleRate: this.clientSampleRate,
+      targetSlotIndex: this.targetSlotIndex,
+    });
+  }
+
+  public setTargetSlotIndex(slot: TargetSlotPosition): void {
+    const nextSlot = clampTargetSlotIndex(slot);
+    if (this.targetSlotIndex === nextSlot) return;
+    const wasPlaying = this.isPlaying;
+    this.clearAudioAndTimers();
+    this.targetSlotIndex = nextSlot;
+    this.refreshDiagnosticSlotContext();
+    this.elapsedSec = 0;
+    this.isPlaying = false;
+    this.syncRoadNoise();
+    this.emit();
+    if (wasPlaying) {
+      this.jumpToTargetTransition();
+    }
+  }
+
+  public randomizeTargetSlot(): void {
+    const wasPlaying = this.isPlaying;
+    this.clearAudioAndTimers();
+    const randomized = randomizeSlotPlacement({
+      currentSlotIndex: this.targetSlotIndex,
+      currentNeighborOrder: this.neighborOrder,
+    });
+    this.targetSlotIndex = randomized.targetSlotIndex;
+    this.neighborOrder = randomized.neighborOrder;
+    this.refreshDiagnosticSlotContext();
+    this.elapsedSec = 0;
+    this.isPlaying = false;
+    this.syncRoadNoise();
+    this.emit();
+    if (wasPlaying) {
+      this.jumpToTargetTransition();
+    }
+  }
+
+  public setClientGainMode(mode: ClientGainMode): void {
+    if (this.clientGainMode === mode) return;
+    this.clientGainMode = mode;
+
+    const segments = this.computeSegments();
+    const activeSeg = segments[this.activeSegmentIndex];
+    if (
+      this.isPlaying &&
+      activeSeg?.id === 'target_spot' &&
+      this.spotMode === 'client_upload' &&
+      this.audioCtx &&
+      this.activeBufferGain
+    ) {
+      const targetLinear = this.computeSegmentPlaybackGain(activeSeg);
+      try {
+        this.activeBufferGain.gain.setTargetAtTime(
+          targetLinear,
+          this.audioCtx.currentTime,
+          0.05
+        );
+      } catch {
+        this.activeBufferGain.gain.value = targetLinear;
+      }
+    }
+    this.emit();
   }
 
   public toggleRoadNoise(): void {
@@ -227,21 +494,24 @@ class BroadcastAircheckEngine {
     this.playFromTime(target.startSec);
   }
 
-  /**
-   * Свободная перемотка по клику или перетаскиванию вдоль скульптурной звуковой волны (0..1).
-   */
   public seekToRatio(ratio: number): void {
     const segments = this.computeSegments();
     const total = getTotalBroadcastDurationSec(segments);
     if (total <= 0) return;
-    const clampedRatio = Math.min(1, Math.max(0, Number.isFinite(ratio) ? ratio : 0));
+    const clampedRatio = Math.min(
+      1,
+      Math.max(0, Number.isFinite(ratio) ? ratio : 0)
+    );
     this.seekToTime(clampedRatio * total);
   }
 
   public seekToTime(targetTimeSec: number): void {
     const segments = this.computeSegments();
     const total = getTotalBroadcastDurationSec(segments);
-    const clamped = Math.max(0, Math.min(Math.max(0, total - 0.25), targetTimeSec));
+    const clamped = Math.max(
+      0,
+      Math.min(Math.max(0, total - 0.25), targetTimeSec)
+    );
 
     if (this.isPlaying && this.htmlAudio) {
       const resolved = resolveActiveBroadcastSegmentAtTime(segments, clamped);
@@ -251,7 +521,11 @@ class BroadcastAircheckEngine {
         this.sourceMode === 'live_regional_stream' &&
         this.liveStreamStatus !== 'fallback_aircheck';
 
-      if (targetIdx === this.activeSegmentIndex && !isLiveSeg && this.htmlAudio.readyState >= 1) {
+      if (
+        targetIdx === this.activeSegmentIndex &&
+        !isLiveSeg &&
+        this.htmlAudio.readyState >= 1
+      ) {
         try {
           this.htmlAudio.currentTime = resolved.segmentLocalSec;
           this.segmentInitialOffsetSec = resolved.segmentLocalSec;
@@ -260,7 +534,7 @@ class BroadcastAircheckEngine {
           this.emit();
           return;
         } catch {
-          // Fall through to full segment restart
+          // Fall through
         }
       }
     }
@@ -269,30 +543,32 @@ class BroadcastAircheckEngine {
   }
 
   /**
-   * Переходит за 2.8 сек до входа в рекламный блок (финал фразы ведущего -> настоящая рекламная склейка ->
-   * конкурент №1 -> целевой ролик -> ещё 3 конкурента -> возврат в передачу).
+   * Переходит за 3.2 сек до естественной паузы окончания фразы в программе,
+   * чтобы сразу услышать завершение мысли ведущего, плавное затухание и кроссфейд в отбивку склейки.
    */
   public jumpToSpliceTransition(): void {
     const segments = this.computeSegments();
     const adJingleSeg = segments.find((s) => s.id === 'ad_jingle_in');
-    const spliceStart = adJingleSeg ? Math.max(0, adJingleSeg.startSec - 2.8) : 0;
+    const spliceStart = adJingleSeg
+      ? Math.max(0, adJingleSeg.startSec - 3.2)
+      : 0;
     this.playFromTime(spliceStart);
   }
 
   /**
-   * Переходит за 3.2 сек до самого целевого слота (конец первого конкурента -> ваш ролик -> 3 конкурента следом),
-   * используется сразу после загрузки своего файла для мгновенной проверки стыков.
+   * Переходит за 3.0 сек до целевого слота (финал отбивки склейки для слота №1 или хвост соседа).
    */
   public jumpToTargetTransition(): void {
     const segments = this.computeSegments();
-    const targetSeg = segments.find((s) => s.id === 'target_spot');
-    const startAt = targetSeg ? Math.max(0, targetSeg.startSec - 3.2) : 0;
+    const targetSeg = segments.find((s) => s.isTargetSlot);
+    const startAt = targetSeg ? Math.max(0, targetSeg.startSec - 3.0) : 0;
     this.playFromTime(startAt);
   }
 
   public pause(): void {
     this.clearAudioAndTimers();
     this.isPlaying = false;
+    this.isCrossfadingSplice = false;
     if (this.liveStreamStatus === 'connecting') {
       this.liveStreamStatus = 'idle';
     }
@@ -303,6 +579,7 @@ class BroadcastAircheckEngine {
   public stop(): void {
     this.clearAudioAndTimers();
     this.isPlaying = false;
+    this.isCrossfadingSplice = false;
     this.elapsedSec = 0;
     this.liveStreamStatus = 'idle';
     this.syncRoadNoise();
@@ -311,10 +588,7 @@ class BroadcastAircheckEngine {
 
   public async loadClientAudioFile(file: File): Promise<boolean> {
     this.uploadError = null;
-
-    if (!file) {
-      return false;
-    }
+    if (!file) return false;
 
     const lowerName = file.name.toLowerCase();
     const looksLikeAudio =
@@ -344,10 +618,10 @@ class BroadcastAircheckEngine {
     try {
       const arrayBuffer = await file.arrayBuffer();
       const decodeCtx = createSafeAudioContext();
-
       if (!decodeCtx) {
         throw new Error('Браузер не поддерживает декодирование аудио');
       }
+
       let decoded: AudioBuffer;
       try {
         decoded = await decodeCtx.decodeAudioData(arrayBuffer.slice(0));
@@ -355,24 +629,35 @@ class BroadcastAircheckEngine {
         decodeCtx.close().catch(() => {});
       }
 
-      const channelData = decoded.getChannelData(0);
+      const leftCopy = new Float32Array(decoded.getChannelData(0));
+      const rightCopy =
+        decoded.numberOfChannels > 1
+          ? new Float32Array(decoded.getChannelData(1))
+          : null;
+
       const diagnostic = analyzeUploadedSpotSamples({
         fileName: file.name,
-        samples: channelData,
+        samples: leftCopy,
+        rightSamples: rightCopy,
         sampleRate: decoded.sampleRate,
+        targetSlotIndex: this.targetSlotIndex,
       });
 
       if (this.clientAudioUrl && this.clientAudioUrl.startsWith('blob:')) {
         try {
           URL.revokeObjectURL(this.clientAudioUrl);
         } catch {
-          // Ignore revoke errors
+          // Ignore
         }
       }
 
       const nextObjectUrl = URL.createObjectURL(file);
       this.clientAudioUrl = nextObjectUrl;
       this.clientFileName = file.name;
+      this.clientAudioBuffer = decoded;
+      this.clientLeftSamples = leftCopy;
+      this.clientRightSamples = rightCopy;
+      this.clientSampleRate = decoded.sampleRate;
       this.uploadedDiagnostic = diagnostic;
       this.spotMode = 'client_upload';
       this.isAnalyzingUpload = false;
@@ -380,7 +665,6 @@ class BroadcastAircheckEngine {
       this.elapsedSec = 0;
       this.emit();
 
-      // Сразу запускаем воспроизведение с конца конкурента №1 перед роликом клиента
       this.jumpToTargetTransition();
       return true;
     } catch {
@@ -403,11 +687,17 @@ class BroadcastAircheckEngine {
     }
     this.clientAudioUrl = null;
     this.clientFileName = null;
+    this.clientAudioBuffer = null;
+    this.clientLeftSamples = null;
+    this.clientRightSamples = null;
     this.uploadedDiagnostic = null;
     this.uploadError = null;
     this.isAnalyzingUpload = false;
     if (this.spotMode === 'client_upload') {
       this.spotMode = 'fmworks_example';
+      if (this.targetPresetId === 'cliche_template') {
+        this.targetPresetId = 'zerno_craft';
+      }
     }
     this.isPlaying = false;
     this.elapsedSec = 0;
@@ -418,14 +708,16 @@ class BroadcastAircheckEngine {
   private playFromTime(startTimeSec: number): void {
     if (typeof window === 'undefined') return;
 
-    contrastAudioEngine.stopAll();
-    casePlayerEngine.stop();
+    claimExclusiveAudioFocus('broadcast_aircheck');
 
     this.clearAudioAndTimers();
 
     const segments = this.computeSegments();
     const total = getTotalBroadcastDurationSec(segments);
-    const clampedStart = Math.max(0, Math.min(Math.max(0, total - 0.2), startTimeSec));
+    const clampedStart = Math.max(
+      0,
+      Math.min(Math.max(0, total - 0.2), startTimeSec)
+    );
     const resolved = resolveActiveBroadcastSegmentAtTime(segments, clampedStart);
     const segIdx = Math.max(
       0,
@@ -433,11 +725,13 @@ class BroadcastAircheckEngine {
     );
 
     this.isPlaying = true;
+    this.isCrossfadingSplice = false;
     this.elapsedSec = clampedStart;
+    this.ensureAudioGraph();
     this.syncRoadNoise();
     this.emit();
 
-    this.startSegmentAtIndex(segIdx, resolved.segmentLocalSec);
+    void this.startSegmentAtIndex(segIdx, resolved.segmentLocalSec);
   }
 
   private resolveSegmentAudioSource(segment: BroadcastTimelineSegment): {
@@ -447,97 +741,124 @@ class BroadcastAircheckEngine {
   } {
     const station = this.getSelectedStation();
 
-    switch (segment.id) {
-      case 'program_leadin': {
-        if (this.sourceMode === 'live_regional_stream') {
-          return {
-            url: `/api/radio/live-stream?station=${encodeURIComponent(station.id)}&ts=${Date.now()}`,
-            isLiveStream: true,
-            fallbackUrl: station.fallbackAircheckUrl,
-          };
-        }
-        if (this.sourceMode === 'captured_story_program') {
-          return {
-            url: AIRCHECK_AUDIO_URLS.storyProgramLeadin,
-            isLiveStream: false,
-            fallbackUrl: null,
-          };
-        }
+    if (segment.id === 'program_leadin') {
+      if (this.sourceMode === 'live_regional_stream') {
         return {
-          url: AIRCHECK_AUDIO_URLS.regionalHostLeadin,
+          url: `/api/radio/live-stream?station=${encodeURIComponent(station.id)}&ts=${Date.now()}`,
+          isLiveStream: true,
+          fallbackUrl: station.fallbackAircheckUrl,
+        };
+      }
+      if (this.sourceMode === 'captured_story_program') {
+        return {
+          url: AIRCHECK_AUDIO_URLS.storyProgramLeadin,
           isLiveStream: false,
           fallbackUrl: null,
         };
       }
-
-      case 'ad_jingle_in':
-        return {
-          url: AIRCHECK_AUDIO_URLS.adSpliceJingleIn,
-          isLiveStream: false,
-          fallbackUrl: null,
-        };
-
-      case 'competitor_before_1':
-        return {
-          url: AIRCHECK_AUDIO_URLS.competitorBefore1,
-          isLiveStream: false,
-          fallbackUrl: null,
-        };
-
-      case 'target_spot': {
-        if (this.spotMode === 'client_upload' && this.clientAudioUrl) {
-          return {
-            url: this.clientAudioUrl,
-            isLiveStream: false,
-            fallbackUrl: AIRCHECK_AUDIO_URLS.fmworksReferenceSpot,
-          };
-        }
-        if (this.spotMode === 'typical_cliche') {
-          return {
-            url: AIRCHECK_AUDIO_URLS.typicalClicheSpot,
-            isLiveStream: false,
-            fallbackUrl: null,
-          };
-        }
-        return {
-          url: AIRCHECK_AUDIO_URLS.fmworksReferenceSpot,
-          isLiveStream: false,
-          fallbackUrl: null,
-        };
-      }
-
-      case 'competitor_after_1':
-        return {
-          url: AIRCHECK_AUDIO_URLS.competitorAfter1,
-          isLiveStream: false,
-          fallbackUrl: null,
-        };
-
-      case 'competitor_after_2':
-        return {
-          url: AIRCHECK_AUDIO_URLS.competitorAfter2,
-          isLiveStream: false,
-          fallbackUrl: null,
-        };
-
-      case 'competitor_after_3':
-        return {
-          url: AIRCHECK_AUDIO_URLS.competitorAfter3,
-          isLiveStream: false,
-          fallbackUrl: null,
-        };
-
-      case 'program_return':
-      default:
-        return {
-          url: AIRCHECK_AUDIO_URLS.broadcastReturnOutro,
-          isLiveStream: false,
-          fallbackUrl: null,
-        };
+      return {
+        url: AIRCHECK_AUDIO_URLS.regionalHostLeadin,
+        isLiveStream: false,
+        fallbackUrl: null,
+      };
     }
+
+    if (segment.id === 'target_spot') {
+      if (this.spotMode === 'client_upload' && this.clientAudioUrl) {
+        return {
+          url: this.clientAudioUrl,
+          isLiveStream: false,
+          fallbackUrl: AIRCHECK_AUDIO_URLS.caseZernoCraft,
+        };
+      }
+      return {
+        url: segment.audioUrl ?? AIRCHECK_AUDIO_URLS.caseZernoCraft,
+        isLiveStream: false,
+        fallbackUrl: null,
+      };
+    }
+
+    return {
+      url: segment.audioUrl ?? AIRCHECK_AUDIO_URLS.broadcastReturnOutro,
+      isLiveStream: false,
+      fallbackUrl: null,
+    };
   }
 
-  private preloadNextSegmentIfNeeded(segments: readonly BroadcastTimelineSegment[]): void {
+  private computeSegmentPlaybackGain(segment: BroadcastTimelineSegment): number {
+    if (
+      segment.id === 'target_spot' &&
+      this.spotMode === 'client_upload' &&
+      this.uploadedDiagnostic &&
+      this.clientGainMode === 'broadcast_matched'
+    ) {
+      const deltaDb = Math.max(
+        -12,
+        Math.min(16, TARGET_BROADCAST_RMS_DB - this.uploadedDiagnostic.meanRmsDb)
+      );
+      return Math.pow(10, deltaDb / 20);
+    }
+    return 1.0;
+  }
+
+  private async loadAndDecodeBuffer(
+    url: string,
+    isProgramLeadIn = false
+  ): Promise<AudioBuffer | null> {
+    if (this.clientAudioUrl && url === this.clientAudioUrl && this.clientAudioBuffer) {
+      return this.clientAudioBuffer;
+    }
+
+    const cached = this.bufferCache.get(url);
+    if (cached) return cached;
+
+    const inFlight = this.loadingBuffers.get(url);
+    if (inFlight) return inFlight;
+
+    const promise = (async (): Promise<AudioBuffer | null> => {
+      try {
+        const ctx = this.ensureAudioGraph();
+        if (!ctx) return null;
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const arr = await res.arrayBuffer();
+        const decoded = await ctx.decodeAudioData(arr);
+        this.bufferCache.set(url, decoded);
+
+        if (isProgramLeadIn && !this.detectedProgramExitByUrl.has(url)) {
+          const preferred =
+            url === AIRCHECK_AUDIO_URLS.storyProgramLeadin
+              ? DEFAULT_AIRCHECK_DURATIONS_SEC.storyProgramLeadin
+              : DEFAULT_AIRCHECK_DURATIONS_SEC.regionalHostLeadin;
+          const exitRes = findOptimalSpeechExitSec({
+            samples: decoded.getChannelData(0),
+            sampleRate: decoded.sampleRate,
+            searchStartSec: Math.max(
+              4,
+              decoded.duration - PROGRAM_TRANSITION_CONFIG.recordedSearchWindowSec
+            ),
+            searchEndSec: Math.max(4.5, decoded.duration - 0.15),
+            preferredExitSec: preferred,
+            minPauseSec: 0.14,
+          });
+          this.detectedProgramExitByUrl.set(url, exitRes.exitSec);
+        }
+
+        return decoded;
+      } catch {
+        return null;
+      } finally {
+        this.loadingBuffers.delete(url);
+      }
+    })();
+
+    this.loadingBuffers.set(url, promise);
+    return promise;
+  }
+
+  private preloadNextBufferIfNeeded(
+    segments: readonly BroadcastTimelineSegment[]
+  ): void {
     if (typeof window === 'undefined') return;
     const nextIdx = this.activeSegmentIndex + 1;
     if (nextIdx >= segments.length) return;
@@ -545,21 +866,24 @@ class BroadcastAircheckEngine {
     const nextSeg = segments[nextIdx];
     const nextSource = this.resolveSegmentAudioSource(nextSeg);
     if (nextSource.isLiveStream) return;
-    if (this.preloadedNextUrl === nextSource.url && this.preloadedNextAudio) {
-      return;
+
+    if (!this.bufferCache.has(nextSource.url)) {
+      void this.loadAndDecodeBuffer(nextSource.url, false);
     }
 
-    this.disposePreloadedAudio();
-    try {
-      const nextAudio = new Audio();
-      nextAudio.preload = 'auto';
-      nextAudio.volume = 1.0;
-      nextAudio.src = nextSource.url;
-      nextAudio.load();
-      this.preloadedNextAudio = nextAudio;
-      this.preloadedNextUrl = nextSource.url;
-    } catch {
+    if (this.preloadedNextUrl !== nextSource.url) {
       this.disposePreloadedAudio();
+      try {
+        const nextAudio = new Audio();
+        nextAudio.preload = 'auto';
+        nextAudio.volume = this.isMuted ? 0 : this.volume;
+        nextAudio.src = nextSource.url;
+        nextAudio.load();
+        this.preloadedNextAudio = nextAudio;
+        this.preloadedNextUrl = nextSource.url;
+      } catch {
+        this.disposePreloadedAudio();
+      }
     }
   }
 
@@ -577,7 +901,41 @@ class BroadcastAircheckEngine {
     this.preloadedNextUrl = null;
   }
 
-  private startSegmentAtIndex(segIndex: number, offsetSec: number): void {
+  private stopActiveBufferNodes(): void {
+    if (this.activeBufferSource) {
+      try {
+        this.activeBufferSource.stop();
+        this.activeBufferSource.disconnect();
+      } catch {
+        // Ignore
+      }
+      this.activeBufferSource = null;
+    }
+    if (this.activeBufferGain) {
+      try {
+        this.activeBufferGain.disconnect();
+      } catch {
+        // Ignore
+      }
+      this.activeBufferGain = null;
+    }
+    for (const old of this.fadingOutNodes) {
+      try {
+        old.source.stop();
+        old.source.disconnect();
+        old.gain.disconnect();
+      } catch {
+        // Ignore
+      }
+    }
+    this.fadingOutNodes = [];
+  }
+
+  private async startSegmentAtIndex(
+    segIndex: number,
+    offsetSec: number,
+    fadeInSec = 0.025
+  ): Promise<void> {
     const segments = this.computeSegments();
     if (segIndex < 0 || segIndex >= segments.length) {
       this.finishBroadcastSequence(segments);
@@ -589,19 +947,182 @@ class BroadcastAircheckEngine {
     this.activeSegmentIndex = segIndex;
     this.segmentInitialOffsetSec = Math.max(0, offsetSec);
     this.segmentWallStartMs = performance.now();
+    this.crossfadeStartedForToken = -1;
+    this.liveSpeechSamplesDb = [];
+    this.livePauseLowFrames = 0;
 
     const source = this.resolveSegmentAudioSource(segment);
     if (source.isLiveStream) {
       this.liveStreamStatus = 'connecting';
-    } else if (this.sourceMode !== 'live_regional_stream') {
+      this.launchHtmlSegmentAudio(
+        segment,
+        source.url,
+        true,
+        source.fallbackUrl,
+        token
+      );
+      this.startSegmentTicker(token);
+      return;
+    }
+
+    if (this.sourceMode !== 'live_regional_stream') {
       this.liveStreamStatus = 'idle';
     }
 
-    this.launchSegmentAudio(segment, source.url, source.isLiveStream, source.fallbackUrl, token);
+    const ctx = this.ensureAudioGraph();
+    const cachedDecoded = ctx ? this.bufferCache.get(source.url) ?? null : null;
+    if (ctx && this.masterLimiter && cachedDecoded) {
+      this.launchBufferSegmentAudio(
+        segment,
+        cachedDecoded,
+        this.segmentInitialOffsetSec,
+        fadeInSec,
+        token
+      );
+      this.startSegmentTicker(token);
+      return;
+    }
+
+    const decoded = ctx
+      ? await this.loadAndDecodeBuffer(
+          source.url,
+          segment.id === 'program_leadin'
+        )
+      : null;
+
+    if (token !== this.sessionToken || !this.isPlaying) {
+      return;
+    }
+
+    if (ctx && this.masterLimiter && decoded) {
+      this.launchBufferSegmentAudio(
+        segment,
+        decoded,
+        this.segmentInitialOffsetSec,
+        fadeInSec,
+        token
+      );
+      this.startSegmentTicker(token);
+      return;
+    }
+
+    // Фоллбэк на HTMLAudioElement, если Web Audio декодирование недоступно
+    this.launchHtmlSegmentAudio(
+      segment,
+      source.url,
+      false,
+      source.fallbackUrl,
+      token
+    );
     this.startSegmentTicker(token);
   }
 
-  private launchSegmentAudio(
+  private launchBufferSegmentAudio(
+    segment: BroadcastTimelineSegment,
+    buffer: AudioBuffer,
+    offsetSec: number,
+    fadeInSec: number,
+    token: number
+  ): void {
+    if (!this.audioCtx || !this.masterLimiter) return;
+
+    // Предыдущие затухающие дорожки не обрываем мгновенно, если сейчас идёт плавный кроссфейд
+    if (this.activeBufferSource && this.activeBufferGain) {
+      const oldSrc = this.activeBufferSource;
+      const oldGain = this.activeBufferGain;
+      this.fadingOutNodes.push({ source: oldSrc, gain: oldGain });
+      this.activeBufferSource = null;
+      this.activeBufferGain = null;
+
+      window.setTimeout(() => {
+        try {
+          oldSrc.stop();
+          oldSrc.disconnect();
+          oldGain.disconnect();
+        } catch {
+          // Ignore
+        }
+        this.fadingOutNodes = this.fadingOutNodes.filter(
+          (n) => n.source !== oldSrc
+        );
+      }, 480);
+    }
+
+    if (this.htmlAudio) {
+      this.teardownHtmlAudio();
+    }
+
+    const now = this.audioCtx.currentTime;
+    const gainNode = this.audioCtx.createGain();
+    const targetGain = this.computeSegmentPlaybackGain(segment);
+    const safeFade = Math.max(0.015, fadeInSec);
+
+    gainNode.gain.setValueAtTime(0.0001, now);
+    gainNode.gain.linearRampToValueAtTime(targetGain, now + safeFade);
+    gainNode.connect(this.masterLimiter);
+
+    const src = this.audioCtx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(gainNode);
+
+    const safeOffset = Math.max(0, Math.min(buffer.duration - 0.1, offsetSec));
+    const maxSegmentSpan = Math.max(0.15, segment.durationSec - safeOffset);
+    const playDur = Math.min(buffer.duration - safeOffset, maxSegmentSpan + 0.35);
+
+    this.activeBufferSource = src;
+    this.activeBufferGain = gainNode;
+    this.segmentInitialOffsetSec = safeOffset;
+    this.segmentWallStartMs = performance.now();
+
+    src.addEventListener('ended', () => {
+      if (token !== this.sessionToken || !this.isPlaying) return;
+      if (this.crossfadeStartedForToken !== token) {
+        this.advanceToNextSegment(token, false);
+      }
+    });
+
+    src.start(now, safeOffset, playDur);
+    this.emit();
+  }
+
+  private teardownHtmlAudio(): void {
+    if (this.liveMediaSource) {
+      try {
+        this.liveMediaSource.disconnect();
+      } catch {
+        // Ignore
+      }
+      this.liveMediaSource = null;
+    }
+    if (this.liveAnalyser) {
+      try {
+        this.liveAnalyser.disconnect();
+      } catch {
+        // Ignore
+      }
+      this.liveAnalyser = null;
+    }
+    if (this.liveDeckGain) {
+      try {
+        this.liveDeckGain.disconnect();
+      } catch {
+        // Ignore
+      }
+      this.liveDeckGain = null;
+    }
+    if (this.htmlAudio) {
+      try {
+        this.htmlAudio.pause();
+        this.htmlAudio.removeAttribute('src');
+        this.htmlAudio.load();
+      } catch {
+        // Ignore
+      }
+      this.htmlAudio = null;
+    }
+  }
+
+  private launchHtmlSegmentAudio(
     segment: BroadcastTimelineSegment,
     url: string,
     isLiveStream: boolean,
@@ -610,16 +1131,8 @@ class BroadcastAircheckEngine {
   ): void {
     if (typeof window === 'undefined') return;
 
-    if (this.htmlAudio) {
-      try {
-        this.htmlAudio.pause();
-        this.htmlAudio.removeAttribute('src');
-        this.htmlAudio.load();
-      } catch {
-        // Ignore cleanup errors
-      }
-      this.htmlAudio = null;
-    }
+    this.stopActiveBufferNodes();
+    this.teardownHtmlAudio();
 
     if (this.liveConnectGuardTimerId !== null) {
       window.clearTimeout(this.liveConnectGuardTimerId);
@@ -639,11 +1152,37 @@ class BroadcastAircheckEngine {
     } else {
       audio = new Audio();
       audio.preload = 'auto';
-      audio.volume = 1.0;
+      audio.crossOrigin = 'anonymous';
+      audio.volume = this.isMuted ? 0 : this.volume;
       audio.src = url;
     }
 
     this.htmlAudio = audio;
+
+    if (isLiveStream && this.audioCtx && this.masterLimiter) {
+      try {
+        const mediaSrc = this.audioCtx.createMediaElementSource(audio);
+        const analyser = this.audioCtx.createAnalyser();
+        analyser.fftSize = 1024;
+        const deckGain = this.audioCtx.createGain();
+        deckGain.gain.setValueAtTime(1.0, this.audioCtx.currentTime);
+
+        mediaSrc.connect(analyser);
+        analyser.connect(deckGain);
+        deckGain.connect(this.masterLimiter);
+
+        this.liveMediaSource = mediaSrc;
+        this.liveAnalyser = analyser;
+        this.liveDeckGain = deckGain;
+        this.liveTimeDomainBuf = new Float32Array(
+          new ArrayBuffer(analyser.fftSize * Float32Array.BYTES_PER_ELEMENT)
+        );
+      } catch {
+        this.liveMediaSource = null;
+        this.liveAnalyser = null;
+        this.liveDeckGain = null;
+      }
+    }
 
     let switchedToFallback = false;
     const triggerFallbackIfNeeded = () => {
@@ -654,7 +1193,14 @@ class BroadcastAircheckEngine {
       this.liveStreamStatus = 'fallback_aircheck';
       this.segmentWallStartMs = performance.now();
       this.emit();
-      this.launchSegmentAudio(segment, fallbackUrl, false, null, token);
+      void this.loadAndDecodeBuffer(fallbackUrl, true).then((buf) => {
+        if (token !== this.sessionToken || !this.isPlaying) return;
+        if (buf && this.audioCtx && this.masterLimiter) {
+          this.launchBufferSegmentAudio(segment, buf, 0, 0.03, token);
+        } else {
+          this.launchHtmlSegmentAudio(segment, fallbackUrl, false, null, token);
+        }
+      });
     };
 
     if (isLiveStream && fallbackUrl) {
@@ -698,8 +1244,8 @@ class BroadcastAircheckEngine {
       'ended',
       () => {
         if (token !== this.sessionToken || !this.isPlaying) return;
-        if (!isLiveStream) {
-          this.advanceToNextSegment(token);
+        if (!isLiveStream && this.crossfadeStartedForToken !== token) {
+          this.advanceToNextSegment(token, false);
         }
       },
       { once: true }
@@ -711,11 +1257,14 @@ class BroadcastAircheckEngine {
         try {
           const safeOffset =
             audio.duration && Number.isFinite(audio.duration)
-              ? Math.min(this.segmentInitialOffsetSec, Math.max(0, audio.duration - 0.15))
+              ? Math.min(
+                  this.segmentInitialOffsetSec,
+                  Math.max(0, audio.duration - 0.15)
+                )
               : this.segmentInitialOffsetSec;
           audio.currentTime = safeOffset;
         } catch {
-          // Ignore seek before buffer
+          // Ignore
         }
       }
       this.segmentWallStartMs = performance.now();
@@ -734,6 +1283,108 @@ class BroadcastAircheckEngine {
     } else {
       audio.addEventListener('loadedmetadata', beginPlay, { once: true });
       audio.load();
+    }
+  }
+
+  private sampleLiveStreamPauseGate(localElapsed: number): boolean {
+    if (!this.liveAnalyser || !this.liveTimeDomainBuf) {
+      return localElapsed >= DEFAULT_AIRCHECK_DURATIONS_SEC.liveLeadInWindow;
+    }
+
+    this.liveAnalyser.getFloatTimeDomainData(this.liveTimeDomainBuf);
+    let sq = 0;
+    const step = 4;
+    let count = 0;
+    for (let i = 0; i < this.liveTimeDomainBuf.length; i += step) {
+      const s = this.liveTimeDomainBuf[i];
+      sq += s * s;
+      count += 1;
+    }
+    const rms = count > 0 ? Math.sqrt(sq / count) : 0.0001;
+    const db = 20 * Math.log10(Math.max(0.00003, rms));
+
+    if (localElapsed < PROGRAM_TRANSITION_CONFIG.livePauseGateStartSec) {
+      if (db > -45) {
+        this.liveSpeechSamplesDb.push(db);
+        if (this.liveSpeechSamplesDb.length > 80) {
+          this.liveSpeechSamplesDb.shift();
+        }
+      }
+      return false;
+    }
+
+    const sorted = [...this.liveSpeechSamplesDb].sort((a, b) => a - b);
+    const speechRefDb =
+      sorted.length > 0 ? sorted[Math.floor(sorted.length * 0.72)] : -19.0;
+
+    if (db < speechRefDb - 9.5) {
+      this.livePauseLowFrames += 1;
+    } else {
+      this.livePauseLowFrames = 0;
+    }
+
+    if (
+      this.livePauseLowFrames >= 2 ||
+      localElapsed >= PROGRAM_TRANSITION_CONFIG.livePauseGateHardLimitSec
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private triggerSmoothProgramToSpliceCrossfade(token: number): void {
+    if (token !== this.sessionToken || !this.isPlaying) return;
+    if (this.crossfadeStartedForToken === token) return;
+    this.crossfadeStartedForToken = token;
+    this.isCrossfadingSplice = true;
+
+    const fadeOutSec = PROGRAM_TRANSITION_CONFIG.programFadeOutSec;
+    if (this.audioCtx) {
+      const now = this.audioCtx.currentTime;
+      if (this.activeBufferGain) {
+        try {
+          this.activeBufferGain.gain.cancelScheduledValues(now);
+          this.activeBufferGain.gain.setValueAtTime(
+            this.activeBufferGain.gain.value,
+            now
+          );
+          this.activeBufferGain.gain.linearRampToValueAtTime(
+            0.0001,
+            now + fadeOutSec
+          );
+        } catch {
+          // Ignore
+        }
+      }
+      if (this.liveDeckGain) {
+        const refDeck = this.liveDeckGain;
+        const refHtml = this.htmlAudio;
+        try {
+          refDeck.gain.cancelScheduledValues(now);
+          refDeck.gain.setValueAtTime(refDeck.gain.value, now);
+          refDeck.gain.linearRampToValueAtTime(0.0001, now + fadeOutSec);
+        } catch {
+          // Ignore
+        }
+        window.setTimeout(() => {
+          if (refHtml) {
+            try {
+              refHtml.pause();
+            } catch {
+              // Ignore
+            }
+          }
+        }, Math.round(fadeOutSec * 1000) + 40);
+      }
+    }
+
+    const segments = this.computeSegments();
+    const nextIdx = this.activeSegmentIndex + 1;
+    if (nextIdx < segments.length) {
+      this.elapsedSec = segments[nextIdx].startSec;
+      this.emit();
+      void this.startSegmentAtIndex(nextIdx, 0, 0.14);
     }
   }
 
@@ -774,21 +1425,44 @@ class BroadcastAircheckEngine {
 
       this.elapsedSec = Math.min(seg.endSec, seg.startSec + localElapsed);
 
-      if (seg.durationSec - localElapsed <= 4.5) {
-        this.preloadNextSegmentIfNeeded(segments);
+      if (seg.durationSec - localElapsed <= 5.5) {
+        this.preloadNextBufferIfNeeded(segments);
+      }
+
+      // Для Live-потока ждём естественную паузу речи в окне 44..54с
+      if (isLiveSeg) {
+        const readyToCrossfade = this.sampleLiveStreamPauseGate(localElapsed);
+        if (readyToCrossfade) {
+          this.triggerSmoothProgramToSpliceCrossfade(token);
+          return;
+        }
+        this.emit();
+        return;
+      }
+
+      // Плавный кроссфейд из программы в отбивку склейки (наложение ~240 мс перед концом фразы)
+      if (
+        seg.id === 'program_leadin' &&
+        localElapsed >=
+          seg.durationSec - PROGRAM_TRANSITION_CONFIG.spliceCrossfadeOverlapSec &&
+        this.crossfadeStartedForToken !== token
+      ) {
+        this.triggerSmoothProgramToSpliceCrossfade(token);
+        return;
       }
 
       if (localElapsed >= seg.durationSec - 0.04) {
-        this.advanceToNextSegment(token);
+        this.advanceToNextSegment(token, true);
         return;
       }
 
       this.emit();
-    }, 85);
+    }, 65);
   }
 
-  private advanceToNextSegment(token: number): void {
+  private advanceToNextSegment(token: number, useMicroCrossfade: boolean): void {
     if (token !== this.sessionToken || !this.isPlaying) return;
+    this.isCrossfadingSplice = false;
     const segments = this.computeSegments();
     const nextIdx = this.activeSegmentIndex + 1;
     if (nextIdx >= segments.length) {
@@ -797,12 +1471,19 @@ class BroadcastAircheckEngine {
     }
     this.elapsedSec = segments[nextIdx].startSec;
     this.emit();
-    this.startSegmentAtIndex(nextIdx, 0);
+    void this.startSegmentAtIndex(
+      nextIdx,
+      0,
+      useMicroCrossfade ? PROGRAM_TRANSITION_CONFIG.adSlotMicroCrossfadeSec : 0.02
+    );
   }
 
-  private finishBroadcastSequence(segments: readonly BroadcastTimelineSegment[]): void {
+  private finishBroadcastSequence(
+    segments: readonly BroadcastTimelineSegment[]
+  ): void {
     this.clearAudioAndTimers();
     this.isPlaying = false;
+    this.isCrossfadingSplice = false;
     this.elapsedSec = getTotalBroadcastDurationSec(segments);
     if (this.liveStreamStatus === 'connecting') {
       this.liveStreamStatus = 'idle';
@@ -813,6 +1494,7 @@ class BroadcastAircheckEngine {
 
   private clearAudioAndTimers(): void {
     this.sessionToken += 1;
+    this.isCrossfadingSplice = false;
     if (typeof window !== 'undefined') {
       if (this.tickTimerId !== null) {
         window.clearInterval(this.tickTimerId);
@@ -823,16 +1505,8 @@ class BroadcastAircheckEngine {
         this.liveConnectGuardTimerId = null;
       }
     }
-    if (this.htmlAudio) {
-      try {
-        this.htmlAudio.pause();
-        this.htmlAudio.removeAttribute('src');
-        this.htmlAudio.load();
-      } catch {
-        // Ignore
-      }
-      this.htmlAudio = null;
-    }
+    this.stopActiveBufferNodes();
+    this.teardownHtmlAudio();
     this.disposePreloadedAudio();
   }
 
@@ -841,9 +1515,13 @@ class BroadcastAircheckEngine {
     const shouldPlayNoise = this.roadNoiseEnabled && this.isPlaying;
 
     if (!shouldPlayNoise) {
-      if (this.noiseCtx && this.roadGain) {
+      if (this.audioCtx && this.roadGain) {
         try {
-          this.roadGain.gain.setTargetAtTime(0.0001, this.noiseCtx.currentTime, 0.08);
+          this.roadGain.gain.setTargetAtTime(
+            0.0001,
+            this.audioCtx.currentTime,
+            0.08
+          );
         } catch {
           // Ignore
         }
@@ -863,22 +1541,18 @@ class BroadcastAircheckEngine {
       return;
     }
 
-    if (!this.noiseCtx) {
-      const created = createSafeAudioContext();
-      if (!created) return;
-      this.noiseCtx = created;
-      this.roadGain = this.noiseCtx.createGain();
-      this.roadGain.gain.value = 0.0001;
-      this.roadGain.connect(this.noiseCtx.destination);
-    }
+    const ctx = this.ensureAudioGraph();
+    if (!ctx || !this.masterGain) return;
 
-    if (this.noiseCtx.state === 'suspended') {
-      this.noiseCtx.resume().catch(() => {});
+    if (!this.roadGain) {
+      this.roadGain = ctx.createGain();
+      this.roadGain.gain.value = 0.0001;
+      this.roadGain.connect(this.masterGain);
     }
 
     if (!this.roadSource && this.roadGain) {
-      const length = this.noiseCtx.sampleRate * 3;
-      const buffer = this.noiseCtx.createBuffer(1, length, this.noiseCtx.sampleRate);
+      const length = ctx.sampleRate * 3;
+      const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
       const data = buffer.getChannelData(0);
       let b0 = 0;
       let b1 = 0;
@@ -889,15 +1563,15 @@ class BroadcastAircheckEngine {
         data[i] = b1 * 0.9;
       }
 
-      const src = this.noiseCtx.createBufferSource();
+      const src = ctx.createBufferSource();
       src.buffer = buffer;
       src.loop = true;
 
-      const lowpass = this.noiseCtx.createBiquadFilter();
+      const lowpass = ctx.createBiquadFilter();
       lowpass.type = 'lowpass';
       lowpass.frequency.value = 215;
 
-      const cabinPeak = this.noiseCtx.createBiquadFilter();
+      const cabinPeak = ctx.createBiquadFilter();
       cabinPeak.type = 'peaking';
       cabinPeak.frequency.value = 92;
       cabinPeak.gain.value = 5;
@@ -911,8 +1585,8 @@ class BroadcastAircheckEngine {
     }
 
     if (this.roadGain) {
-      this.roadGain.gain.cancelScheduledValues(this.noiseCtx.currentTime);
-      this.roadGain.gain.setTargetAtTime(0.16, this.noiseCtx.currentTime, 0.14);
+      this.roadGain.gain.cancelScheduledValues(ctx.currentTime);
+      this.roadGain.gain.setTargetAtTime(0.16, ctx.currentTime, 0.14);
     }
   }
 }

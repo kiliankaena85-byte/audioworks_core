@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowRight,
   Car,
   CheckCircle2,
@@ -8,6 +9,9 @@ import {
   MessageSquareText,
   Pause,
   Play,
+  Scale,
+  Shuffle,
+  SlidersHorizontal,
   Upload,
   X,
 } from 'lucide-react';
@@ -22,17 +26,18 @@ import {
   useState,
 } from 'react';
 import {
-  broadcastAircheckEngine,
-  BroadcastAircheckSnapshot,
-} from '../audio/broadcastAircheckEngine';
+  type BroadcastAircheckSnapshot,
+  lazyBroadcastAircheckEngine as broadcastAircheckEngine,
+} from '../audio/lazyAudioEngines';
 import { formatAudioTime } from '../data/audioworksCommercial';
 import {
   BroadcastSourceMode,
   buildAircheckAuditBriefSummary,
   buildWaveformPhaseMarkers,
   getCompetitorsAfterTargetCount,
-  getWaitBeforeTargetSpotSec,
-  InsertedSpotMode,
+  getCompetitorsBeforeTargetCount,
+  getTargetSpotPresetSpec,
+  TARGET_SPOT_PRESETS,
   VERIFIED_LIVE_REGIONAL_STATIONS,
   VerifiedRegionalStationSpec,
 } from '../data/broadcastAircheckData';
@@ -143,12 +148,12 @@ export function RealRadioBroadcastBench({
     }
   };
 
-  const handleSelectSpotMode = (mode: InsertedSpotMode) => {
-    if (mode === 'client_upload' && !snap.clientAudioUrl) {
+  const handleSelectClientUpload = () => {
+    if (!snap.clientAudioUrl) {
       fileInputRef.current?.click();
       return;
     }
-    broadcastAircheckEngine.setSpotMode(mode);
+    broadcastAircheckEngine.setSpotMode('client_upload');
   };
 
   const scrollToAndFocus = (el: HTMLElement | null) => {
@@ -229,6 +234,7 @@ export function RealRadioBroadcastBench({
     const auditBrief = buildAircheckAuditBriefSummary({
       clientName: trimmedName,
       sourceMode: snap.sourceMode,
+      targetSlotIndex: snap.targetSlotIndex,
       diagnostic: snap.uploadedDiagnostic,
     });
 
@@ -293,6 +299,7 @@ export function RealRadioBroadcastBench({
     const auditBrief = buildAircheckAuditBriefSummary({
       clientName: trimmedName || 'Клиент со стенда эфира',
       sourceMode: snap.sourceMode,
+      targetSlotIndex: snap.targetSlotIndex,
       diagnostic: snap.uploadedDiagnostic,
     });
 
@@ -315,28 +322,39 @@ export function RealRadioBroadcastBench({
   const activeSegment =
     snap.segments.find((s) => s.id === snap.activeSegmentId) ?? snap.segments[0];
   const targetSegment =
-    snap.segments.find((s) => s.isTargetSlot) ?? snap.segments[3] ?? snap.segments[0];
+    snap.segments.find((s) => s.isTargetSlot) ?? snap.segments[2] ?? snap.segments[0];
 
-  const waitBeforeTargetSec = getWaitBeforeTargetSpotSec(snap.segments);
+  const competitorsBeforeCount = getCompetitorsBeforeTargetCount(snap.segments);
   const competitorsAfterCount = getCompetitorsAfterTargetCount(snap.segments);
+  const activePreset = getTargetSpotPresetSpec(snap.targetPresetId);
 
   const phaseMarkers = useMemo(
     () =>
       buildWaveformPhaseMarkers(
         snap.segments,
         snap.activeSegmentId,
-        snap.spotMode
+        snap.spotMode,
+        snap.targetPresetId
       ),
-    [snap.segments, snap.activeSegmentId, snap.spotMode]
+    [snap.segments, snap.activeSegmentId, snap.spotMode, snap.targetPresetId]
   );
 
   const desktopMarkerFlexWeights = useMemo(() => {
-    // Выравниваем кнопки фаз над реальными сегментами звуковой дорожки без обрезки подписей
-    const raw = phaseMarkers.map((m) =>
-      m.id === 'phase_splice'
-        ? Math.max(7.8, m.widthPercent)
-        : Math.max(12.4, m.widthPercent)
-    );
+    const raw = phaseMarkers.map((m) => {
+      if (m.id === 'phase_program') {
+        return Math.min(22.5, Math.max(15.5, m.widthPercent * 0.76));
+      }
+      if (m.id === 'phase_splice') {
+        return Math.max(8.2, m.widthPercent);
+      }
+      if (m.id === 'phase_target') {
+        return Math.max(17.5, m.widthPercent);
+      }
+      if (m.id === 'phase_return') {
+        return Math.max(14.8, m.widthPercent);
+      }
+      return Math.max(12.5, m.widthPercent * 0.88);
+    });
     const sum = raw.reduce((acc, v) => acc + v, 0) || 100;
     return raw.map((v) => (v / sum) * 100);
   }, [phaseMarkers]);
@@ -351,17 +369,50 @@ export function RealRadioBroadcastBench({
       return `До вашего выхода ${formatAudioTime(secLeft)}`;
     }
     if (snap.activeSegmentId === 'target_spot') {
-      return `Впереди ещё ${competitorsAfterCount} чужих ролика подряд`;
+      return competitorsAfterCount > 0
+        ? `Слот №${snap.targetSlotIndex} · следом ещё ${competitorsAfterCount} объявл.`
+        : 'Финальный слот №5 перед возвратом ведущих';
     }
-    if (
-      snap.activeSegmentId === 'competitor_after_1' ||
-      snap.activeSegmentId === 'competitor_after_2' ||
-      snap.activeSegmentId === 'competitor_after_3'
-    ) {
-      return 'Плотный хвост блока после вашего ролика';
+    if (snap.activeSegmentId.startsWith('competitor_after')) {
+      return 'Соседние объявления после вашего слота';
     }
     return 'Возврат станции к передаче';
-  }, [snap.elapsedSec, snap.activeSegmentId, targetSegment.startSec, competitorsAfterCount]);
+  }, [
+    snap.elapsedSec,
+    snap.activeSegmentId,
+    snap.targetSlotIndex,
+    targetSegment.startSec,
+    competitorsAfterCount,
+  ]);
+
+  const slotSurroundSummary =
+    snap.targetSlotIndex === 1
+      ? 'первый слот сразу после склейки, следом 4 рекламы'
+      : snap.targetSlotIndex === 5
+        ? 'финальный слот после 4 реклам перед возвратом эфира'
+        : `до вас ${competitorsBeforeCount} рол., после — ещё ${competitorsAfterCount}`;
+
+  const activeWaveformSeed = `${snap.sourceMode}-${snap.spotMode}-${snap.targetPresetId}-slot${snap.targetSlotIndex}-${snap.clientFileName ?? 'ref'}`;
+
+  const spectrumBands = useMemo(() => {
+    if (!snap.isPlaying) return undefined;
+    return Array.from({ length: 36 }, (_, idx) => {
+      const phase = snap.elapsedSec * 7.1 + idx * 0.52;
+      const isTarget = snap.activeSegmentId === 'target_spot';
+      const base = isTarget ? 0.34 : 0.27;
+      const swing = isTarget ? 0.54 : 0.44;
+      return Math.min(
+        0.95,
+        Math.max(
+          0.12,
+          base +
+            swing *
+              (0.5 + 0.5 * Math.sin(phase)) *
+              (0.6 + 0.4 * Math.cos(idx * 0.37 - snap.elapsedSec * 4.0))
+        )
+      );
+    });
+  }, [snap.isPlaying, snap.elapsedSec, snap.activeSegmentId]);
 
   return (
     <section
@@ -378,7 +429,8 @@ export function RealRadioBroadcastBench({
         <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-3 border-t border-[#111111]/10 dark:border-white/10 pt-8 sm:pt-10">
           <div className="space-y-1 min-w-0">
             <p className="text-xs font-medium text-[#111111]/56 dark:text-[#F4F3EF]/56 tabular-nums">
-              Реальный радиоэфир · Блок {formatAudioTime(snap.totalDurationSec)} · До вашего слота {Math.round(waitBeforeTargetSec)} сек эфира и конкурент, следом ещё {competitorsAfterCount} объявления
+              Реальный радиоэфир · Блок {formatAudioTime(snap.totalDurationSec)} · Слот №
+              {snap.targetSlotIndex} ({slotSurroundSummary})
             </p>
             <h2
               id="broadcast-aircheck-heading"
@@ -560,39 +612,23 @@ export function RealRadioBroadcastBench({
               elapsedSec={snap.elapsedSec}
               activeSegmentId={snap.activeSegmentId}
               spotMode={snap.spotMode}
+              targetSlotIndex={snap.targetSlotIndex}
+              targetShortLabel={activePreset.shortTitle}
               isPlaying={snap.isPlaying}
-              seedKey={`${snap.sourceMode}-${snap.spotMode}-${snap.clientFileName ?? 'ref'}`}
+              seedKey={activeWaveformSeed}
+              onScrubStart={() => void broadcastAircheckEngine.preload()}
               onSeekRatio={(ratio) => broadcastAircheckEngine.seekToRatio(ratio)}
               onSelectSegment={(segmentId) =>
                 broadcastAircheckEngine.playFromSegment(segmentId)
               }
               seekAriaLabel="Перемотка реального радиоэфира по секундам"
-              spectrumBands={
-                snap.isPlaying
-                  ? Array.from({ length: 36 }, (_, idx) => {
-                      const phase = snap.elapsedSec * 7.1 + idx * 0.52;
-                      const isTarget = snap.activeSegmentId === 'target_spot';
-                      const base = isTarget ? 0.34 : 0.27;
-                      const swing = isTarget ? 0.54 : 0.44;
-                      return Math.min(
-                        0.95,
-                        Math.max(
-                          0.12,
-                          base +
-                            swing *
-                              (0.5 + 0.5 * Math.sin(phase)) *
-                              (0.6 + 0.4 * Math.cos(idx * 0.37 - snap.elapsedSec * 4.0))
-                        )
-                      );
-                    })
-                  : undefined
-              }
-              heightClass="h-12 sm:h-14"
+              spectrumBands={spectrumBands}
+              heightClass="h-14"
               visualizerTestId="aircheck-broadcast-waveform"
               progressBarTestId="aircheck-waveform-scrubber"
             />
 
-            {/* Компактная строка живого эфирного статуса (1 линия вместо сетки карточек) */}
+            {/* Компактная строка живого эфирного статуса (1 линия) */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs text-white/64 tabular-nums min-w-0">
               <p className="truncate">
                 <span className="text-white/90 font-medium">
@@ -600,13 +636,115 @@ export function RealRadioBroadcastBench({
                 </span>{' '}
                 <span>{activeSegment.title}</span>
               </p>
-              <span className="text-white/48 shrink-0">{liveMomentHint}</span>
+              <span className="text-white/52 shrink-0">{liveMomentHint}</span>
             </div>
           </div>
 
-          {/* Нижняя студийная панель управления в один компактный ряд */}
-          <div className="pt-3 border-t border-white/10 flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 min-w-0">
-            {/* Левая группа: транспорт */}
+          {/* Строка конфигурации блока: позиция врезки (1–5 + случайная) и выбор кейса / шаблона */}
+          <div className="pt-3 border-t border-white/10 flex flex-col lg:flex-row lg:items-center justify-between gap-3 min-w-0">
+            {/* Позиция врезки в блоке + рандомизация */}
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+              <span className="text-[11px] font-medium text-white/55 mr-0.5 shrink-0">
+                Слот в блоке:
+              </span>
+              <div
+                role="group"
+                aria-label="Выбор позиции целевого ролика в рекламном блоке от 1 до 5"
+                className="inline-flex items-center gap-1 p-0.5 rounded-xl bg-white/[0.05] border border-white/10"
+              >
+                {([1, 2, 3, 4, 5] as const).map((slotNum) => {
+                  const active = snap.targetSlotIndex === slotNum;
+                  return (
+                    <button
+                      key={slotNum}
+                      type="button"
+                      data-testid={`aircheck-slot-${slotNum}`}
+                      aria-label={`Позиция в блоке: слот ${slotNum}`}
+                      aria-pressed={active}
+                      onClick={() => broadcastAircheckEngine.setTargetSlotIndex(slotNum)}
+                      className={`min-h-[44px] sm:min-h-[34px] min-w-[44px] sm:min-w-[36px] px-2 rounded-lg text-xs font-semibold tabular-nums transition-colors cursor-pointer ${
+                        active
+                          ? 'bg-[#FF4820] text-white'
+                          : 'text-white/70 hover:text-white hover:bg-white/[0.06]'
+                      }`}
+                    >
+                      №{slotNum}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                data-testid="aircheck-randomize-slot-btn"
+                onClick={() => broadcastAircheckEngine.randomizeTargetSlot()}
+                className="min-h-[44px] sm:min-h-[36px] px-3 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/12 text-white/88 hover:text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <Shuffle className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
+                <span>Случайная врезка</span>
+              </button>
+            </div>
+
+            {/* Выбор ролика в целевом слоте: 3 реальных кейса студии + шаблон + загрузка */}
+            <div
+              role="group"
+              aria-label="Выбор ролика в целевом слоте"
+              className="flex flex-wrap items-center gap-1 p-1 rounded-xl bg-white/[0.05] border border-white/10 min-w-0"
+            >
+              {TARGET_SPOT_PRESETS.map((preset) => {
+                const isCliche = preset.category === 'cliche';
+                const active =
+                  snap.spotMode !== 'client_upload' &&
+                  snap.targetPresetId === preset.id;
+                const resolvedTestId =
+                  preset.id === 'zerno_craft'
+                    ? 'aircheck-spot-fmworks'
+                    : isCliche
+                      ? 'aircheck-spot-cliche'
+                      : `aircheck-preset-${preset.id}`;
+
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    data-testid={resolvedTestId}
+                    aria-pressed={active}
+                    onClick={() =>
+                      broadcastAircheckEngine.selectTargetPreset(preset.id)
+                    }
+                    className={`min-h-[44px] sm:min-h-[34px] px-2.5 sm:px-3 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                      active
+                        ? isCliche
+                          ? 'bg-white text-[#111111]'
+                          : 'bg-[#FF4820] text-white'
+                        : 'text-white/72 hover:text-white hover:bg-white/[0.05]'
+                    }`}
+                  >
+                    {preset.shortTitle}
+                  </button>
+                );
+              })}
+
+              {snap.clientAudioUrl && (
+                <button
+                  type="button"
+                  data-testid="aircheck-spot-client"
+                  aria-pressed={snap.spotMode === 'client_upload'}
+                  onClick={handleSelectClientUpload}
+                  className={`min-h-[44px] sm:min-h-[34px] px-2.5 sm:px-3 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                    snap.spotMode === 'client_upload'
+                      ? 'bg-[#FF4820] text-white'
+                      : 'text-white/72 hover:text-white hover:bg-white/[0.05]'
+                  }`}
+                >
+                  Ваш ролик
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Нижняя студийная панель транспорта и действий */}
+          <div className="pt-2.5 border-t border-white/10 flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 min-w-0">
             <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 min-w-0">
               <button
                 type="button"
@@ -659,71 +797,20 @@ export function RealRadioBroadcastBench({
               </button>
             </div>
 
-            {/* Правая группа: выбор целевого ролика + загрузка своего + разбор по запросу */}
             <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 min-w-0">
-              <div
-                role="group"
-                aria-label="Выбор ролика в целевом слоте №2"
-                className="grid grid-cols-2 sm:flex items-center gap-1 p-1 rounded-full bg-white/[0.06] border border-white/10"
-              >
-                <button
-                  type="button"
-                  data-testid="aircheck-spot-fmworks"
-                  aria-pressed={snap.spotMode === 'fmworks_example'}
-                  onClick={() => handleSelectSpotMode('fmworks_example')}
-                  className={`min-h-[40px] px-3 py-1.5 rounded-full text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
-                    snap.spotMode === 'fmworks_example'
-                      ? 'bg-[#FF4820] text-white'
-                      : 'text-white/72 hover:text-white'
-                  }`}
-                >
-                  Эталон FMWorks
-                </button>
-
-                <button
-                  type="button"
-                  data-testid="aircheck-spot-cliche"
-                  aria-pressed={snap.spotMode === 'typical_cliche'}
-                  onClick={() => handleSelectSpotMode('typical_cliche')}
-                  className={`min-h-[40px] px-3 py-1.5 rounded-full text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
-                    snap.spotMode === 'typical_cliche'
-                      ? 'bg-white text-[#111111]'
-                      : 'text-white/72 hover:text-white'
-                  }`}
-                >
-                  Обычный шаблон
-                </button>
-
-                {snap.clientAudioUrl && (
-                  <button
-                    type="button"
-                    data-testid="aircheck-spot-client"
-                    aria-pressed={snap.spotMode === 'client_upload'}
-                    onClick={() => handleSelectSpotMode('client_upload')}
-                    className={`col-span-2 sm:col-span-1 min-h-[40px] px-3 py-1.5 rounded-full text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
-                      snap.spotMode === 'client_upload'
-                        ? 'bg-[#FF4820] text-white'
-                        : 'text-white/72 hover:text-white'
-                    }`}
-                  >
-                    Ваш ролик
-                  </button>
-                )}
-              </div>
-
               <button
                 type="button"
                 data-testid="aircheck-upload-trigger-btn"
                 disabled={snap.isAnalyzingUpload}
                 onClick={() => fileInputRef.current?.click()}
-                className="min-h-[44px] px-3.5 py-2 rounded-full bg-white text-[#111111] hover:bg-[#FF4820] hover:text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+                className="min-h-[44px] px-4 py-2 rounded-full bg-white text-[#111111] hover:bg-[#FF4820] hover:text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
               >
                 <Upload className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                 <span>
                   {snap.isAnalyzingUpload
                     ? 'Встраиваем…'
                     : snap.clientAudioUrl
-                      ? 'Заменить файл'
+                      ? 'Заменить свой ролик'
                       : 'Вставить свой ролик'}
                 </span>
               </button>
@@ -733,7 +820,7 @@ export function RealRadioBroadcastBench({
                 data-testid="aircheck-open-lead-btn"
                 aria-expanded={isLeadDrawerOpen || Boolean(submittedLead)}
                 onClick={() => setIsLeadDrawerOpen((prev) => !prev)}
-                className={`min-h-[44px] px-3.5 py-2 rounded-full border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                className={`min-h-[44px] px-4 py-2 rounded-full border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
                   isLeadDrawerOpen || submittedLead
                     ? 'bg-white/16 border-white/40 text-white'
                     : 'bg-transparent border-white/18 text-white/85 hover:text-white hover:border-white/36'
@@ -756,28 +843,86 @@ export function RealRadioBroadcastBench({
           )}
         </div>
 
-        {/* Раскрываемая панель №1: Компактная диагностика загруженного ролика внутри блока из 4 конкурентов */}
+        {/* Раскрываемая панель №1: Техническая и юридическая диагностика (ФЗ-38 / ФАС / РАО-ВОИС) */}
         {snap.uploadedDiagnostic && (
           <div
             data-testid="aircheck-uploaded-diagnostic"
-            className="rounded-2xl bg-[#EFECE5] dark:bg-[#17171D] text-[#111111] dark:text-[#F4F3EF] border border-[#111111]/12 dark:border-white/12 p-4 sm:px-6 sm:py-4 space-y-3 min-w-0"
+            className="rounded-2xl bg-[#EFECE5] dark:bg-[#17171D] text-[#111111] dark:text-[#F4F3EF] border border-[#111111]/12 dark:border-white/12 p-4 sm:px-6 sm:py-5 space-y-3.5 min-w-0"
           >
-            <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 min-w-0">
+              <div className="flex flex-wrap items-center gap-2 min-w-0">
                 <FileAudio className="w-4 h-4 text-[#FF4820] shrink-0" aria-hidden="true" />
-                <span className="text-xs sm:text-sm font-bold truncate">
-                  Ваш файл в слоте №2: {snap.uploadedDiagnostic.fileName}
+                <span className="text-xs sm:text-sm font-bold truncate max-w-full">
+                  Ваш файл в слоте №{snap.uploadedDiagnostic.targetSlotIndex}:{' '}
+                  {snap.uploadedDiagnostic.fileName}
                 </span>
-                <span className="text-xs text-[#111111]/55 dark:text-[#F4F3EF]/55 tabular-nums shrink-0">
-                  · {snap.uploadedDiagnostic.meanRmsDb} дБ
+                <span className="text-xs text-[#111111]/60 dark:text-[#F4F3EF]/60 tabular-nums shrink-0">
+                  · {snap.uploadedDiagnostic.meanRmsDb} дБ · пик{' '}
+                  {snap.uploadedDiagnostic.peakDb} dBFS ·{' '}
+                  {Math.round(snap.uploadedDiagnostic.sampleRateHz / 1000)} кГц
+                </span>
+                <span
+                  data-testid="aircheck-diagnostic-readiness"
+                  className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${
+                    snap.uploadedDiagnostic.overallReadiness === 'critical_issues'
+                      ? 'bg-[#DC2626]/12 text-[#B91C1C] dark:text-[#FCA5A5]'
+                      : snap.uploadedDiagnostic.overallReadiness === 'needs_tuning'
+                        ? 'bg-[#D97706]/14 text-[#B45309] dark:text-[#FCD34D]'
+                        : 'bg-[#16A34A]/14 text-[#15803D] dark:text-[#86EFAC]'
+                  }`}
+                >
+                  {snap.uploadedDiagnostic.overallReadiness === 'critical_issues'
+                    ? 'Риск отклонения станцией'
+                    : snap.uploadedDiagnostic.overallReadiness === 'needs_tuning'
+                      ? 'Требует доработки'
+                      : 'Готов к эфиру'}
                 </span>
               </div>
 
-              <div className="flex items-center gap-3 shrink-0">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3 shrink-0">
+                {Math.abs(snap.uploadedDiagnostic.loudnessDeltaVsAirDb) > 1.2 && (
+                  <div
+                    role="group"
+                    aria-label="Режим прослушивания громкости вашего ролика"
+                    className="inline-flex items-center p-0.5 rounded-lg bg-[#111111]/[0.07] dark:bg-white/[0.08]"
+                  >
+                    <button
+                      type="button"
+                      data-testid="aircheck-gain-raw"
+                      aria-pressed={snap.clientGainMode === 'as_uploaded'}
+                      onClick={() =>
+                        broadcastAircheckEngine.setClientGainMode('as_uploaded')
+                      }
+                      className={`min-h-[44px] sm:min-h-[32px] px-2.5 py-1 rounded-md text-[11px] font-semibold cursor-pointer transition-colors ${
+                        snap.clientGainMode === 'as_uploaded'
+                          ? 'bg-[#121216] text-white dark:bg-white dark:text-[#111111]'
+                          : 'text-[#111111]/70 dark:text-white/70'
+                      }`}
+                    >
+                      Как загружен
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="aircheck-gain-matched"
+                      aria-pressed={snap.clientGainMode === 'broadcast_matched'}
+                      onClick={() =>
+                        broadcastAircheckEngine.setClientGainMode('broadcast_matched')
+                      }
+                      className={`min-h-[44px] sm:min-h-[32px] px-2.5 py-1 rounded-md text-[11px] font-semibold cursor-pointer transition-colors ${
+                        snap.clientGainMode === 'broadcast_matched'
+                          ? 'bg-[#FF4820] text-white'
+                          : 'text-[#111111]/70 dark:text-white/70'
+                      }`}
+                    >
+                      В балансе эфира
+                    </button>
+                  </div>
+                )}
+
                 <button
                   type="button"
                   onClick={() => broadcastAircheckEngine.jumpToTargetTransition()}
-                  className="min-h-[36px] text-xs font-semibold text-[#FF4820] hover:underline cursor-pointer whitespace-nowrap"
+                  className="min-h-[44px] sm:min-h-[36px] text-xs font-semibold text-[#FF4820] hover:underline cursor-pointer whitespace-nowrap"
                 >
                   Прослушать стык в блоке
                 </button>
@@ -785,7 +930,7 @@ export function RealRadioBroadcastBench({
                   type="button"
                   aria-label="Удалить загруженный ролик"
                   onClick={() => broadcastAircheckEngine.clearClientAudio()}
-                  className="min-h-[36px] min-w-[36px] rounded-full inline-flex items-center justify-center text-[#111111]/58 dark:text-[#F4F3EF]/58 hover:text-[#111111] dark:hover:text-white cursor-pointer"
+                  className="min-h-[44px] min-w-[44px] sm:min-h-[36px] sm:min-w-[36px] rounded-full inline-flex items-center justify-center text-[#111111]/58 dark:text-[#F4F3EF]/58 hover:text-[#111111] dark:hover:text-white cursor-pointer"
                 >
                   <X className="w-4 h-4" aria-hidden="true" />
                 </button>
@@ -805,7 +950,9 @@ export function RealRadioBroadcastBench({
 
               <div className="space-y-0.5 min-w-0">
                 <dt className="text-[#111111]/54 dark:text-[#F4F3EF]/54">
-                  Вход после конкурента №1
+                  {snap.uploadedDiagnostic.targetSlotIndex === 1
+                    ? 'Вход после склейки'
+                    : `Вход после соседа №${snap.uploadedDiagnostic.targetSlotIndex - 1}`}
                 </dt>
                 <dd className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
                   {snap.uploadedDiagnostic.introHumanLabel}
@@ -814,13 +961,72 @@ export function RealRadioBroadcastBench({
 
               <div className="space-y-0.5 min-w-0">
                 <dt className="text-[#111111]/54 dark:text-[#F4F3EF]/54">
-                  Финал перед 3 конкурентами
+                  {snap.uploadedDiagnostic.targetSlotIndex === 5
+                    ? 'Финал перед возвратом в эфир'
+                    : `Финал перед ${5 - snap.uploadedDiagnostic.targetSlotIndex} объявл.`}
                 </dt>
                 <dd className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
                   {snap.uploadedDiagnostic.outroHumanLabel}
                 </dd>
               </div>
             </dl>
+
+            {/* Чек-лист технических допусков и юридических требований (ФЗ-38 / ФАС / РАО-ВОИС) */}
+            {snap.uploadedDiagnostic.complianceChecklist.length > 0 && (
+              <div
+                data-testid="aircheck-compliance-checklist"
+                className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-2.5 border-t border-[#111111]/10 dark:border-white/10"
+              >
+                {snap.uploadedDiagnostic.complianceChecklist.map((item) => {
+                  const isCritical = item.severity === 'critical';
+                  const isWarning = item.severity === 'warning';
+                  const CategoryIcon =
+                    item.category === 'legal' ? Scale : SlidersHorizontal;
+                  return (
+                    <div
+                      key={item.id}
+                      data-severity={item.severity}
+                      className={`rounded-xl px-3 py-2.5 border text-xs space-y-0.5 min-w-0 ${
+                        isCritical
+                          ? 'bg-[#DC2626]/[0.07] border-[#DC2626]/28'
+                          : isWarning
+                            ? 'bg-[#D97706]/[0.07] border-[#D97706]/24'
+                            : 'bg-[#111111]/[0.03] dark:bg-white/[0.03] border-[#111111]/10 dark:border-white/10'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2 min-w-0">
+                        <span className="inline-flex items-center gap-1.5 font-semibold text-[#111111] dark:text-[#F4F3EF] min-w-0 truncate">
+                          {isCritical ? (
+                            <AlertCircle
+                              className="w-3.5 h-3.5 text-[#DC2626] dark:text-[#F87171] shrink-0"
+                              aria-hidden="true"
+                            />
+                          ) : isWarning ? (
+                            <AlertTriangle
+                              className="w-3.5 h-3.5 text-[#D97706] dark:text-[#FBBF24] shrink-0"
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <CheckCircle2
+                              className="w-3.5 h-3.5 text-[#16A34A] dark:text-[#4ADE80] shrink-0"
+                              aria-hidden="true"
+                            />
+                          )}
+                          <span className="truncate">{item.title}</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-[#111111]/55 dark:text-white/55 shrink-0">
+                          <CategoryIcon className="w-3 h-3 shrink-0" aria-hidden="true" />
+                          <span>{item.category === 'legal' ? 'Закон' : 'Техника'}</span>
+                        </span>
+                      </div>
+                      <p className="text-[11px] leading-relaxed text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                        {item.detail}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-2.5 border-t border-[#111111]/10 dark:border-white/10">
               <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72 leading-relaxed">

@@ -1,11 +1,5 @@
-import {
-  MouseEvent as ReactMouseEvent,
-  PointerEvent as ReactPointerEvent,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { useId, useMemo, useRef } from 'react';
+import { useAudioTrackScrubber } from '../utils/audioScrubbing';
 
 export interface AcousticFilamentNode {
   x: number;
@@ -283,6 +277,7 @@ export interface PremiumAcousticWaveformProps {
   spectrumBands?: readonly number[];
   segmentZones?: readonly WaveformSegmentZone[];
   onSeekRatio?: (ratio: number) => void;
+  onScrubStart?: () => void;
   seekAriaLabel?: string;
   reducedMotion?: boolean;
   /** Светлая волна на тёмных студийных поверхностях ('dark-surface') или адаптивная ('adaptive') */
@@ -303,6 +298,7 @@ export function PremiumAcousticWaveform({
   spectrumBands,
   segmentZones,
   onSeekRatio,
+  onScrubStart,
   seekAriaLabel,
   reducedMotion = false,
   variant = 'dark-surface',
@@ -316,13 +312,27 @@ export function PremiumAcousticWaveform({
 }: PremiumAcousticWaveformProps) {
   const gradUid = useId().replace(/:/g, '');
   const trackRef = useRef<HTMLDivElement | null>(null);
-  const isDraggingRef = useRef(false);
-  const [hoverRatio, setHoverRatio] = useState<number | null>(null);
 
-  const clampedRatio = Math.min(
+  const engineRatio = Math.min(
     1,
     Math.max(0, Number.isFinite(progressRatio) ? progressRatio : 0)
   );
+  const isInteractive = typeof onSeekRatio === 'function';
+
+  const {
+    displayRatio: clampedRatio,
+    hoverRatio,
+    isScrubbing,
+    eventHandlers,
+  } = useAudioTrackScrubber({
+    trackRef,
+    engineRatio,
+    isInteractive,
+    stepRatio: 0.05,
+    onScrubStart,
+    onCommitRatio: onSeekRatio,
+  });
+
   const clipRightPct = Math.max(0, Math.min(100, (1 - clampedRatio) * 100));
 
   const baseContour = useMemo(
@@ -350,54 +360,6 @@ export function PremiumAcousticWaveform({
   );
 
   const isDarkSurface = variant === 'dark-surface';
-  const isInteractive = typeof onSeekRatio === 'function';
-
-  const resolvePointerRatio = (clientX: number): number | null => {
-    const el = trackRef.current;
-    if (!el) return null;
-    const rect = el.getBoundingClientRect();
-    if (rect.width <= 1) return null;
-    return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-  };
-
-  const handlePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!onSeekRatio) return;
-    isDraggingRef.current = true;
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
-      // Ignore synthetic events without pointer capture support
-    }
-    const r = resolvePointerRatio(e.clientX);
-    if (r !== null) onSeekRatio(r);
-  };
-
-  const handlePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!onSeekRatio) return;
-    const r = resolvePointerRatio(e.clientX);
-    setHoverRatio(r);
-    if (isDraggingRef.current && r !== null) {
-      onSeekRatio(r);
-    }
-  };
-
-  const handlePointerUpOrCancel = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!onSeekRatio) return;
-    isDraggingRef.current = false;
-    try {
-      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-      }
-    } catch {
-      // Ignore
-    }
-  };
-
-  const handleClickFallback = (e: ReactMouseEvent<HTMLDivElement>) => {
-    if (!onSeekRatio) return;
-    const r = resolvePointerRatio(e.clientX);
-    if (r !== null) onSeekRatio(r);
-  };
 
   const targetZone = segmentZones?.find((z) => z.kind === 'target') ?? null;
 
@@ -415,26 +377,9 @@ export function PremiumAcousticWaveform({
       aria-valuetext={ariaLabel ? ariaValueText : undefined}
       data-testid={progressBarTestId}
       data-playing={isActive ? 'true' : 'false'}
+      data-scrubbing={isScrubbing ? 'true' : 'false'}
       data-mode={visualizerMode}
-      onClick={isInteractive ? handleClickFallback : undefined}
-      onPointerDown={isInteractive ? handlePointerDown : undefined}
-      onPointerMove={isInteractive ? handlePointerMove : undefined}
-      onPointerUp={isInteractive ? handlePointerUpOrCancel : undefined}
-      onPointerCancel={isInteractive ? handlePointerUpOrCancel : undefined}
-      onPointerLeave={isInteractive ? () => setHoverRatio(null) : undefined}
-      onKeyDown={
-        isInteractive && onSeekRatio
-          ? (e) => {
-              if (e.key === 'ArrowRight') {
-                e.preventDefault();
-                onSeekRatio(Math.min(1, clampedRatio + 0.04));
-              } else if (e.key === 'ArrowLeft') {
-                e.preventDefault();
-                onSeekRatio(Math.max(0, clampedRatio - 0.04));
-              }
-            }
-          : undefined
-      }
+      {...eventHandlers}
       className={`relative w-full ${heightClass} select-none overflow-hidden ${
         isInteractive
           ? 'pointer-events-auto cursor-pointer touch-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF4820]'
@@ -444,9 +389,9 @@ export function PremiumAcousticWaveform({
       <div
         aria-hidden="true"
         data-testid={visualizerTestId}
-        data-active={isActive ? 'true' : 'false'}
+        data-active={isActive || isScrubbing ? 'true' : 'false'}
         data-mode={visualizerMode}
-        className="relative w-full h-full"
+        className="pointer-events-none relative w-full h-full"
       >
         {/* Деликатная подсветка зоны целевого слота внутри длинного эфирного блока */}
         {targetZone && (
@@ -637,14 +582,22 @@ export function PremiumAcousticWaveform({
           />
         )}
 
-        {/* Световая каретка текущего момента воспроизведения */}
-        {(isActive || clampedRatio > 0.004) && clampedRatio < 0.998 && (
+        {/* Световая каретка текущего момента воспроизведения и тактильный ползунок */}
+        {(isActive || isScrubbing || clampedRatio > 0.004) && clampedRatio < 0.999 && (
           <span
             style={{
               left: `${(clampedRatio * 100).toFixed(2)}%`,
             }}
-            className="absolute top-0.5 bottom-0.5 w-[1.5px] -translate-x-1/2 rounded-full bg-white shadow-[0_0_10px_rgba(255,72,32,0.95)]"
-          />
+            className="absolute top-0.5 bottom-0.5 w-[2px] -translate-x-1/2 rounded-full bg-white shadow-[0_0_10px_rgba(255,72,32,0.95)]"
+          >
+            {isInteractive && (
+              <span
+                className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-white ring-2 ring-[#FF4820] transition-transform duration-100 ${
+                  isScrubbing ? 'scale-125' : 'scale-100'
+                }`}
+              />
+            )}
+          </span>
         )}
       </div>
     </div>

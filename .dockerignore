@@ -1,0 +1,8 @@
+.aistudio
+.playwright-cli
+.git
+.data
+*.log
+npm-debug.log*
+.env.local
+.DS_Store

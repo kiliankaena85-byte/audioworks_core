@@ -227,7 +227,7 @@ class DuelAudioStore {
     if (data.audioworks?.url) {
       this.audioworksTrack = {
         objectUrl: data.audioworks.url,
-        fileName: data.audioworks.fileName ?? 'zerno_audioworks_15.wav',
+        fileName: data.audioworks.fileName ?? 'zerno_audioworks_15.mp3',
         effectiveDurationSec: data.audioworks.durationSec || 15.2,
         source: 'server',
       };

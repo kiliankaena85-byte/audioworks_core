@@ -1,45 +1,19 @@
-import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { broadcastAircheckEngine } from './audio/broadcastAircheckEngine';
-import { casePlayerEngine, CasePlayerSnapshot } from './audio/casePlayerEngine';
-import { contrastAudioEngine } from './audio/contrastAudioEngine';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  type CasePlayerSnapshot,
+  lazyBroadcastAircheckEngine as broadcastAircheckEngine,
+  lazyCasePlayerEngine as casePlayerEngine,
+  lazyContrastAudioEngine as contrastAudioEngine,
+} from './audio/lazyAudioEngines';
 import { SiteTextBlocksProvider } from './cms/SiteTextBlocksContext';
 import { StudioCmsProvider, useStudioCms } from './cms/StudioCmsContext';
-import { AdminWorkspace } from './components/admin/AdminWorkspace';
 import { AppErrorBoundary } from './components/AppErrorBoundary';
-import { BrandKitModal } from './components/BrandKitModal';
 import { CompactHeaderNav } from './components/CompactHeaderNav';
 import { FloatingCasePlayer } from './components/FloatingCasePlayer';
 import { Footer } from './components/Footer';
 import { PerformanceMonitor } from './components/PerformanceMonitor';
-import { ApproachPage } from './components/pages/ApproachPage';
-import { CasesPage } from './components/pages/CasesPage';
-import { ClientCabinetPage } from './components/pages/ClientCabinetPage';
-import { FaqPage } from './components/pages/FaqPage';
 import { HomePage } from './components/pages/HomePage';
-import { HotAirPage } from './components/pages/HotAirPage';
-import { OrderPage } from './components/pages/OrderPage';
-import { PricingPage } from './components/pages/PricingPage';
-import { SoundEngineerDropPage } from './components/pages/SoundEngineerDropPage';
-import { RadioInventoryAdmin } from './components/RadioInventoryAdmin';
-import { ReservationConfirmedModal } from './components/ReservationConfirmedModal';
 import { BrandDomainVariant } from './data/brandKitData';
-
-function RouteLoadingFallback() {
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="min-h-[45vh] flex items-center justify-center px-6 text-sm text-[#111111]/55 dark:text-[#F4F3EF]/55"
-    >
-      Загрузка раздела FMWorks…
-    </div>
-  );
-}
-import {
-  SEO_ARTICLE_TITLE_BY_SLUG,
-  SEO_INDUSTRY_TITLE_BY_SLUG,
-  SEO_STATION_TITLE_BY_SLUG,
-} from './data/seoRouteLabels';
 import {
   OrderDraftSnapshot,
   orderDraftStore,
@@ -56,8 +30,86 @@ import {
 } from './data/platformRouter';
 import { OrderFormatId } from './data/pricingData';
 import { MediaGridReservationPayload } from './data/radioInventory';
+import {
+  SEO_ARTICLE_TITLE_BY_SLUG,
+  SEO_INDUSTRY_TITLE_BY_SLUG,
+  SEO_STATION_TITLE_BY_SLUG,
+} from './data/seoRouteLabels';
 import { orderPublishedCmsCasesForPersona } from './data/studioCmsTypes';
 import { LayaDecisionProvider, useLayaDecision } from './engine/LayaContext';
+
+const AdminWorkspace = lazy(() =>
+  import('./components/admin/AdminWorkspace').then((m) => ({
+    default: m.AdminWorkspace,
+  }))
+);
+const BrandKitModal = lazy(() =>
+  import('./components/BrandKitModal').then((m) => ({
+    default: m.BrandKitModal,
+  }))
+);
+const ApproachPage = lazy(() =>
+  import('./components/pages/ApproachPage').then((m) => ({
+    default: m.ApproachPage,
+  }))
+);
+const CasesPage = lazy(() =>
+  import('./components/pages/CasesPage').then((m) => ({
+    default: m.CasesPage,
+  }))
+);
+const ClientCabinetPage = lazy(() =>
+  import('./components/pages/ClientCabinetPage').then((m) => ({
+    default: m.ClientCabinetPage,
+  }))
+);
+const FaqPage = lazy(() =>
+  import('./components/pages/FaqPage').then((m) => ({
+    default: m.FaqPage,
+  }))
+);
+const HotAirPage = lazy(() =>
+  import('./components/pages/HotAirPage').then((m) => ({
+    default: m.HotAirPage,
+  }))
+);
+const OrderPage = lazy(() =>
+  import('./components/pages/OrderPage').then((m) => ({
+    default: m.OrderPage,
+  }))
+);
+const PricingPage = lazy(() =>
+  import('./components/pages/PricingPage').then((m) => ({
+    default: m.PricingPage,
+  }))
+);
+const SoundEngineerDropPage = lazy(() =>
+  import('./components/pages/SoundEngineerDropPage').then((m) => ({
+    default: m.SoundEngineerDropPage,
+  }))
+);
+const RadioInventoryAdmin = lazy(() =>
+  import('./components/RadioInventoryAdmin').then((m) => ({
+    default: m.RadioInventoryAdmin,
+  }))
+);
+const ReservationConfirmedModal = lazy(() =>
+  import('./components/ReservationConfirmedModal').then((m) => ({
+    default: m.ReservationConfirmedModal,
+  }))
+);
+
+function RouteLoadingFallback() {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="min-h-[45vh] flex items-center justify-center px-6 text-sm text-[#111111]/55 dark:text-[#F4F3EF]/55"
+    >
+      Загрузка раздела FMWorks…
+    </div>
+  );
+}
 
 const THEME_STORAGE_KEY = 'fmworks_theme_v1';
 const LEGACY_THEME_STORAGE_KEY = 'audioworks_theme_v1';
@@ -388,6 +440,8 @@ function FmworksExperience() {
               brandVariant={brandVariant}
               playerSnap={caseSnap}
               onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
+              onSeekCase={(item, ratio) => casePlayerEngine.seekToRatio(ratio, item)}
+              onWarmCasePlayer={() => void casePlayerEngine.preload()}
               onStartPreview={(item) => casePlayerEngine.startPreview(item)}
               onStopPreview={(caseId) => casePlayerEngine.stopPreview(caseId)}
               onNavigate={navigateTo}
@@ -419,6 +473,8 @@ function FmworksExperience() {
               navigationTick={navigationTick}
               playerSnap={caseSnap}
               onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
+              onSeekCase={(item, ratio) => casePlayerEngine.seekToRatio(ratio, item)}
+              onWarmCasePlayer={() => void casePlayerEngine.preload()}
               onStartPreview={(item) => casePlayerEngine.startPreview(item)}
               onStopPreview={(caseId) => casePlayerEngine.stopPreview(caseId)}
               onNavigate={navigateTo}
@@ -484,6 +540,8 @@ function FmworksExperience() {
         playerSnap={caseSnap}
         onStop={() => casePlayerEngine.stop()}
         onNext={() => casePlayerEngine.playNextCase(playlistWithReel)}
+        onSeek={(ratio) => casePlayerEngine.seekToRatio(ratio)}
+        onWarmCasePlayer={() => void casePlayerEngine.preload()}
       />
     
 

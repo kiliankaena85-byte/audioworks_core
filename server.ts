@@ -38,8 +38,11 @@ import {
   createSeedCrmOrders,
   CRM_ORDER_STAGES,
   ensureCrmOrderSlaFields,
+  ensureOrderStageHistory,
   formatEdoInvoiceSpecificationDocument,
   formatTelegramOrderDispatchMessage,
+  getCrmStageMetaForOrder,
+  recordOrderStageTransition,
   SLA_BREACH_COMPENSATION_NOTE,
 } from './src/data/orderCrmTypes.ts';
 import type {
@@ -52,6 +55,15 @@ import type {
   OrderEntrySource,
   OrderMediaPlanSnapshot,
 } from './src/data/orderCrmTypes.ts';
+import {
+  extractChatFromTelegramUpdates,
+  parseTelegramBotApiError,
+  resolveEffectiveTelegramSettings,
+} from './src/data/telegramOrderNotifications.ts';
+import type {
+  DiscoveredTelegramChat,
+  OrderStatusChangeContext,
+} from './src/data/telegramOrderNotifications.ts';
 import {
   CALLBACK_PREFERENCE_OPTIONS,
   computeSlaDeadlineWindow,
@@ -242,9 +254,9 @@ const ORDERS_CRM_FILE = path.join(CMS_DATA_DIR, 'studio-orders-crm.json');
 const ORDER_DELIVERABLES_DIR = path.join(CMS_DATA_DIR, 'order-deliverables');
 const ORDER_UPLOADS_DIR = path.join(CMS_DATA_DIR, 'order-uploads');
 
-const MAIN_PROMO_FILENAME = 'Audioworks_75c6023f.wav';
-const CANONICAL_RADIO_FILE = 'zerno_radio_15.wav';
-const CANONICAL_AUDIOWORKS_FILE = 'zerno_audioworks_15.wav';
+const MAIN_PROMO_FILENAME = 'Audioworks_75c6023f.mp3';
+const CANONICAL_RADIO_FILE = 'zerno_radio_15.mp3';
+const CANONICAL_AUDIOWORKS_FILE = 'zerno_audioworks_15.mp3';
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -867,16 +879,15 @@ interface PersistedOrdersCrmStore {
 let cachedOrdersCrmStore: PersistedOrdersCrmStore | null = null;
 
 function createDefaultDispatchSettings(): OrderDispatchSettings {
-  const envTgToken = process.env.TELEGRAM_ORDERS_BOT_TOKEN?.trim() || '';
-  const envTgChat = process.env.TELEGRAM_ORDERS_CHAT_ID?.trim() || '';
+  const envTg = resolveEffectiveTelegramSettings(null, process.env);
   const envWebhookUrl = process.env.ORDERS_WEBHOOK_URL?.trim() || '';
   const envWebhookSecret = process.env.ORDERS_WEBHOOK_SECRET?.trim() || '';
 
   return {
     telegram: {
-      enabled: Boolean(envTgToken && envTgChat),
-      botToken: envTgToken,
-      chatId: envTgChat,
+      enabled: envTg.enabled,
+      botToken: '',
+      chatId: envTg.envChatIdConfigured ? envTg.chatId : '',
       notifyOnNewOrder: true,
       notifyOnStageChange: true,
       maskPdnInExternalAlerts: true,
@@ -975,31 +986,35 @@ function readOrdersCrmStore(): PersistedOrdersCrmStore {
           const syncArchiveTimestamps =
             seedMatch.id === 'crm-seed-completed-2309' &&
             withSla.stage === 'completed_ltv';
-          return ensureOrderApprovalWorkflow({
+          return ensureOrderStageHistory(
+            ensureOrderApprovalWorkflow({
+              ...withSla,
+              createdAt: syncArchiveTimestamps ? seedMatch.createdAt : withSla.createdAt,
+              updatedAt: syncArchiveTimestamps ? seedMatch.updatedAt : withSla.updatedAt,
+              clientEmail: resolvedSeedEmail,
+              preferredDeliveryChannel: normPref.channel,
+              preferredDeliveryDetail: normPref.detail,
+              cloudDiskUrl:
+                withSla.cloudDiskUrl !== undefined
+                  ? withSla.cloudDiskUrl
+                  : seedMatch.cloudDiskUrl,
+              deliverables: mergeSeedOrderDeliverablesWithVersions(
+                withSla.deliverables,
+                seedMatch.deliverables
+              ),
+              clientUploads:
+                withSla.clientUploads ?? seedMatch.clientUploads ?? [],
+            })
+          );
+        }
+        return ensureOrderStageHistory(
+          ensureOrderApprovalWorkflow({
             ...withSla,
-            createdAt: syncArchiveTimestamps ? seedMatch.createdAt : withSla.createdAt,
-            updatedAt: syncArchiveTimestamps ? seedMatch.updatedAt : withSla.updatedAt,
             clientEmail: resolvedSeedEmail,
             preferredDeliveryChannel: normPref.channel,
             preferredDeliveryDetail: normPref.detail,
-            cloudDiskUrl:
-              withSla.cloudDiskUrl !== undefined
-                ? withSla.cloudDiskUrl
-                : seedMatch.cloudDiskUrl,
-            deliverables: mergeSeedOrderDeliverablesWithVersions(
-              withSla.deliverables,
-              seedMatch.deliverables
-            ),
-            clientUploads:
-              withSla.clientUploads ?? seedMatch.clientUploads ?? [],
-          });
-        }
-        return ensureOrderApprovalWorkflow({
-          ...withSla,
-          clientEmail: resolvedSeedEmail,
-          preferredDeliveryChannel: normPref.channel,
-          preferredDeliveryDetail: normPref.detail,
-        });
+          })
+        );
       }),
       clientAccounts: hydratePersistedClientAccounts(raw.clientAccounts),
       soundEngineers: sanitizeSoundEngineerRoster(raw.soundEngineers),
@@ -1406,15 +1421,21 @@ function resolveSeedPublicAudioPath(staticAssetUrl: string): string | null {
   if (!staticAssetUrl || typeof staticAssetUrl !== 'string') return null;
   const cleanName = path.basename(staticAssetUrl.trim());
   if (!cleanName || cleanName !== staticAssetUrl.trim()) return null;
+  const nameVariants = [cleanName];
+  if (/\.wav$/i.test(cleanName)) {
+    nameVariants.push(cleanName.replace(/\.wav$/i, '.mp3'));
+  }
   const candidates = [PUBLIC_AUDIO_DIR, DIST_AUDIO_DIR];
   for (const dir of candidates) {
     const resolvedDir = path.resolve(dir);
-    const resolvedFile = path.resolve(dir, cleanName);
-    if (
-      resolvedFile.startsWith(`${resolvedDir}${path.sep}`) &&
-      fs.existsSync(resolvedFile)
-    ) {
-      return resolvedFile;
+    for (const candidateName of nameVariants) {
+      const resolvedFile = path.resolve(dir, candidateName);
+      if (
+        resolvedFile.startsWith(`${resolvedDir}${path.sep}`) &&
+        fs.existsSync(resolvedFile)
+      ) {
+        return resolvedFile;
+      }
     }
   }
   return null;
@@ -1544,9 +1565,72 @@ function toClientCabinetOrderSummary(
   };
 }
 
+function resolveTelegramBotApiBaseUrl(): string {
+  const custom = (process.env.TELEGRAM_API_BASE_URL ?? '').trim().replace(/\/+$/, '');
+  if (custom) {
+    try {
+      const parsed = new URL(custom);
+      if (
+        (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+        (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost')
+      ) {
+        return custom;
+      }
+    } catch {
+      // Ignore malformed custom loopback URL
+    }
+  }
+  return 'https://api.telegram.org';
+}
+
+async function discoverAndPersistTelegramChatId(
+  botToken: string,
+  crmStore: PersistedOrdersCrmStore
+): Promise<DiscoveredTelegramChat | null> {
+  const cleanToken = botToken.trim();
+  if (!cleanToken) return null;
+  try {
+    const allowedUpdates = encodeURIComponent(
+      JSON.stringify([
+        'message',
+        'channel_post',
+        'edited_message',
+        'my_chat_member',
+      ])
+    );
+    const updatesUrl = `${resolveTelegramBotApiBaseUrl()}/bot${cleanToken}/getUpdates?limit=25&allowed_updates=${allowedUpdates}`;
+    const res = await fetch(updatesUrl, {
+      method: 'GET',
+      signal: AbortSignal.timeout(4500),
+    });
+    if (!res.ok) {
+      return null;
+    }
+    const payload = (await res.json()) as unknown;
+    const discovered = extractChatFromTelegramUpdates(payload);
+    if (!discovered) {
+      return null;
+    }
+    crmStore.settings.telegram = {
+      ...crmStore.settings.telegram,
+      chatId: discovered.chatId,
+      chatIdAutoDiscovered: true,
+      discoveredChatTitle: discovered.chatTitle,
+    };
+    writeOrdersCrmStore(crmStore);
+    return discovered;
+  } catch {
+    return null;
+  }
+}
+
 async function dispatchOrderToExternalChannels(
   orderId: string,
-  event: CrmDispatchEvent
+  event: CrmDispatchEvent,
+  options: {
+    statusChange?: OrderStatusChangeContext;
+    forceSend?: boolean;
+  } = {}
 ): Promise<{
   telegramResult: CrmOrderRecord['delivery']['telegram'];
   webhookResult: CrmOrderRecord['delivery']['webhook'];
@@ -1566,36 +1650,82 @@ async function dispatchOrderToExternalChannels(
     return { telegramResult: emptyStatus, webhookResult: emptyStatus };
   }
 
-  const { telegram, webhook } = crmStore.settings;
+  const { webhook } = crmStore.settings;
+  let resolvedTg = resolveEffectiveTelegramSettings(
+    crmStore.settings.telegram,
+    process.env
+  );
+  const statusChange = options.statusChange;
+  const forceSend = options.forceSend === true || event === 'dispatch.test';
 
-  // 1. Telegram Bot API Dispatch
+  const prevStageMeta = statusChange?.previousStage
+    ? getCrmStageMetaForOrder(statusChange.previousStage, targetOrder.checkoutMode)
+    : null;
+  const nextStageMeta = getCrmStageMetaForOrder(
+    statusChange?.nextStage ?? targetOrder.stage,
+    targetOrder.checkoutMode
+  );
+  const transitionLabel =
+    prevStageMeta && prevStageMeta.id !== nextStageMeta.id
+      ? `«${prevStageMeta.stepCode}. ${prevStageMeta.shortLabel}» → «${nextStageMeta.stepCode}. ${nextStageMeta.shortLabel}»`
+      : statusChange?.workflowStepLabel?.trim() || undefined;
+
+  // 1. Telegram Bot API Dispatch (TELEGRAM_ORDERS_BOT_TOKEN)
   const pushDispatchLog = (entry: DispatchAttemptLog) => {
-    crmStore.dispatchLogs = [entry, ...crmStore.dispatchLogs].slice(0, 35);
+    crmStore.dispatchLogs = [entry, ...crmStore.dispatchLogs].slice(0, 40);
   };
 
   let telegramResult: CrmOrderRecord['delivery']['telegram'];
   const isPriorityEscalation =
     event === 'order.sla_breached' || event === 'order.client_rescue';
   const shouldSendTg =
-    event === 'dispatch.test' ||
-    (telegram.enabled &&
+    forceSend ||
+    (resolvedTg.enabled &&
       (isPriorityEscalation ||
-        (event === 'order.created' && telegram.notifyOnNewOrder) ||
-        (event === 'order.stage_changed' && telegram.notifyOnStageChange)));
+        (event === 'order.created' && resolvedTg.notifyOnNewOrder) ||
+        (event === 'order.stage_changed' && resolvedTg.notifyOnStageChange)));
 
-  if (!shouldSendTg || !telegram.botToken.trim() || !telegram.chatId.trim()) {
+  // Если задан TELEGRAM_ORDERS_BOT_TOKEN, но Chat ID ещё не указан — автоматически проверяем getUpdates
+  if (shouldSendTg && resolvedTg.hasBotToken && !resolvedTg.hasChatId) {
+    const discovered = await discoverAndPersistTelegramChatId(
+      resolvedTg.botToken,
+      crmStore
+    );
+    if (discovered) {
+      resolvedTg = resolveEffectiveTelegramSettings(
+        crmStore.settings.telegram,
+        process.env
+      );
+    }
+  }
+
+  if (!shouldSendTg || !resolvedTg.hasBotToken || !resolvedTg.hasChatId) {
+    const missingReason = !resolvedTg.hasBotToken
+      ? 'Задайте серверную переменную TELEGRAM_ORDERS_BOT_TOKEN для мгновенных уведомлений в Telegram'
+      : !resolvedTg.hasChatId
+        ? 'Токен TELEGRAM_ORDERS_BOT_TOKEN подключён — отправьте боту /start в Telegram или укажите Chat ID рабочей группы'
+        : 'Автоотправка этого события отключена в настройках Telegram';
+
     telegramResult = {
       state: 'not_configured',
       updatedAt: nowIso,
       httpStatus: null,
-      detail:
-        !telegram.botToken.trim() || !telegram.chatId.trim()
-          ? 'Укажите Bot Token и Chat ID продюсерского чата для прямой отправки'
-          : 'Автоотправка этого события отключена в настройках Telegram',
+      detail: missingReason,
     };
-    if (event === 'dispatch.test') {
+    if (forceSend || event === 'order.stage_changed') {
+      const simSummary = !resolvedTg.hasBotToken
+        ? `${
+            transitionLabel ? `${transitionLabel} · ` : ''
+          }Шаблон сформирован (ожидает TELEGRAM_ORDERS_BOT_TOKEN в окружении сервера)`
+        : !resolvedTg.hasChatId
+          ? `${
+              transitionLabel ? `${transitionLabel} · ` : ''
+            }Токен TELEGRAM_ORDERS_BOT_TOKEN активен — отправьте боту /start или укажите Chat ID`
+          : `${
+              transitionLabel ? `${transitionLabel} · ` : ''
+            }Отправка события отключена в настройках шлюза`;
       pushDispatchLog({
-        id: `log-tg-${Date.now()}`,
+        id: `log-tg-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
         timestamp: nowIso,
         orderNumber: targetOrder.orderNumber,
         channel: 'telegram',
@@ -1603,45 +1733,72 @@ async function dispatchOrderToExternalChannels(
         state: 'ready_simulated',
         httpStatus: null,
         latencyMs: 2,
-        summary:
-          'Локальная проверка шаблона Telegram успешна (для реальной доставки укажите Bot Token и Chat ID)',
+        summary: simSummary,
+        ...(statusChange?.previousStage
+          ? { previousStage: statusChange.previousStage }
+          : {}),
+        nextStage: statusChange?.nextStage ?? targetOrder.stage,
+        ...(transitionLabel ? { transitionLabel } : {}),
       });
     }
   } else {
     const started = Date.now();
     try {
-      const maskPdn = telegram.maskPdnInExternalAlerts !== false;
+      const maskPdn = resolvedTg.maskPdnInExternalAlerts;
       const text = formatTelegramOrderDispatchMessage(targetOrder, event, {
         maskPdn,
+        statusChange,
       });
-      const tgUrl = `https://api.telegram.org/bot${telegram.botToken.trim()}/sendMessage`;
-      const tgRes = await fetch(tgUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: telegram.chatId.trim(),
-          text,
-        }),
-        signal: AbortSignal.timeout(5000),
-      });
+      const tgUrl = `${resolveTelegramBotApiBaseUrl()}/bot${resolvedTg.botToken}/sendMessage`;
+      const sendOnce = () =>
+        fetch(tgUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: resolvedTg.chatId,
+            text,
+            disable_web_page_preview: true,
+          }),
+          signal: AbortSignal.timeout(5000),
+        });
+
+      let tgRes = await sendOnce();
+      let rawErrText = tgRes.ok ? '' : await tgRes.text();
+      if (!tgRes.ok && (tgRes.status >= 500 || tgRes.status === 429)) {
+        const parsedFirst = parseTelegramBotApiError(tgRes.status, rawErrText);
+        if (
+          tgRes.status >= 500 ||
+          (parsedFirst.retryAfterSec !== null && parsedFirst.retryAfterSec <= 2)
+        ) {
+          const delayMs = parsedFirst.retryAfterSec
+            ? parsedFirst.retryAfterSec * 1000
+            : 350;
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          tgRes = await sendOnce();
+          rawErrText = tgRes.ok ? '' : await tgRes.text();
+        }
+      }
+
       const latencyMs = Date.now() - started;
       if (tgRes.ok) {
+        const prefix = transitionLabel ? `${transitionLabel} · ` : '';
         telegramResult = {
           state: 'delivered',
           updatedAt: new Date().toISOString(),
           httpStatus: tgRes.status,
-          detail: `Доставлено в Telegram за ${latencyMs} мс`,
+          detail: `${prefix}Доставлено в Telegram за ${latencyMs} мс`,
         };
       } else {
+        const parsedErr = parseTelegramBotApiError(tgRes.status, rawErrText);
         telegramResult = {
           state: 'failed',
           updatedAt: new Date().toISOString(),
           httpStatus: tgRes.status,
-          detail: `Ответ Telegram API: HTTP ${tgRes.status}`,
+          detail: parsedErr.detail,
         };
       }
       pushDispatchLog({
-        id: `log-tg-${Date.now()}`,
+        id: `log-tg-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
         timestamp: new Date().toISOString(),
         orderNumber: targetOrder.orderNumber,
         channel: 'telegram',
@@ -1650,6 +1807,11 @@ async function dispatchOrderToExternalChannels(
         httpStatus: tgRes.status,
         latencyMs,
         summary: telegramResult.detail,
+        ...(statusChange?.previousStage
+          ? { previousStage: statusChange.previousStage }
+          : {}),
+        nextStage: statusChange?.nextStage ?? targetOrder.stage,
+        ...(transitionLabel ? { transitionLabel } : {}),
       });
     } catch (err) {
       const latencyMs = Date.now() - started;
@@ -1663,7 +1825,7 @@ async function dispatchOrderToExternalChannels(
             : 'Не удалось связаться с Telegram Bot API',
       };
       pushDispatchLog({
-        id: `log-tg-${Date.now()}`,
+        id: `log-tg-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
         timestamp: new Date().toISOString(),
         orderNumber: targetOrder.orderNumber,
         channel: 'telegram',
@@ -1672,6 +1834,11 @@ async function dispatchOrderToExternalChannels(
         httpStatus: null,
         latencyMs,
         summary: telegramResult.detail,
+        ...(statusChange?.previousStage
+          ? { previousStage: statusChange.previousStage }
+          : {}),
+        nextStage: statusChange?.nextStage ?? targetOrder.stage,
+        ...(transitionLabel ? { transitionLabel } : {}),
       });
     }
   }
@@ -1679,7 +1846,7 @@ async function dispatchOrderToExternalChannels(
   // 2. Outbound Webhook Dispatch (HMAC-SHA256 signed JSON)
   let webhookResult: CrmOrderRecord['delivery']['webhook'];
   const shouldSendWh =
-    event === 'dispatch.test' ||
+    forceSend ||
     (webhook.enabled &&
       (isPriorityEscalation ||
         (event === 'order.created' && webhook.notifyOnNewOrder) ||
@@ -1694,9 +1861,9 @@ async function dispatchOrderToExternalChannels(
         ? 'Укажите Webhook URL (amoCRM / Bitrix24 / Make или локальный контур)'
         : 'Отправка этого события отключена в настройках Webhook',
     };
-    if (event === 'dispatch.test') {
+    if (forceSend) {
       pushDispatchLog({
-        id: `log-wh-${Date.now() + 1}`,
+        id: `log-wh-${Date.now() + 1}-${crypto.randomBytes(2).toString('hex')}`,
         timestamp: nowIso,
         orderNumber: targetOrder.orderNumber,
         channel: 'webhook',
@@ -1706,6 +1873,7 @@ async function dispatchOrderToExternalChannels(
         latencyMs: 1,
         summary:
           'JSON-конверт и подпись HMAC-SHA256 сформированы корректно (URL не задан)',
+        ...(transitionLabel ? { transitionLabel } : {}),
       });
     }
   } else if (checkBannedForeignServiceUrl(webhook.endpointUrl).matched) {
@@ -1739,7 +1907,12 @@ async function dispatchOrderToExternalChannels(
         }
       }
 
-      const envelope = buildWebhookOrderEnvelope(targetOrder, event);
+      const envelope = buildWebhookOrderEnvelope(
+        targetOrder,
+        event,
+        nowIso,
+        statusChange
+      );
       const rawJson = JSON.stringify(envelope);
       const signingSecret = webhook.hmacSecret.trim() || getSessionSecret();
       const signatureHex = crypto
@@ -1778,7 +1951,7 @@ async function dispatchOrderToExternalChannels(
       }
 
       pushDispatchLog({
-        id: `log-wh-${Date.now() + 1}`,
+        id: `log-wh-${Date.now() + 1}-${crypto.randomBytes(2).toString('hex')}`,
         timestamp: new Date().toISOString(),
         orderNumber: targetOrder.orderNumber,
         channel: 'webhook',
@@ -1787,6 +1960,7 @@ async function dispatchOrderToExternalChannels(
         httpStatus: whRes.status,
         latencyMs,
         summary: webhookResult.detail,
+        ...(transitionLabel ? { transitionLabel } : {}),
       });
     } catch (err) {
       const latencyMs = Date.now() - started;
@@ -1800,7 +1974,7 @@ async function dispatchOrderToExternalChannels(
             : 'Не удалось доставить Webhook',
       };
       pushDispatchLog({
-        id: `log-wh-${Date.now() + 1}`,
+        id: `log-wh-${Date.now() + 1}-${crypto.randomBytes(2).toString('hex')}`,
         timestamp: new Date().toISOString(),
         orderNumber: targetOrder.orderNumber,
         channel: 'webhook',
@@ -1809,6 +1983,7 @@ async function dispatchOrderToExternalChannels(
         httpStatus: null,
         latencyMs,
         summary: webhookResult.detail,
+        ...(transitionLabel ? { transitionLabel } : {}),
       });
     }
   }
@@ -3265,7 +3440,9 @@ async function startServer() {
       autoSignedInEmail = resolvedClientEmail;
     }
 
-    const hydratedNewOrder = ensureOrderApprovalWorkflow(newCrmOrder);
+    const hydratedNewOrder = ensureOrderStageHistory(
+      ensureOrderApprovalWorkflow(newCrmOrder)
+    );
     crmStore.orders = [hydratedNewOrder, ...crmStore.orders].slice(0, 200);
     writeOrdersCrmStore(crmStore);
 
@@ -5023,10 +5200,32 @@ async function startServer() {
     }
   );
 
+  function buildAdminTelegramSettingsView(crmStore: PersistedOrdersCrmStore) {
+    const resolvedTg = resolveEffectiveTelegramSettings(
+      crmStore.settings.telegram,
+      process.env
+    );
+    return {
+      enabled: resolvedTg.enabled,
+      hasBotToken: resolvedTg.hasBotToken,
+      botTokenSource: resolvedTg.botTokenSource,
+      envBotTokenConfigured: resolvedTg.envBotTokenConfigured,
+      maskedBotToken: maskSecretForAdmin(resolvedTg.botToken),
+      chatId: resolvedTg.chatId,
+      hasChatId: resolvedTg.hasChatId,
+      chatIdSource: resolvedTg.chatIdSource,
+      envChatIdConfigured: resolvedTg.envChatIdConfigured,
+      discoveredChatTitle: resolvedTg.discoveredChatTitle,
+      notifyOnNewOrder: resolvedTg.notifyOnNewOrder,
+      notifyOnStageChange: resolvedTg.notifyOnStageChange,
+      maskPdnInExternalAlerts: resolvedTg.maskPdnInExternalAlerts,
+    };
+  }
+
   app.get('/api/cms/orders', requireStudioAuth, (_req, res) => {
     runSlaEscalationSweep();
     const crmStore = readOrdersCrmStore();
-    const { telegram, webhook } = crmStore.settings;
+    const { webhook } = crmStore.settings;
     const workSchedule = sanitizeWorkScheduleConfig(crmStore.settings.workSchedule);
 
     res.json({
@@ -5039,15 +5238,7 @@ async function startServer() {
       legalProfiles: sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles),
       konturStatus: getKonturIntegrationStatus(),
       settings: {
-        telegram: {
-          enabled: telegram.enabled,
-          hasBotToken: Boolean(telegram.botToken.trim()),
-          maskedBotToken: maskSecretForAdmin(telegram.botToken),
-          chatId: telegram.chatId,
-          notifyOnNewOrder: telegram.notifyOnNewOrder,
-          notifyOnStageChange: telegram.notifyOnStageChange,
-          maskPdnInExternalAlerts: telegram.maskPdnInExternalAlerts !== false,
-        },
+        telegram: buildAdminTelegramSettingsView(crmStore),
         webhook: {
           enabled: webhook.enabled,
           endpointUrl: webhook.endpointUrl,
@@ -5197,9 +5388,28 @@ async function startServer() {
             )
           : existing.deliverables ?? [];
 
+      const nextStageHistory = stageChanged
+        ? recordOrderStageTransition(existing, {
+            timestamp: nowIso,
+            previousStage: existing.stage,
+            nextStage,
+            actor: 'producer_crm',
+            workflowStepLabel: `Перевод заказа на этап «${
+              getCrmStageMetaForOrder(nextStage, existing.checkoutMode).shortLabel
+            }»`,
+            note:
+              typeof body.producerNotes === 'string' &&
+              body.producerNotes.trim() &&
+              body.producerNotes.trim() !== existing.producerNotes.trim()
+                ? body.producerNotes.trim()
+                : null,
+          })
+        : ensureOrderStageHistory(existing).stageHistory;
+
       const updatedOrder: CrmOrderRecord = {
         ...existing,
         stage: nextStage,
+        stageHistory: nextStageHistory,
         updatedAt: nowIso,
         holdExpiresAt: nextHoldExpiresAt,
         callbackPreference: nextCallbackPref,
@@ -5264,6 +5474,10 @@ async function startServer() {
 
       let finalOrder: CrmOrderRecord = updatedOrder;
       let latestEngineerEmail: SoundEngineerEmailNotificationRecord | null = null;
+      let dispatchResult: {
+        telegramResult: CrmOrderRecord['delivery']['telegram'];
+        webhookResult: CrmOrderRecord['delivery']['webhook'];
+      } | null = null;
 
       if (stageChanged) {
         const stageNotif = buildStageChangedNotification({
@@ -5275,15 +5489,16 @@ async function startServer() {
           createdAt: nowIso,
         });
         recordAndBroadcastCabinetNotification(stageNotif, crmStore);
-        void dispatchOrderToExternalChannels(updatedOrder.id, 'order.stage_changed');
 
         // Автоматическая отправка e-mail уведомления звукорежиссёру при смене статуса заказа с кнопкой «Сдать файл на проверку»
-        const prevStageLabel =
-          CRM_ORDER_STAGES.find((s) => s.id === existing.stage)?.shortLabel ??
-          existing.stage;
-        const nextStageLabel =
-          CRM_ORDER_STAGES.find((s) => s.id === updatedOrder.stage)?.shortLabel ??
-          updatedOrder.stage;
+        const prevStageLabel = getCrmStageMetaForOrder(
+          existing.stage,
+          updatedOrder.checkoutMode
+        ).shortLabel;
+        const nextStageLabel = getCrmStageMetaForOrder(
+          updatedOrder.stage,
+          updatedOrder.checkoutMode
+        ).shortLabel;
         const hydrated = ensureOrderApprovalWorkflow(updatedOrder);
         const roster = sanitizeSoundEngineerRoster(crmStore.soundEngineers);
         const engineer =
@@ -5322,11 +5537,34 @@ async function startServer() {
           crmStore.orders[idx] = finalOrder;
           writeOrdersCrmStore(crmStore);
         }
+
+        dispatchResult = await dispatchOrderToExternalChannels(
+          finalOrder.id,
+          'order.stage_changed',
+          {
+            statusChange: {
+              previousStage: existing.stage,
+              nextStage: finalOrder.stage,
+              actor: 'producer_crm',
+              reasonSummary:
+                typeof body.producerNotes === 'string' &&
+                body.producerNotes.trim() &&
+                body.producerNotes.trim() !== existing.producerNotes.trim()
+                  ? `Обновлена заметка продюсера: ${body.producerNotes.trim()}`
+                  : null,
+              changedAtIso: nowIso,
+            },
+          }
+        );
+        finalOrder =
+          crmStore.orders.find((o) => o.id === finalOrder.id) ?? finalOrder;
       }
 
       res.json({
         ok: true,
         order: finalOrder,
+        dispatchResult,
+        dispatchLogs: crmStore.dispatchLogs.slice(0, 25),
         soundEngineerEmail: latestEngineerEmail,
         soundEngineerEmails: (crmStore.soundEngineerEmails ?? []).slice(0, 30),
       });
@@ -5759,14 +5997,19 @@ async function startServer() {
     const deliveredVia: string[] = [];
     let mailGatewayDelivered = false;
 
+    const resolvedEngineerTg = resolveEffectiveTelegramSettings(
+      crmStore.settings.telegram,
+      process.env
+    );
+
     if (
       autoSendExternal &&
-      crmStore.settings.telegram.botToken.trim() &&
+      resolvedEngineerTg.hasBotToken &&
       engineer.telegramChatId.trim()
     ) {
       try {
         const tgRes = await fetch(
-          `https://api.telegram.org/bot${crmStore.settings.telegram.botToken.trim()}/sendMessage`,
+          `${resolveTelegramBotApiBaseUrl()}/bot${resolvedEngineerTg.botToken}/sendMessage`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -5958,15 +6201,22 @@ async function startServer() {
             ? 'in_production'
             : existing.stage;
 
+        const latestVer = nextWorkflow.scriptVersions[0]?.versionNumber ?? 1;
         const updatedOrder: CrmOrderRecord = {
           ...existing,
           stage: nextStage,
+          stageHistory: recordOrderStageTransition(existing, {
+            timestamp: nowIso,
+            previousStage: existing.stage,
+            nextStage,
+            actor: 'producer_crm',
+            workflowStepLabel: `Опубликован режиссёрский сценарий v${latestVer} (${nextWorkflow.targetSlotSec} сек) на утверждение клиенту`,
+          }),
           updatedAt: nowIso,
           approvalWorkflow: nextWorkflow,
         };
 
         crmStore.orders[idx] = updatedOrder;
-        const latestVer = nextWorkflow.scriptVersions[0]?.versionNumber ?? 1;
         const notif = buildApprovalWorkflowNotification({
           id: `notif-script-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
           orderNumber: updatedOrder.orderNumber,
@@ -5975,6 +6225,19 @@ async function startServer() {
           createdAt: nowIso,
         });
         recordAndBroadcastCabinetNotification(notif, crmStore);
+        void dispatchOrderToExternalChannels(
+          updatedOrder.id,
+          'order.stage_changed',
+          {
+            statusChange: {
+              previousStage: existing.stage,
+              nextStage: updatedOrder.stage,
+              actor: 'producer_crm',
+              workflowStepLabel: `Опубликован режиссёрский сценарий v${latestVer} (${nextWorkflow.targetSlotSec} сек) на утверждение клиенту`,
+              changedAtIso: nowIso,
+            },
+          }
+        );
 
         res.json({
           ok: true,
@@ -6144,6 +6407,17 @@ async function startServer() {
 
       let updatedOrder: CrmOrderRecord = {
         ...existing,
+        stageHistory: recordOrderStageTransition(existing, {
+          timestamp: nowIso,
+          previousStage: existing.stage,
+          nextStage: existing.stage,
+          actor: 'producer_crm',
+          workflowStepLabel:
+            mode === 'loyal_included'
+              ? 'Эскалация закрыта (лояльный раунд без доплаты) · задача возвращена звукорежиссёру'
+              : 'Эскалация согласована с обновлением единого счёта · задача передана в студию',
+          note: typeof body.note === 'string' ? body.note : null,
+        }),
         updatedAt: nowIso,
         totalBudgetRub: nextBudget,
         ...(nextDocMeta ? { documentMeta: nextDocMeta } : {}),
@@ -6196,6 +6470,19 @@ async function startServer() {
         createdAt: nowIso,
       });
       recordAndBroadcastCabinetNotification(notif, crmStore);
+      void dispatchOrderToExternalChannels(updatedOrder.id, 'order.stage_changed', {
+        statusChange: {
+          previousStage: existing.stage,
+          nextStage: updatedOrder.stage,
+          actor: 'producer_crm',
+          workflowStepLabel:
+            mode === 'loyal_included'
+              ? 'Эскалация закрыта (лояльный раунд без доплаты) · задача возвращена звукорежиссёру'
+              : 'Эскалация согласована с обновлением единого счёта · задача передана в студию',
+          reasonSummary: typeof body.note === 'string' ? body.note : null,
+          changedAtIso: nowIso,
+        },
+      });
 
       res.json({
         ok: true,
@@ -6333,6 +6620,16 @@ async function startServer() {
       const updatedOrder: CrmOrderRecord = {
         ...existing,
         stage: nextStage,
+        stageHistory: recordOrderStageTransition(existing, {
+          timestamp: nowIso,
+          previousStage: existing.stage,
+          nextStage,
+          actor: 'producer_crm',
+          workflowStepLabel: body.markAccepted
+            ? `Мастер-дубль ${versionMeta.versionCode ?? 'v1'} утверждён продюсером и передан в выдачу`
+            : `Ролик ${versionMeta.versionCode ?? 'v1'} проверен ОТК и направлен клиенту на приёмку`,
+          note: deliverable.versionNote ?? null,
+        }),
         updatedAt: nowIso,
         deliverables: [deliverable, ...(existing.deliverables ?? [])].slice(0, 20),
         approvalWorkflow: nextWorkflow,
@@ -6346,6 +6643,18 @@ async function startServer() {
         createdAt: nowIso,
       });
       recordAndBroadcastCabinetNotification(deliverableNotif, crmStore);
+      void dispatchOrderToExternalChannels(updatedOrder.id, 'order.stage_changed', {
+        statusChange: {
+          previousStage: existing.stage,
+          nextStage: updatedOrder.stage,
+          actor: 'producer_crm',
+          workflowStepLabel: body.markAccepted
+            ? `Мастер-дубль ${versionMeta.versionCode ?? 'v1'} утверждён продюсером и передан в выдачу`
+            : `Ролик ${versionMeta.versionCode ?? 'v1'} проверен ОТК и направлен клиенту на приёмку`,
+          reasonSummary: deliverable.versionNote ?? null,
+          changedAtIso: nowIso,
+        },
+      });
 
       res.json({
         ok: true,
@@ -6468,13 +6777,46 @@ async function startServer() {
         const updatedOrder: CrmOrderRecord = {
           ...existing,
           stage: nextStage,
+          stageHistory: recordOrderStageTransition(existing, {
+            timestamp: nowIso,
+            previousStage: existing.stage,
+            nextStage,
+            actor: 'client_cabinet',
+            workflowStepLabel:
+              body.action === 'approve'
+                ? 'Клиент утвердил режиссёрский сценарий — запущена студийная запись'
+                : 'Клиент направил комментарий к режиссёрскому сценарию',
+            note:
+              body.action === 'request_changes'
+                ? String(body.comment || '')
+                : null,
+          }),
           updatedAt: nowIso,
           approvalWorkflow: finalWorkflow,
         };
 
         crmStore.orders[idx] = updatedOrder;
         writeOrdersCrmStore(crmStore);
-        void dispatchOrderToExternalChannels(updatedOrder.id, 'order.stage_changed');
+        void dispatchOrderToExternalChannels(
+          updatedOrder.id,
+          'order.stage_changed',
+          {
+            statusChange: {
+              previousStage: existing.stage,
+              nextStage: updatedOrder.stage,
+              actor: 'client_cabinet',
+              workflowStepLabel:
+                body.action === 'approve'
+                  ? 'Клиент утвердил режиссёрский сценарий — запущена студийная запись'
+                  : 'Клиент направил комментарий к режиссёрскому сценарию',
+              reasonSummary:
+                body.action === 'request_changes'
+                  ? String(body.comment || '')
+                  : null,
+              changedAtIso: nowIso,
+            },
+          }
+        );
 
         const effectiveRescueToken = issueOrderRescueToken(updatedOrder.orderNumber);
         res.json({
@@ -6627,6 +6969,22 @@ async function startServer() {
         const updatedOrder: CrmOrderRecord = {
           ...existing,
           stage: nextStage,
+          stageHistory: recordOrderStageTransition(existing, {
+            timestamp: nowIso,
+            previousStage: existing.stage,
+            nextStage,
+            actor: 'client_cabinet',
+            workflowStepLabel:
+              result.routedTo === 'accepted'
+                ? 'Клиент принял готовый аудиоролик без замечаний'
+                : result.routedTo === 'producer_escalation'
+                  ? 'Клиент запросил изменение текста после записи — требуется решение продюсера'
+                  : 'Клиент запросил сервисный раунд доводки сведения/музыки',
+            note:
+              body.action === 'request_revision'
+                ? String(body.comment || '')
+                : null,
+          }),
           updatedAt: nowIso,
           compliance:
             result.routedTo === 'accepted'
@@ -6637,7 +6995,28 @@ async function startServer() {
 
         crmStore.orders[idx] = updatedOrder;
         writeOrdersCrmStore(crmStore);
-        void dispatchOrderToExternalChannels(updatedOrder.id, 'order.stage_changed');
+        void dispatchOrderToExternalChannels(
+          updatedOrder.id,
+          'order.stage_changed',
+          {
+            statusChange: {
+              previousStage: existing.stage,
+              nextStage: updatedOrder.stage,
+              actor: 'client_cabinet',
+              workflowStepLabel:
+                result.routedTo === 'accepted'
+                  ? 'Клиент принял готовый аудиоролик без замечаний'
+                  : result.routedTo === 'producer_escalation'
+                    ? 'Клиент запросил изменение текста после записи — требуется решение продюсера'
+                    : 'Клиент запросил сервисный раунд доводки сведения/музыки',
+              reasonSummary:
+                body.action === 'request_revision'
+                  ? String(body.comment || '')
+                  : null,
+              changedAtIso: nowIso,
+            },
+          }
+        );
 
         const effectiveRescueToken = issueOrderRescueToken(updatedOrder.orderNumber);
         res.json({
@@ -6991,12 +7370,30 @@ async function startServer() {
 
       const updatedOrder: CrmOrderRecord = {
         ...existing,
+        stageHistory: recordOrderStageTransition(existing, {
+          timestamp: nowIso,
+          previousStage: existing.stage,
+          nextStage: existing.stage,
+          actor: 'sound_engineer',
+          actorName: verified.payload.engineerName,
+          workflowStepLabel: `Звукорежиссёр (${verified.payload.engineerName}) сдал дубль «${safeFileName}» на проверку продюсеру`,
+          note: engineerNote || null,
+        }),
         updatedAt: nowIso,
         approvalWorkflow: nextWorkflow,
       };
       crmStore.orders[idx] = updatedOrder;
       writeOrdersCrmStore(crmStore);
-      void dispatchOrderToExternalChannels(updatedOrder.id, 'order.stage_changed');
+      void dispatchOrderToExternalChannels(updatedOrder.id, 'order.stage_changed', {
+        statusChange: {
+          previousStage: existing.stage,
+          nextStage: updatedOrder.stage,
+          actor: 'sound_engineer',
+          workflowStepLabel: `Звукорежиссёр (${verified.payload.engineerName}) сдал дубль «${safeFileName}» на проверку продюсеру`,
+          reasonSummary: engineerNote || null,
+          changedAtIso: nowIso,
+        },
+      });
 
       const uploadedTake = nextWorkflow.pendingEngineerTakes[0]!;
       res.json({
@@ -7120,17 +7517,32 @@ async function startServer() {
           })
         : prevSchedule;
 
+      const incomingChatId =
+        typeof body.telegram?.chatId === 'string'
+          ? body.telegram.chatId.trim().slice(0, 90)
+          : prevTg.chatId;
+      const chatIdChangedManual =
+        typeof body.telegram?.chatId === 'string' &&
+        incomingChatId !== prevTg.chatId;
+
       crmStore.settings = {
         telegram: {
           enabled:
             typeof body.telegram?.enabled === 'boolean'
               ? body.telegram.enabled
               : prevTg.enabled,
+          enabledExplicitlySet:
+            typeof body.telegram?.enabled === 'boolean'
+              ? true
+              : prevTg.enabledExplicitlySet === true,
           botToken: nextBotToken,
-          chatId:
-            typeof body.telegram?.chatId === 'string'
-              ? body.telegram.chatId.trim().slice(0, 90)
-              : prevTg.chatId,
+          chatId: incomingChatId,
+          chatIdAutoDiscovered: chatIdChangedManual
+            ? false
+            : Boolean(prevTg.chatIdAutoDiscovered && incomingChatId),
+          discoveredChatTitle: chatIdChangedManual
+            ? ''
+            : prevTg.discoveredChatTitle ?? '',
           notifyOnNewOrder:
             typeof body.telegram?.notifyOnNewOrder === 'boolean'
               ? body.telegram.notifyOnNewOrder
@@ -7172,16 +7584,7 @@ async function startServer() {
         ok: true,
         operatingRegime: resolveStudioOperatingRegime(Date.now(), nextWorkSchedule),
         settings: {
-          telegram: {
-            enabled: crmStore.settings.telegram.enabled,
-            hasBotToken: Boolean(crmStore.settings.telegram.botToken.trim()),
-            maskedBotToken: maskSecretForAdmin(crmStore.settings.telegram.botToken),
-            chatId: crmStore.settings.telegram.chatId,
-            notifyOnNewOrder: crmStore.settings.telegram.notifyOnNewOrder,
-            notifyOnStageChange: crmStore.settings.telegram.notifyOnStageChange,
-            maskPdnInExternalAlerts:
-              crmStore.settings.telegram.maskPdnInExternalAlerts !== false,
-          },
+          telegram: buildAdminTelegramSettingsView(crmStore),
           webhook: {
             enabled: crmStore.settings.webhook.enabled,
             endpointUrl: crmStore.settings.webhook.endpointUrl,
@@ -7196,22 +7599,115 @@ async function startServer() {
     }
   );
 
-  app.post('/api/cms/orders-dispatch/test', requireStudioAuth, async (_req, res) => {
-    const crmStore = readOrdersCrmStore();
-    const sampleOrder = crmStore.orders[0];
-    if (!sampleOrder) {
-      res.status(400).json({ ok: false, error: 'Нет заказов для контрольной проверки' });
-      return;
-    }
+  app.post(
+    '/api/cms/orders-dispatch/detect-telegram-chat',
+    requireStudioAuth,
+    async (_req, res) => {
+      const crmStore = readOrdersCrmStore();
+      const resolvedTg = resolveEffectiveTelegramSettings(
+        crmStore.settings.telegram,
+        process.env
+      );
+      if (!resolvedTg.hasBotToken) {
+        res.status(400).json({
+          ok: false,
+          error:
+            'Переменная окружения TELEGRAM_ORDERS_BOT_TOKEN не задана на сервере. Добавьте токен бота в окружение и перезапустите сервер.',
+        });
+        return;
+      }
 
-    const result = await dispatchOrderToExternalChannels(sampleOrder.id, 'dispatch.test');
-    const updated = readOrdersCrmStore();
-    res.json({
-      ok: true,
-      result,
-      dispatchLogs: updated.dispatchLogs.slice(0, 25),
-    });
-  });
+      const discovered = await discoverAndPersistTelegramChatId(
+        resolvedTg.botToken,
+        crmStore
+      );
+      if (!discovered) {
+        res.status(404).json({
+          ok: false,
+          error:
+            'Входящих событий у бота не обнаружено. Отправьте боту /start в Telegram или напишите сообщение в рабочую группу с ботом, затем нажмите кнопку повторно.',
+        });
+        return;
+      }
+
+      res.json({
+        ok: true,
+        discovered,
+        settings: {
+          telegram: buildAdminTelegramSettingsView(crmStore),
+          webhook: {
+            enabled: crmStore.settings.webhook.enabled,
+            endpointUrl: crmStore.settings.webhook.endpointUrl,
+            hasHmacSecret: Boolean(crmStore.settings.webhook.hmacSecret.trim()),
+            maskedHmacSecret: maskSecretForAdmin(
+              crmStore.settings.webhook.hmacSecret
+            ),
+            notifyOnNewOrder: crmStore.settings.webhook.notifyOnNewOrder,
+            notifyOnStageChange: crmStore.settings.webhook.notifyOnStageChange,
+          },
+          workSchedule: sanitizeWorkScheduleConfig(crmStore.settings.workSchedule),
+        },
+      });
+    }
+  );
+
+  app.post(
+    '/api/cms/orders-dispatch/test',
+    requireStudioAuth,
+    express.json({ limit: '16kb' }),
+    async (req, res) => {
+      const body = (req.body ?? {}) as {
+        event?: 'dispatch.test' | 'order.stage_changed';
+        orderId?: string;
+      };
+      const crmStore = readOrdersCrmStore();
+      const sampleOrder =
+        (body.orderId
+          ? crmStore.orders.find((o) => o.id === body.orderId)
+          : undefined) ?? crmStore.orders[0];
+      if (!sampleOrder) {
+        res
+          .status(400)
+          .json({ ok: false, error: 'Нет заказов для контрольной проверки' });
+        return;
+      }
+
+      const testEvent: CrmDispatchEvent =
+        body.event === 'order.stage_changed'
+          ? 'order.stage_changed'
+          : 'dispatch.test';
+      const simulatedPrevStage: CrmOrderStage =
+        sampleOrder.stage === 'new_hold' ? 'new_hold' : 'new_hold';
+      const simulatedNextStage: CrmOrderStage =
+        sampleOrder.stage === 'new_hold' ? 'quota_locked' : sampleOrder.stage;
+
+      const result = await dispatchOrderToExternalChannels(
+        sampleOrder.id,
+        testEvent,
+        {
+          forceSend: true,
+          statusChange:
+            testEvent === 'order.stage_changed'
+              ? {
+                  previousStage: simulatedPrevStage,
+                  nextStage: simulatedNextStage,
+                  actor: 'producer_crm',
+                  workflowStepLabel:
+                    'Контрольная проверка мгновенного уведомления о смене статуса',
+                  changedAtIso: new Date().toISOString(),
+                }
+              : undefined,
+        }
+      );
+      const updated = readOrdersCrmStore();
+      res.json({
+        ok: true,
+        event: testEvent,
+        result,
+        dispatchLogs: updated.dispatchLogs.slice(0, 25),
+      });
+    }
+  );
 
   app.get('/api/cms/security/overview', requireStudioAuth, (_req, res) => {
     const store = readSecurityStore();
@@ -7685,6 +8181,30 @@ async function startServer() {
 
   const publicAssetsRoot = path.join(__dirname, 'public', 'assets');
   if (fs.existsSync(publicAssetsRoot)) {
+    app.get('/assets/aistudio/:legacyWavName', (req, res, next) => {
+      const rawName = path.basename(String(req.params.legacyWavName || ''));
+      if (!rawName || !/\.wav$/i.test(rawName)) {
+        next();
+        return;
+      }
+      const exactWav = path.join(publicAssetsRoot, 'aistudio', rawName);
+      if (fs.existsSync(exactWav)) {
+        next();
+        return;
+      }
+      const migratedMp3 = path.join(
+        publicAssetsRoot,
+        'aistudio',
+        rawName.replace(/\.wav$/i, '.mp3')
+      );
+      if (fs.existsSync(migratedMp3)) {
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        res.sendFile(migratedMp3);
+        return;
+      }
+      next();
+    });
     app.use('/assets', express.static(publicAssetsRoot, { maxAge: '1d' }));
   }
 
@@ -7918,6 +8438,74 @@ async function startServer() {
     const distPath = path.join(__dirname, 'dist');
     const distAssetsPath = path.join(distPath, 'assets');
     if (fs.existsSync(distAssetsPath)) {
+      const compressedAssetCache = new Map<
+        string,
+        { mtimeMs: number; br: Buffer; gzip: Buffer }
+      >();
+
+      app.get('/assets/:assetFile', (req, res, next) => {
+        const assetFile = path.basename(String(req.params.assetFile || ''));
+        if (!/\.(?:js|css|svg)$/i.test(assetFile)) {
+          next();
+          return;
+        }
+        const acceptEncoding = String(req.headers['accept-encoding'] || '');
+        const wantsBr = /\bbr\b/.test(acceptEncoding);
+        const wantsGzip = /\bgzip\b/.test(acceptEncoding);
+        if (!wantsBr && !wantsGzip) {
+          next();
+          return;
+        }
+        const resolvedAsset = path.resolve(distAssetsPath, assetFile);
+        const resolvedRoot = path.resolve(distAssetsPath);
+        if (
+          !resolvedAsset.startsWith(`${resolvedRoot}${path.sep}`) ||
+          !fs.existsSync(resolvedAsset)
+        ) {
+          next();
+          return;
+        }
+        const stat = fs.statSync(resolvedAsset);
+        if (!stat.isFile() || stat.size < 1024) {
+          next();
+          return;
+        }
+        let cached = compressedAssetCache.get(resolvedAsset);
+        if (!cached || cached.mtimeMs !== stat.mtimeMs) {
+          const rawBuf = fs.readFileSync(resolvedAsset);
+          cached = {
+            mtimeMs: stat.mtimeMs,
+            br: zlib.brotliCompressSync(rawBuf, {
+              params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 },
+            }),
+            gzip: zlib.gzipSync(rawBuf, { level: 6 }),
+          };
+          if (compressedAssetCache.size > 64) {
+            const oldestKey = compressedAssetCache.keys().next().value;
+            if (oldestKey) compressedAssetCache.delete(oldestKey);
+          }
+          compressedAssetCache.set(resolvedAsset, cached);
+        }
+        if (assetFile.endsWith('.js')) {
+          res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+          res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+        } else if (assetFile.endsWith('.css')) {
+          res.setHeader('Content-Type', 'text/css; charset=utf-8');
+          res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+        } else {
+          res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+        }
+        res.setHeader('Vary', 'Accept-Encoding');
+        if (wantsBr) {
+          res.setHeader('Content-Encoding', 'br');
+          res.send(cached.br);
+          return;
+        }
+        res.setHeader('Content-Encoding', 'gzip');
+        res.send(cached.gzip);
+      });
+
       app.use(
         '/assets',
         express.static(distAssetsPath, {

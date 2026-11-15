@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const RASTER_SOURCE_REGEX = /\.(jpe?g|png)$/i;
+export const RESPONSIVE_WEBP_WIDTHS = [480, 800];
 
 let cachedEncoder = undefined;
 
@@ -22,57 +23,122 @@ function detectEncoder() {
   return null;
 }
 
-export function buildWebpSiblingPath(sourceFilePath) {
+function probeImageWidth(sourceFilePath) {
+  try {
+    const out = execFileSync(
+      'ffprobe',
+      [
+        '-v',
+        'error',
+        '-select_streams',
+        'v:0',
+        '-show_entries',
+        'stream=width',
+        '-of',
+        'csv=p=0',
+        sourceFilePath,
+      ],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    ).trim();
+    const parsed = Number.parseInt(out, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function buildWebpSiblingPath(sourceFilePath, targetWidth = null) {
   if (!RASTER_SOURCE_REGEX.test(sourceFilePath)) return null;
+  if (targetWidth && Number.isFinite(targetWidth)) {
+    return sourceFilePath.replace(RASTER_SOURCE_REGEX, `-${targetWidth}w.webp`);
+  }
   return sourceFilePath.replace(RASTER_SOURCE_REGEX, '.webp');
+}
+
+function isFreshTarget(sourceFilePath, targetFilePath, force) {
+  if (force || !fs.existsSync(targetFilePath)) return false;
+  const srcStat = fs.statSync(sourceFilePath);
+  const dstStat = fs.statSync(targetFilePath);
+  return dstStat.mtimeMs >= srcStat.mtimeMs && dstStat.size > 0;
+}
+
+function encodeWebpFile(encoder, sourceFilePath, outputFilePath, quality, targetWidth = null) {
+  if (encoder === 'ffmpeg') {
+    const args = ['-y', '-loglevel', 'error', '-i', sourceFilePath];
+    if (targetWidth) {
+      args.push('-vf', `scale=${targetWidth}:-2:flags=lanczos`);
+    }
+    args.push(
+      '-c:v',
+      'libwebp',
+      '-quality',
+      String(quality),
+      '-compression_level',
+      '6',
+      outputFilePath
+    );
+    execFileSync('ffmpeg', args, { stdio: 'pipe' });
+  } else {
+    const args = [sourceFilePath];
+    if (targetWidth) {
+      args.push('-resize', `${targetWidth}x`);
+    }
+    args.push('-quality', String(quality), outputFilePath);
+    execFileSync('convert', args, { stdio: 'pipe' });
+  }
 }
 
 export function convertRasterFileToWebp(sourceFilePath, options = {}) {
   const webpPath = buildWebpSiblingPath(sourceFilePath);
   if (!webpPath || !fs.existsSync(sourceFilePath)) {
-    return { generated: false, webpPath };
-  }
-
-  if (!options.force && fs.existsSync(webpPath)) {
-    const srcStat = fs.statSync(sourceFilePath);
-    const webpStat = fs.statSync(webpPath);
-    if (webpStat.mtimeMs >= srcStat.mtimeMs && webpStat.size > 0) {
-      return { generated: false, skipped: true, webpPath };
-    }
+    return { generated: false, webpPath, responsivePaths: [] };
   }
 
   const encoder = detectEncoder();
   if (!encoder) {
-    return { generated: false, skipped: true, reason: 'no-encoder', webpPath };
+    return {
+      generated: false,
+      skipped: true,
+      reason: 'no-encoder',
+      webpPath,
+      responsivePaths: [],
+    };
   }
 
-  const quality = String(options.quality ?? 82);
-  if (encoder === 'ffmpeg') {
-    execFileSync(
-      'ffmpeg',
-      [
-        '-y',
-        '-loglevel',
-        'error',
-        '-i',
-        sourceFilePath,
-        '-c:v',
-        'libwebp',
-        '-quality',
-        quality,
-        '-compression_level',
-        '6',
-        webpPath,
-      ],
-      { stdio: 'pipe' }
-    );
-  } else {
-    execFileSync('convert', [sourceFilePath, '-quality', quality, webpPath], {
-      stdio: 'pipe',
-    });
+  let generatedAny = false;
+  const baseQuality = Number(options.quality ?? 82);
+
+  if (!isFreshTarget(sourceFilePath, webpPath, options.force)) {
+    encodeWebpFile(encoder, sourceFilePath, webpPath, baseQuality, null);
+    generatedAny = true;
   }
 
-  return { generated: true, webpPath };
+  const responsivePaths = [];
+  const isAvatar = path.basename(sourceFilePath).startsWith('avatar_');
+  const sourceWidth = options.responsive !== false && !isAvatar
+    ? probeImageWidth(sourceFilePath)
+    : null;
+
+  if (sourceWidth && sourceWidth >= 860) {
+    for (const width of RESPONSIVE_WEBP_WIDTHS) {
+      if (sourceWidth <= width + 60) continue;
+      const variantPath = buildWebpSiblingPath(sourceFilePath, width);
+      if (!variantPath) continue;
+      responsivePaths.push(variantPath);
+      if (!isFreshTarget(sourceFilePath, variantPath, options.force)) {
+        const tierQuality = width <= 480 ? Math.max(76, baseQuality - 2) : baseQuality;
+        encodeWebpFile(encoder, sourceFilePath, variantPath, tierQuality, width);
+        generatedAny = true;
+      }
+    }
+  }
+
+  return {
+    generated: generatedAny,
+    skipped: !generatedAny,
+    webpPath,
+    responsivePaths,
+  };
 }
 
 export function ensureWebpSiblingsInDirs(dirs, options = {}) {
@@ -102,6 +168,6 @@ if (isDirectRun) {
   ]);
   const generatedCount = summary.filter((item) => item.generated).length;
   console.log(
-    `[generate-webp] Checked ${summary.length} images, generated ${generatedCount} WebP file(s).`
+    `[generate-webp] Checked ${summary.length} images, updated ${generatedCount} image set(s).`
   );
 }

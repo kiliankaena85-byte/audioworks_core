@@ -1,6 +1,6 @@
 import { ArrowLeft, ArrowRight, ArrowUpRight, Pause, Play } from 'lucide-react';
 import { KeyboardEvent, PointerEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { CasePlayerSnapshot } from '../audio/casePlayerEngine';
+import type { CasePlayerSnapshot } from '../audio/lazyAudioEngines';
 import { useStudioCms } from '../cms/StudioCmsContext';
 import { BrandCasePoster } from '../data/casesData';
 import {

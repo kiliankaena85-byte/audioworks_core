@@ -31,6 +31,33 @@ import {
   ensureOrderApprovalWorkflow,
   type OrderApprovalWorkflow,
 } from './productionApprovalWorkflow.ts';
+import {
+  formatStatusChangeActorLabel,
+  formatStatusTimestampUtcPlus3,
+  sanitizeStatusChangeReason,
+} from './telegramOrderNotifications.ts';
+import type { OrderStatusChangeContext } from './telegramOrderNotifications.ts';
+import {
+  ensureOrderStageHistory,
+  recordOrderStageTransition,
+  scrubOrderStageHistoryPdn,
+} from './orderStageHistory.ts';
+import type {
+  OrderStageHistoryActor,
+  OrderStageHistoryEntry,
+  OrderStageTransitionDirection,
+} from './orderStageHistory.ts';
+
+export {
+  ensureOrderStageHistory,
+  recordOrderStageTransition,
+  scrubOrderStageHistoryPdn,
+};
+export type {
+  OrderStageHistoryActor,
+  OrderStageHistoryEntry,
+  OrderStageTransitionDirection,
+};
 
 function formatRubCompact(amount: number): string {
   return `${Math.round(amount)
@@ -357,6 +384,7 @@ export interface CrmOrderRecord {
   pdnAnonymizedAt?: string | null;
   slaState?: OrderSlaTrackingState;
   approvalWorkflow?: OrderApprovalWorkflow;
+  stageHistory?: OrderStageHistoryEntry[];
   delivery: {
     crmRegistry: 'saved';
     telegram: ChannelDeliveryStatus;
@@ -367,8 +395,11 @@ export interface CrmOrderRecord {
 export interface OrderDispatchSettings {
   telegram: {
     enabled: boolean;
+    enabledExplicitlySet?: boolean;
     botToken: string;
     chatId: string;
+    chatIdAutoDiscovered?: boolean;
+    discoveredChatTitle?: string;
     notifyOnNewOrder: boolean;
     notifyOnStageChange: boolean;
     /** 152-ФЗ ст. 12 / ФЗ-41-ФЗ: по умолчанию true — исключает передачу ПДн клиентов через зарубежные мессенджеры */
@@ -394,6 +425,9 @@ export interface DispatchAttemptLog {
   httpStatus: number | null;
   latencyMs: number;
   summary: string;
+  previousStage?: CrmOrderStage;
+  nextStage?: CrmOrderStage;
+  transitionLabel?: string;
 }
 
 export function ensureCrmOrderSlaFields(
@@ -606,6 +640,8 @@ export function computeOrderHoldStatus(
 export interface TelegramDispatchFormatOptions {
   /** По умолчанию true (152-ФЗ ст. 12 / ФЗ-41-ФЗ): скрывает контакты, ФИО, ИНН и текст брифа */
   maskPdn?: boolean;
+  /** Контекст перехода статуса заказа для мгновенных оповещений студии */
+  statusChange?: OrderStatusChangeContext;
 }
 
 /**
@@ -618,7 +654,12 @@ export function formatTelegramOrderDispatchMessage(
   options: TelegramDispatchFormatOptions = {}
 ): string {
   const maskPdn = options.maskPdn !== false;
-  const stageMeta = getCrmStageMetaForOrder(order.stage, order.checkoutMode);
+  const effectiveStage = options.statusChange?.nextStage ?? order.stage;
+  const stageMeta = getCrmStageMetaForOrder(effectiveStage, order.checkoutMode);
+  const prevStageId = options.statusChange?.previousStage ?? null;
+  const prevStageMeta = prevStageId
+    ? getCrmStageMetaForOrder(prevStageId, order.checkoutMode)
+    : null;
   const prefMeta = getCallbackPreferenceMeta(order.callbackPreference);
   const header =
     event === 'dispatch.test'
@@ -628,7 +669,7 @@ export function formatTelegramOrderDispatchMessage(
         : event === 'order.client_rescue'
           ? `СИГНАЛ ОТ КЛИЕНТА (ПРОДЛЕНИЕ ХОЛДА / ЗАПРОС СВЯЗИ) · #${order.orderNumber}`
           : event === 'order.stage_changed'
-            ? `ОБНОВЛЕНИЕ ЭТАПА СДЕЛКИ #${order.orderNumber}`
+            ? `СТАТУС ЗАКАЗА ИЗМЕНЁН · #${order.orderNumber}`
             : order.checkoutMode === 'air_plus_production'
               ? `НОВЫЙ ПРИОРИТЕТНЫЙ ХОЛД 4Ч · #${order.orderNumber}`
               : `НОВЫЙ ЗАКАЗ НА АУДИОПРОДАКШН · #${order.orderNumber}`;
@@ -646,14 +687,56 @@ export function formatTelegramOrderDispatchMessage(
     ? `Канал связи: ${maskContactChannelSummary(order.detectedChannel)}`
     : `Контакт клиента: ${order.contact} (${order.detectedChannel})`;
 
-  const lines: string[] = [
-    header,
-    `Этап: ${stageMeta.fullTitle}`,
+  const lines: string[] = [header];
+
+  if (event === 'order.stage_changed') {
+    if (prevStageMeta && prevStageMeta.id !== stageMeta.id) {
+      lines.push(
+        `Переход этапа: «${prevStageMeta.stepCode}. ${prevStageMeta.shortLabel}» → «${stageMeta.stepCode}. ${stageMeta.shortLabel}»`
+      );
+    }
+    lines.push(`Текущий этап: ${stageMeta.fullTitle}`);
+    const cleanStep = sanitizeStatusChangeReason(
+      options.statusChange?.workflowStepLabel,
+      maskPdn
+    );
+    if (cleanStep) {
+      lines.push(`Статус производства: ${cleanStep}`);
+    }
+    lines.push(
+      `Инициатор: ${formatStatusChangeActorLabel(options.statusChange?.actor)}`
+    );
+    const cleanReason = sanitizeStatusChangeReason(
+      options.statusChange?.reasonSummary,
+      maskPdn
+    );
+    if (cleanReason) {
+      lines.push(`Комментарий к статусу: ${cleanReason}`);
+    }
+    lines.push(
+      `Время изменения: ${formatStatusTimestampUtcPlus3(
+        options.statusChange?.changedAtIso ?? order.updatedAt
+      )}`
+    );
+    const completedChecks = [
+      order.compliance.trafficConfirmed,
+      order.compliance.fz38Checked,
+      order.compliance.rightsPassportIssued,
+      order.compliance.edoAndOrdRegistered,
+    ].filter(Boolean).length;
+    lines.push(`Готовность чек-листа: ${completedChecks} из 4`);
+    lines.push(`Регламент этапа: ${stageMeta.slaHint}`);
+    lines.push(``);
+  } else {
+    lines.push(`Этап: ${stageMeta.fullTitle}`);
+  }
+
+  lines.push(
     `Сумма договора: ${budgetLabel}`,
     `Способ оплаты: ${paymentLabel}`,
     contactDisplayLine,
-    `Режим связи: ${prefMeta.fullLabel}`,
-  ];
+    `Режим связи: ${prefMeta.fullLabel}`
+  );
 
   if (order.slaState?.promisedWindowLabel) {
     lines.push(`Обещанное окно SLA: ${order.slaState.promisedWindowLabel}`);
@@ -729,8 +812,9 @@ export function anonymizeCrmOrderPdnRecord(
   nowIso = new Date().toISOString()
 ): CrmOrderRecord {
   const anonymizedNote = `ПДн обезличены по ст. 21 152-ФЗ (${nowIso.slice(0, 10)})`;
+  const hydrated = ensureOrderStageHistory(order);
   return {
-    ...order,
+    ...hydrated,
     updatedAt: nowIso,
     contact: '[ПДН УДАЛЕНЫ ПО 152-ФЗ]',
     clientEmail: null,
@@ -740,6 +824,7 @@ export function anonymizeCrmOrderPdnRecord(
     attachedFileName: null,
     producerNotes: anonymizedNote,
     pdnAnonymizedAt: nowIso,
+    stageHistory: scrubOrderStageHistoryPdn(hydrated.stageHistory),
   };
 }
 
@@ -748,6 +833,15 @@ export interface WebhookOrderEnvelope {
   idempotencyKey: string;
   emittedAt: string;
   platform: 'FMWorks Studio CRM';
+  statusTransition?: {
+    previousStage: CrmOrderStage | null;
+    previousStageTitle: string | null;
+    nextStage: CrmOrderStage;
+    nextStageTitle: string;
+    actor: string;
+    workflowStepLabel: string | null;
+    reasonSummary: string | null;
+  };
   order: {
     id: string;
     orderNumber: string;
@@ -781,18 +875,39 @@ export interface WebhookOrderEnvelope {
 export function buildWebhookOrderEnvelope(
   order: CrmOrderRecord,
   event: CrmDispatchEvent,
-  nowIso = new Date().toISOString()
+  nowIso = new Date().toISOString(),
+  statusChange?: OrderStatusChangeContext
 ): WebhookOrderEnvelope {
+  const effectiveStage = statusChange?.nextStage ?? order.stage;
+  const currentStageMeta = getCrmStageMetaForOrder(effectiveStage, order.checkoutMode);
+  const prevStageId = statusChange?.previousStage ?? null;
+  const prevStageMeta = prevStageId
+    ? getCrmStageMetaForOrder(prevStageId, order.checkoutMode)
+    : null;
+
   return {
     event,
-    idempotencyKey: `${order.orderNumber}:${event}:${order.stage}:${nowIso.slice(0, 16)}`,
+    idempotencyKey: `${order.orderNumber}:${event}:${effectiveStage}:${nowIso.slice(0, 16)}`,
     emittedAt: nowIso,
     platform: 'FMWorks Studio CRM',
+    ...(event === 'order.stage_changed' || statusChange
+      ? {
+          statusTransition: {
+            previousStage: prevStageId,
+            previousStageTitle: prevStageMeta ? prevStageMeta.fullTitle : null,
+            nextStage: effectiveStage,
+            nextStageTitle: currentStageMeta.fullTitle,
+            actor: formatStatusChangeActorLabel(statusChange?.actor),
+            workflowStepLabel: statusChange?.workflowStepLabel ?? null,
+            reasonSummary: statusChange?.reasonSummary ?? null,
+          },
+        }
+      : {}),
     order: {
       id: order.id,
       orderNumber: order.orderNumber,
-      stage: order.stage,
-      stageTitle: getCrmStageMetaForOrder(order.stage, order.checkoutMode).fullTitle,
+      stage: effectiveStage,
+      stageTitle: currentStageMeta.fullTitle,
       checkoutMode: order.checkoutMode,
       paymentChannel: order.paymentChannel ?? 'edo_invoice',
       preferredDeliveryChannel: order.preferredDeliveryChannel ?? 'messenger',
@@ -1167,7 +1282,7 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
           versionStage: 'master',
           versionNote:
             'Готовый эфирный ролик клиента (20 сек, −14 LUFS), проверен медицинский дисклеймер',
-          staticAssetUrl: 'Audioworks_75c6023f.wav',
+          staticAssetUrl: 'Audioworks_75c6023f.mp3',
         },
       ],
       clientUploads: [],
@@ -1280,7 +1395,7 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
           versionStage: 'master',
           versionNote:
             'Утверждённый эфирный мастер WAV 48 кГц / −14 LUFS с юридическим дисклеймером',
-          staticAssetUrl: 'zerno_audioworks_15.wav',
+          staticAssetUrl: 'zerno_audioworks_15.mp3',
         },
         {
           id: 'deliv-seed-2854-v2',
@@ -1294,7 +1409,7 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
           versionStage: 'revision',
           versionNote:
             'Уплотнён финал и выделена пауза перед условием одобрения по ИНН за 1 рабочий день',
-          staticAssetUrl: 'Audioworks_75c6023f.wav',
+          staticAssetUrl: 'Audioworks_75c6023f.mp3',
         },
         {
           id: 'deliv-seed-2854-v1',
@@ -1308,7 +1423,7 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
           versionStage: 'draft',
           versionNote:
             'Первая сборка: баритон, спокойная деловая подача, акцент на авансе от 10%',
-          staticAssetUrl: 'Audioworks_75c6023f.wav',
+          staticAssetUrl: 'Audioworks_75c6023f.mp3',
         },
       ],
       clientUploads: [],
@@ -1421,7 +1536,7 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
           versionStage: 'master',
           versionNote:
             'Финальный эфирный мастер 25 сек (WAV 48 кГц / −14 LUFS), принят без замечаний',
-          staticAssetUrl: 'zerno_audioworks_15.wav',
+          staticAssetUrl: 'zerno_audioworks_15.mp3',
         },
         {
           id: 'deliv-seed-2418-v2',
@@ -1435,7 +1550,7 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
           versionStage: 'revision',
           versionNote:
             'Добавлена акустика кабины тягача, выверена пауза перед условием 0% удорожания',
-          staticAssetUrl: 'Audioworks_75c6023f.wav',
+          staticAssetUrl: 'Audioworks_75c6023f.mp3',
         },
         {
           id: 'deliv-seed-2418-v1',
@@ -1449,7 +1564,7 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
           versionStage: 'draft',
           versionNote:
             'Черновой дубль актёрского диалога для сверки интонации и хронометража 25 сек',
-          staticAssetUrl: 'Audioworks_75c6023f.wav',
+          staticAssetUrl: 'Audioworks_75c6023f.mp3',
         },
       ],
       clientUploads: [],
@@ -1515,7 +1630,7 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
           versionStage: 'master',
           versionNote:
             'Финальный мастер 20 сек (WAV 48 кГц / −14 LUFS) с оформленным паспортом прав',
-          staticAssetUrl: 'Audioworks_75c6023f.wav',
+          staticAssetUrl: 'Audioworks_75c6023f.mp3',
         },
         {
           id: 'deliv-seed-2309-v1',
@@ -1529,7 +1644,7 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
           versionStage: 'draft',
           versionNote:
             'Первая запись диктора без фоновой подложки для согласования подачи и темпа',
-          staticAssetUrl: 'zerno_audioworks_15.wav',
+          staticAssetUrl: 'zerno_audioworks_15.mp3',
         },
       ],
       clientUploads: [],
@@ -1595,7 +1710,7 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
           versionStage: 'revision',
           versionNote:
             'Ускорен старт диалога, финал уложен ровно в 30 сек — ждём утверждения перед мастерингом',
-          staticAssetUrl: 'zerno_audioworks_15.wav',
+          staticAssetUrl: 'zerno_audioworks_15.mp3',
         },
         {
           id: 'deliv-seed-2926-v1',
@@ -1609,7 +1724,7 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
           versionStage: 'draft',
           versionNote:
             'Черновой вариант подачи с акцентом на температурный режим рефрижераторов',
-          staticAssetUrl: 'Audioworks_75c6023f.wav',
+          staticAssetUrl: 'Audioworks_75c6023f.mp3',
         },
       ],
       clientUploads: [],
@@ -1690,8 +1805,10 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
   ];
 
   return rawSeeds.map((ord) =>
-    ensureOrderApprovalWorkflow(
-      ensureCrmOrderSlaFields(ord, DEFAULT_STUDIO_WORK_SCHEDULE)
+    ensureOrderStageHistory(
+      ensureOrderApprovalWorkflow(
+        ensureCrmOrderSlaFields(ord, DEFAULT_STUDIO_WORK_SCHEDULE)
+      )
     )
   );
 }

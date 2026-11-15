@@ -27,6 +27,7 @@ import {
   type StudioKanbanColumnId,
 } from '../../data/productionApprovalWorkflow';
 import { formatRubCompact } from '../../data/radioInventory';
+import { OrderStageHistoryTimeline } from './OrderStageHistoryTimeline';
 
 export interface AdminProductionKanbanViewProps {
   orders: CrmOrderRecord[];
@@ -894,6 +895,17 @@ export function AdminProductionKanbanView({
                 </p>
               </div>
             </div>
+
+            {/* Визуальная история перемещений заказа по этапам */}
+            <OrderStageHistoryTimeline
+              order={activeOrder}
+              assignedEngineerName={
+                soundEngineers.find(
+                  (eng) => eng.id === activeOrder.approvalWorkflow.assignedEngineerId
+                )?.name ?? null
+              }
+              compact
+            />
 
             {/* БЛОК А: Буфер ОТК продюсера (если звукорежиссёр загрузил дубль по прямой ссылке) */}
             {activeOrder.approvalWorkflow.pendingEngineerTakes.filter(

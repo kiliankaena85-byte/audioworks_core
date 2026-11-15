@@ -25,9 +25,9 @@ import {
   useState,
 } from 'react';
 import {
-  contrastAudioEngine,
-  ContrastStageSnapshot,
-} from '../audio/contrastAudioEngine';
+  type ContrastStageSnapshot,
+  lazyContrastAudioEngine as contrastAudioEngine,
+} from '../audio/lazyAudioEngines';
 import { useSiteTextBlocks } from '../cms/SiteTextBlocksContext';
 import { useStudioCms } from '../cms/StudioCmsContext';
 import { OptimizedImage } from './OptimizedImage';
@@ -45,6 +45,7 @@ import {
   isSiteTextBlockSubtitleModified,
 } from '../data/siteTextBlocksData';
 import { useLayaDecision } from '../engine/LayaContext';
+import { useAudioTrackScrubber } from '../utils/audioScrubbing';
 import { BrandLogo } from './BrandLogo';
 
 const LOCAL_FALLBACK_IMAGES: Record<string, string> = {
@@ -379,6 +380,22 @@ export function HeroKotoLens({
     Math.max(0, (relativeFilmElapsedSec / relativeFilmDurSec) * 100)
   );
 
+  const heroScrubberRef = useRef<HTMLDivElement | null>(null);
+  const canScrubHeroShowreel =
+    isExpanded && !isClutterPhase && (isPlayingAny || snap.isPausedMidSession);
+  const {
+    displayRatio: heroScrubDisplayRatio,
+    isScrubbing: isHeroScrubbing,
+    eventHandlers: heroScrubHandlers,
+  } = useAudioTrackScrubber({
+    trackRef: heroScrubberRef,
+    engineRatio: filmProgressPct / 100,
+    isInteractive: canScrubHeroShowreel,
+    stepRatio: 0.05,
+    onScrubStart: () => void contrastAudioEngine.preload(),
+    onCommitRatio: (ratio) => contrastAudioEngine.seekToRatio(ratio),
+  });
+
   const effectiveVolumePct = snap.isMuted ? 0 : Math.round(snap.volume * 100);
   const canRestartCrashTest =
     isExpanded ||
@@ -700,7 +717,7 @@ export function HeroKotoLens({
                         ? 'Без звука'
                         : `${effectiveVolumePct}%`
                     }
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer touch-none"
                   />
                   <div
                     aria-hidden="true"
@@ -797,20 +814,60 @@ export function HeroKotoLens({
             </div>
           </div>
 
-          {/* Тонкая линия прогресса воспроизведения по нижнему краю */}
+          {/* Интерактивная полоса перемотки шоурила (при раскрытой сцене) или индикатор прогресса клаттера */}
           {(isPlayingAny || snap.isPausedMidSession) && (
             <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-x-0 bottom-0 z-30 h-0.5 bg-white/12 overflow-hidden"
+              ref={heroScrubberRef}
+              data-testid="hero-showreel-scrubber"
+              data-lens-interactive={canScrubHeroShowreel ? 'true' : undefined}
+              role={canScrubHeroShowreel ? 'slider' : 'progressbar'}
+              tabIndex={canScrubHeroShowreel ? 0 : undefined}
+              aria-label={
+                canScrubHeroShowreel
+                  ? 'Перемотка шоурила FMWorks'
+                  : 'Прогресс эфирного блока'
+              }
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(
+                isClutterPhase ? clutterProgressPct : heroScrubDisplayRatio * 100
+              )}
+              aria-valuetext={
+                isClutterPhase
+                  ? `${formatAudioTime(Math.floor(snap.crashElapsedSec))} из ${formatAudioTime(
+                      Math.round(activeClutterDur)
+                    )}`
+                  : `${formatAudioTime(
+                      Math.floor(heroScrubDisplayRatio * relativeFilmDurSec)
+                    )} из ${formatAudioTime(Math.round(relativeFilmDurSec))}`
+              }
+              {...heroScrubHandlers}
+              className={`absolute inset-x-0 bottom-0 z-30 h-5 flex items-end select-none ${
+                canScrubHeroShowreel
+                  ? 'cursor-pointer touch-none group/heroscrub'
+                  : 'pointer-events-none'
+              }`}
             >
-              <div
-                style={{
-                  transform: `scaleX(${
-                    (isClutterPhase ? clutterProgressPct : filmProgressPct) / 100
-                  })`,
-                }}
-                className="w-full h-full bg-[#FF4820] origin-left transition-transform duration-150"
-              />
+              <div className="pointer-events-none relative w-full h-1 sm:h-0.5 group-hover/heroscrub:h-1.5 bg-white/14 transition-all">
+                <div
+                  style={{
+                    width: `${
+                      isClutterPhase ? clutterProgressPct : heroScrubDisplayRatio * 100
+                    }%`,
+                  }}
+                  className="h-full bg-[#FF4820]"
+                />
+                {canScrubHeroShowreel && (
+                  <div
+                    style={{ left: `${heroScrubDisplayRatio * 100}%` }}
+                    className={`absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white ring-2 ring-[#FF4820] shadow-sm transition-transform ${
+                      isHeroScrubbing
+                        ? 'w-3.5 h-3.5 scale-110'
+                        : 'w-2.5 h-2.5 sm:opacity-0 sm:group-hover/heroscrub:opacity-100'
+                    }`}
+                  />
+                )}
+              </div>
             </div>
           )}
         </div>

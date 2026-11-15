@@ -8,8 +8,14 @@ import {
   computeCaseSpectrumBands,
   getCasePreviewWindow,
 } from '../data/casesData';
-import { createSafeAudioContext } from './audioContextHelper';
-import { contrastAudioEngine } from './contrastAudioEngine';
+import {
+  createSafeAudioContext,
+  unlockAudioContextOnGesture,
+} from './audioContextHelper';
+import {
+  claimExclusiveAudioFocus,
+  onExclusiveAudioFocusClaimed,
+} from './audioFocusCoordinator';
 
 export interface CasePlayerSnapshot {
   activeCase: BrandCasePoster | null;
@@ -52,11 +58,12 @@ class CasePlayerEngine {
   private playbackMode: CasePlaybackMode | null = null;
   private startCtxTime = 0;
   private durationSec = 15;
+  private pendingSeekOffsetSec: number | null = null;
   private listeners = new Set<CasePlayerListener>();
 
   constructor() {
-    contrastAudioEngine.onBeforeStart(() => {
-      if (this.isPlaying) {
+    onExclusiveAudioFocusClaimed((channel) => {
+      if (channel !== 'case_player' && this.isPlaying) {
         this.stop();
       }
     });
@@ -112,7 +119,9 @@ class CasePlayerEngine {
     }
 
     let elapsed = 0;
-    if (this.htmlAudio) {
+    if (this.pendingSeekOffsetSec !== null) {
+      elapsed = this.pendingSeekOffsetSec;
+    } else if (this.htmlAudio) {
       elapsed = Math.max(0, this.htmlAudio.currentTime - this.clipStartSec);
     } else if (this.ctx) {
       elapsed = Math.max(0, this.ctx.currentTime - this.startCtxTime);
@@ -243,6 +252,9 @@ class CasePlayerEngine {
     this.activeCase = null;
     this.isPlaying = false;
     this.playbackMode = null;
+    this.clipStartSec = 0;
+    this.clipEndSec = null;
+    this.pendingSeekOffsetSec = null;
     this.emit();
   }
 
@@ -262,7 +274,7 @@ class CasePlayerEngine {
       return;
     }
 
-    contrastAudioEngine.stopAll();
+    claimExclusiveAudioFocus('case_player');
     this.stop();
 
     const win = getCasePreviewWindow(item);
@@ -398,9 +410,83 @@ class CasePlayerEngine {
       this.stop();
       return;
     }
+    this.startFullCaseAtOffset(item, 0);
+  }
 
-    // Останавливаем сцену первого экрана и любое активное превью
-    contrastAudioEngine.stopAll();
+  public seekToRatio(ratio: number, targetCase?: BrandCasePoster): void {
+    const item = targetCase ?? this.activeCase;
+    if (!item) return;
+
+    const clampedRatio = Math.max(
+      0,
+      Math.min(0.992, Number.isFinite(ratio) ? ratio : 0)
+    );
+    const clipStart = item.clipStartSec ?? 0;
+    const clipEnd = item.clipEndSec ?? null;
+    const effectiveDur =
+      clipEnd !== null
+        ? Math.max(1, Math.round(clipEnd - clipStart))
+        : Math.max(1, item.durationSec);
+    const targetOffsetSec = clampedRatio * effectiveDur;
+
+    // Если этот кейс уже играет в полном режиме — перематываем на месте без пересоздания плеера
+    if (
+      this.isPlaying &&
+      this.playbackMode === 'full' &&
+      this.activeCase?.id === item.id &&
+      (this.htmlAudio || typeof Audio === 'undefined')
+    ) {
+      if (!this.htmlAudio) {
+        this.pendingSeekOffsetSec = Math.max(
+          0,
+          Math.min(Math.max(0, this.durationSec - 0.15), targetOffsetSec)
+        );
+        this.emit();
+        return;
+      }
+
+      const audio = this.htmlAudio;
+      const absTargetSec = this.clipStartSec + targetOffsetSec;
+      this.pendingSeekOffsetSec = targetOffsetSec;
+
+      const applyInPlaceSeek = () => {
+        if (this.htmlAudio !== audio) return;
+        try {
+          const maxAudioSec =
+            audio.duration && Number.isFinite(audio.duration)
+              ? Math.max(0, audio.duration - 0.12)
+              : absTargetSec;
+          audio.currentTime = Math.min(absTargetSec, maxAudioSec);
+          this.pendingSeekOffsetSec = null;
+        } catch {
+          // Оставляем pendingSeekOffsetSec до готовности метаданных
+        }
+        if (audio.paused) {
+          audio.play().catch(() => {});
+        }
+        this.emit();
+      };
+
+      if (audio.readyState >= 1) {
+        applyInPlaceSeek();
+      } else {
+        audio.addEventListener('loadedmetadata', applyInPlaceSeek, {
+          once: true,
+        });
+      }
+      this.emit();
+      return;
+    }
+
+    this.startFullCaseAtOffset(item, targetOffsetSec);
+  }
+
+  private startFullCaseAtOffset(
+    item: BrandCasePoster,
+    initialOffsetSec: number
+  ): void {
+    // Останавливаем конкурирующие источники звука и любое активное превью
+    claimExclusiveAudioFocus('case_player');
     this.stop();
 
     this.activeCase = item;
@@ -410,72 +496,92 @@ class CasePlayerEngine {
     this.durationSec =
       this.clipEndSec !== null
         ? Math.max(1, Math.round(this.clipEndSec - this.clipStartSec))
-        : item.durationSec;
+        : Math.max(1, item.durationSec);
+    const clampedOffset = Math.max(
+      0,
+      Math.min(Math.max(0, this.durationSec - 0.15), initialOffsetSec)
+    );
+    this.pendingSeekOffsetSec = clampedOffset > 0 ? clampedOffset : null;
     this.isPlaying = true;
 
     if (item.audioUrl) {
-      // Воспроизводим студийный WAV напрямую через HTMLAudioElement (100% чистый тракт без потерь)
-      const audio = new Audio(item.audioUrl);
-      audio.preload = 'auto';
-      audio.volume = 1.0;
-      this.htmlAudio = audio;
+      if (typeof Audio !== 'undefined') {
+        const audio = new Audio(item.audioUrl);
+        audio.preload = 'auto';
+        audio.volume = 1.0;
+        this.htmlAudio = audio;
 
-      const startAt = this.clipStartSec;
-      const launchAudio = () => {
-        if (this.htmlAudio !== audio) return;
-        if (startAt > 0) {
-          try {
-            audio.currentTime = startAt;
-          } catch {
-            // Ignore seek before metadata
+        const startAt = this.clipStartSec + clampedOffset;
+        const launchAudio = () => {
+          if (this.htmlAudio !== audio) return;
+          if (
+            this.clipEndSec === null &&
+            audio.duration &&
+            Number.isFinite(audio.duration)
+          ) {
+            this.durationSec = Math.round(audio.duration);
           }
-        }
-        if (this.clipEndSec === null && audio.duration && Number.isFinite(audio.duration)) {
-          this.durationSec = Math.round(audio.duration);
-        }
-        audio.play().catch(() => this.stop());
-      };
+          if (startAt > 0) {
+            try {
+              const maxAudioSec =
+                audio.duration && Number.isFinite(audio.duration)
+                  ? Math.max(0, audio.duration - 0.12)
+                  : startAt;
+              audio.currentTime = Math.min(startAt, maxAudioSec);
+            } catch {
+              // Ignore seek before metadata
+            }
+          }
+          this.pendingSeekOffsetSec = null;
+          audio.play().catch(() => this.stop());
+        };
 
-      if (audio.readyState >= 1) {
-        launchAudio();
-      } else {
-        audio.addEventListener('loadedmetadata', launchAudio, { once: true });
-        audio.load();
+        if (audio.readyState >= 1) {
+          launchAudio();
+        } else {
+          audio.addEventListener('loadedmetadata', launchAudio, { once: true });
+          audio.load();
+        }
+
+        audio.addEventListener('ended', () => this.stop());
       }
-
-      audio.addEventListener('ended', () => this.stop());
-    } else {
+    } else if (typeof window !== 'undefined') {
       const ctx = this.ensureContext();
+      unlockAudioContextOnGesture(ctx);
       if (ctx && this.masterGain) {
-        this.startCtxTime = ctx.currentTime;
+        const remainingSec = Math.max(0.4, this.durationSec - clampedOffset);
+        this.startCtxTime = ctx.currentTime - clampedOffset;
+        this.pendingSeekOffsetSec = null;
         this.masterGain.gain.cancelScheduledValues(ctx.currentTime);
         this.masterGain.gain.setValueAtTime(0.001, ctx.currentTime);
-        this.masterGain.gain.linearRampToValueAtTime(0.82, ctx.currentTime + 0.1);
+        this.masterGain.gain.linearRampToValueAtTime(0.82, ctx.currentTime + 0.08);
 
-        this.scheduleCaseComposition(ctx, this.masterGain, item.id, item.durationSec);
+        this.scheduleCaseComposition(ctx, this.masterGain, item.id, remainingSec);
 
         const finishTimer = window.setTimeout(() => {
           if (this.activeCase?.id === item.id) {
             this.stop();
           }
-        }, item.durationSec * 1000 + 120);
+        }, remainingSec * 1000 + 120);
         this.timers.push(finishTimer);
       }
     }
 
     this.emit();
-    this.intervalId = window.setInterval(() => {
-      if (!this.isPlaying) return;
-      if (
-        this.htmlAudio &&
-        this.clipEndSec !== null &&
-        this.htmlAudio.currentTime >= this.clipEndSec
-      ) {
-        this.stop();
-        return;
-      }
-      this.emit();
-    }, 65);
+    if (typeof window !== 'undefined') {
+      this.intervalId = window.setInterval(() => {
+        if (!this.isPlaying) return;
+        if (
+          this.htmlAudio &&
+          this.clipEndSec !== null &&
+          this.htmlAudio.currentTime >= this.clipEndSec
+        ) {
+          this.stop();
+          return;
+        }
+        this.emit();
+      }, 65);
+    }
   }
 
   public playNextCase(orderedList: BrandCasePoster[] = BRAND_CASES): void {

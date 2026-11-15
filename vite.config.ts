@@ -26,6 +26,10 @@ export default defineConfig(() => {
       },
     },
     build: {
+      sourcemap: false,
+      target: 'es2020',
+      cssCodeSplit: true,
+      assetsInlineLimit: 4096,
       rollupOptions: {
         output: {
           manualChunks(id) {
@@ -38,6 +42,16 @@ export default defineConfig(() => {
             }
             if (id.includes('lucide-react')) {
               return 'icons-vendor';
+            }
+            if (id.includes('qrcode') || id.includes('pngjs')) {
+              return 'qr-vendor';
+            }
+            if (
+              id.includes('recharts') ||
+              id.includes('d3-') ||
+              id.includes('victory-vendor')
+            ) {
+              return 'charts-vendor';
             }
             return undefined;
           },

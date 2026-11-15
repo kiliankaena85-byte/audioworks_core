@@ -4,8 +4,10 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   buildWebpOutputFilePath,
+  deriveResponsiveWebpSrcSet,
   deriveWebpUrl,
   resolveImageLoadingProps,
+  STUDIO_RESPONSIVE_WEBP_TIERS,
 } from './imageOptimization.ts';
 
 test('deriveWebpUrl преобразует локальные JPEG/PNG пути в .webp и пропускает внешние URL, SVG и data URI', () => {
@@ -25,6 +27,31 @@ test('deriveWebpUrl преобразует локальные JPEG/PNG пути 
   assert.equal(deriveWebpUrl('https://example.com/photo.jpg'), null);
   assert.equal(deriveWebpUrl('data:image/png;base64,iVBORw0KGgo='), null);
   assert.equal(deriveWebpUrl(''), null);
+});
+
+test('deriveResponsiveWebpSrcSet формирует адаптивные 480w/800w/1280w WebP для студийных фото и одиночный WebP для аватаров/CMS', () => {
+  const heroSet = deriveResponsiveWebpSrcSet(
+    '/src/assets/images/hero_studio_editorial_1794399404984.jpg'
+  );
+  assert.deepEqual(heroSet, {
+    isMultiWidth: true,
+    srcSet:
+      '/src/assets/images/hero_studio_editorial_1794399404984-480w.webp 480w, /src/assets/images/hero_studio_editorial_1794399404984-800w.webp 800w, /src/assets/images/hero_studio_editorial_1794399404984.webp 1280w',
+  });
+
+  const avatarSet = deriveResponsiveWebpSrcSet(
+    '/src/assets/images/avatar_vermilion_wave_1794695842553.jpg'
+  );
+  assert.deepEqual(avatarSet, {
+    isMultiWidth: false,
+    srcSet: '/src/assets/images/avatar_vermilion_wave_1794695842553.webp',
+  });
+
+  const cmsSet = deriveResponsiveWebpSrcSet('/assets/cms/cover.png?v=5');
+  assert.deepEqual(cmsSet, {
+    isMultiWidth: false,
+    srcSet: '/assets/cms/cover.webp?v=5',
+  });
 });
 
 test('resolveImageLoadingProps по умолчанию задаёт loading="lazy" и decoding="async"', () => {
@@ -50,7 +77,7 @@ test('resolveImageLoadingProps по умолчанию задаёт loading="laz
   );
 });
 
-test('buildWebpOutputFilePath и все студийные .jpg изображения в src/assets/images имеют сгенерированные .webp версии', () => {
+test('buildWebpOutputFilePath и все студийные .jpg изображения в src/assets/images имеют сгенерированные адаптивные .webp версии', () => {
   assert.equal(
     buildWebpOutputFilePath('/tmp/cover.JPEG'),
     '/tmp/cover.webp'
@@ -71,5 +98,18 @@ test('buildWebpOutputFilePath и все студийные .jpg изображе
       `Ожидалась WebP-версия для ${file}: ${webpName}`
     );
     assert.ok(fs.statSync(webpAbs).size > 0);
+
+    if (!file.startsWith('avatar_')) {
+      for (const tier of STUDIO_RESPONSIVE_WEBP_TIERS) {
+        const tierName = file.replace(/\.(jpe?g|png)$/i, `-${tier}w.webp`);
+        const tierAbs = path.join(imagesDir, tierName);
+        assert.equal(
+          fs.existsSync(tierAbs),
+          true,
+          `Ожидался адаптивный WebP ${tier}w для ${file}: ${tierName}`
+        );
+        assert.ok(fs.statSync(tierAbs).size > 0);
+      }
+    }
   }
 });

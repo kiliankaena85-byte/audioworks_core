@@ -1,4 +1,4 @@
-export const AUDIOWORKS_WAV_URL = '/assets/aistudio/Audioworks_75c6023f.wav';
+export const AUDIOWORKS_WAV_URL = '/assets/aistudio/Audioworks_75c6023f.mp3';
 export const AUDIOWORKS_TOTAL_DURATION_SEC = 78.96;
 export const AUDIOWORKS_FOCUS_ENTRY_SEC = 6.1;
 

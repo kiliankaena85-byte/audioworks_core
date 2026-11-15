@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   ArrowUpRight,
   AudioWaveform,
+  BarChart3,
   CheckCircle2,
   ClipboardList,
   FileText,
@@ -18,7 +19,7 @@ import {
   Sun,
   Type,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import { useSiteTextBlocks } from '../../cms/SiteTextBlocksContext';
 import { useStudioCms } from '../../cms/StudioCmsContext';
 import { BrandDomainVariant } from '../../data/brandKitData';
@@ -41,8 +42,15 @@ import { AdminSiteCopyPanel } from './AdminSiteCopyPanel';
 import { AdminTestimonialsPanel } from './AdminTestimonialsPanel';
 import { AdminTextBlocksPanel } from './AdminTextBlocksPanel';
 
+const LazyAdminStudioAnalyticsPanel = lazy(() =>
+  import('./AdminStudioAnalyticsPanel').then((mod) => ({
+    default: mod.AdminStudioAnalyticsPanel,
+  }))
+);
+
 export type AdminSectionTab =
   | 'orders_crm'
+  | 'analytics'
   | 'science_plan'
   | 'hero_stage'
   | 'portfolio'
@@ -212,6 +220,11 @@ export function AdminWorkspace({
         ? 'Приём резервов эфира с таймером 4ч, генератор счёта-спецификации ЭДО и шлюзы доставки в Telegram и внешние CRM'
         : 'Приём студийных заказов аудиороликов, контроль SLA ответа продюсера, генератор счёта ЭДО и шлюзы в Telegram и CRM',
     },
+    analytics: {
+      label: 'Аналитика и конверсия',
+      subtitle:
+        'Графики конверсии заказов по месяцам, соблюдение SLA первого ответа (≤ 15 мин), сдача роликов с 1-го дубля и скорость этапов воронки',
+    },
     science_plan: {
       label: 'Научный план развития',
       subtitle:
@@ -263,6 +276,7 @@ export function AdminWorkspace({
   const isLiveTextTab = activeTab === 'text_blocks';
   const isOrdersOrScienceTab =
     activeTab === 'orders_crm' ||
+    activeTab === 'analytics' ||
     activeTab === 'science_plan' ||
     activeTab === 'laya_brand';
 
@@ -302,6 +316,25 @@ export function AdminWorkspace({
               <span className="inline-flex items-center gap-2.5">
                 <ClipboardList className="w-4 h-4 shrink-0" aria-hidden="true" />
                 <span>Заказы и воронка (CRM)</span>
+              </span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="admin-nav-analytics"
+              onClick={() => {
+                setActiveTab('analytics');
+                setSaveBanner(null);
+              }}
+              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
+                activeTab === 'analytics'
+                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+              }`}
+            >
+              <span className="inline-flex items-center gap-2.5">
+                <BarChart3 className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span>Аналитика и конверсия</span>
               </span>
             </button>
 
@@ -760,6 +793,33 @@ export function AdminWorkspace({
             <AdminOrdersCrmPanel
               initialSubView={activeTab === 'science_plan' ? 'science' : 'funnel'}
             />
+          )}
+
+          {activeTab === 'analytics' && (
+            <Suspense
+              fallback={
+                <div className="space-y-6">
+                  <div className="h-[62px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse" />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                    {[0, 1, 2, 3].map((idx) => (
+                      <div
+                        key={idx}
+                        className="h-[116px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse"
+                      />
+                    ))}
+                  </div>
+                  <div className="h-[390px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse" />
+                </div>
+              }
+            >
+              <LazyAdminStudioAnalyticsPanel
+                isDark={isDark}
+                onOpenOrdersFunnel={() => {
+                  setActiveTab('orders_crm');
+                  setSaveBanner(null);
+                }}
+              />
+            </Suspense>
           )}
 
           {activeTab === 'laya_brand' && (

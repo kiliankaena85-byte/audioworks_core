@@ -9,8 +9,10 @@ import {
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { casePlayerEngine } from '../audio/casePlayerEngine';
-import { contrastAudioEngine } from '../audio/contrastAudioEngine';
+import {
+  lazyCasePlayerEngine as casePlayerEngine,
+  lazyContrastAudioEngine as contrastAudioEngine,
+} from '../audio/lazyAudioEngines';
 import { duelAudioStore } from '../audio/duelAudioStore';
 import { useStudioCms } from '../cms/StudioCmsContext';
 import { BRAND_DOMAIN_OPTIONS, BrandDomainVariant } from '../data/brandKitData';

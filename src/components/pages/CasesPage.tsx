@@ -8,7 +8,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { useLayoutEffect } from 'react';
-import { CasePlayerSnapshot } from '../../audio/casePlayerEngine';
+import type { CasePlayerSnapshot } from '../../audio/lazyAudioEngines';
 import { useStudioCms } from '../../cms/StudioCmsContext';
 import { formatAudioTime } from '../../data/audioworksCommercial';
 import { BrandCasePoster, CaseId } from '../../data/casesData';
@@ -30,6 +30,7 @@ import { formatNumberSpaced, radioInventoryStore } from '../../data/radioInvento
 import { CasesGallery } from '../CasesGallery';
 import { OgSharePreviewCard } from '../OgSharePreviewCard';
 import { OptimizedImage } from '../OptimizedImage';
+import { PremiumAcousticWaveform } from '../PremiumAcousticWaveform';
 
 interface CasesPageProps {
   caseSlug?: string;
@@ -38,6 +39,8 @@ interface CasesPageProps {
   navigationTick?: number;
   playerSnap: CasePlayerSnapshot;
   onToggleCase: (item: BrandCasePoster) => void;
+  onSeekCase?: (item: BrandCasePoster, ratio: number) => void;
+  onWarmCasePlayer?: () => void;
   onStartPreview: (item: BrandCasePoster) => void;
   onStopPreview: (caseId: CaseId) => void;
   onNavigate: (route: PlatformRoute) => void;
@@ -50,6 +53,8 @@ export function CasesPage({
   navigationTick = 0,
   playerSnap,
   onToggleCase,
+  onSeekCase,
+  onWarmCasePlayer,
   onStartPreview,
   onStopPreview,
   onNavigate,
@@ -90,6 +95,8 @@ export function CasesPage({
         allCases={allCases}
         playerSnap={playerSnap}
         onToggleCase={onToggleCase}
+        onSeekCase={onSeekCase}
+        onWarmCasePlayer={onWarmCasePlayer}
         onNavigate={onNavigate}
       />
     );
@@ -131,6 +138,8 @@ export function CasesPage({
       <CasesGallery
         playerSnap={playerSnap}
         onToggleCase={onToggleCase}
+        onSeekCase={onSeekCase}
+        onWarmCasePlayer={onWarmCasePlayer}
         onStartPreview={onStartPreview}
         onStopPreview={onStopPreview}
         onOpenCaseDetail={(id) => onNavigate({ kind: 'case-detail', caseSlug: id })}
@@ -226,6 +235,8 @@ interface CaseDetailSubpageProps {
   allCases: readonly BrandCasePoster[];
   playerSnap: CasePlayerSnapshot;
   onToggleCase: (item: BrandCasePoster) => void;
+  onSeekCase?: (item: BrandCasePoster, ratio: number) => void;
+  onWarmCasePlayer?: () => void;
   onNavigate: (route: PlatformRoute) => void;
 }
 
@@ -234,6 +245,8 @@ function CaseDetailSubpage({
   allCases,
   playerSnap,
   onToggleCase,
+  onSeekCase,
+  onWarmCasePlayer,
   onNavigate,
 }: CaseDetailSubpageProps) {
   if (!item) {
@@ -321,36 +334,59 @@ function CaseDetailSubpage({
               </p>
             </div>
 
-            <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 pt-2 min-w-0">
-              <button
-                type="button"
-                data-testid="case-detail-play-btn"
-                onClick={() => onToggleCase(item)}
-                className={`w-full sm:w-auto min-h-[48px] px-5 sm:px-6 py-3 rounded-full inline-flex items-center justify-center gap-2.5 text-sm font-semibold text-center leading-snug transition-colors cursor-pointer sm:whitespace-nowrap ${
+            <div className="space-y-4 pt-2 min-w-0">
+              <PremiumAcousticWaveform
+                seedKey={item.id}
+                isActive={isPlayingThis}
+                progressRatio={isPlayingThis ? playerSnap.progress : 0}
+                spectrumBands={playerSnap.spectrumBands}
+                variant="dark-surface"
+                heightClass="h-11 sm:h-10"
+                onScrubStart={onWarmCasePlayer}
+                onSeekRatio={
+                  onSeekCase ? (ratio) => onSeekCase(item, ratio) : undefined
+                }
+                seekAriaLabel={`Перемотка ролика: ${item.client}`}
+                progressBarTestId="case-detail-scrubber"
+                ariaValueNow={isPlayingThis ? Math.round(playerSnap.progress * 100) : 0}
+                ariaValueText={
                   isPlayingThis
-                    ? 'bg-[#FF4820] text-white'
-                    : 'bg-white text-[#111111] hover:bg-[#FF4820] hover:text-white'
-                }`}
-              >
-                {isPlayingThis ? (
-                  <Pause className="w-4 h-4 fill-current shrink-0" aria-hidden="true" />
-                ) : (
-                  <Play className="w-4 h-4 fill-current shrink-0" aria-hidden="true" />
-                )}
-                <span className="tabular-nums">
-                  {isPlayingThis
-                    ? `Пауза · ${formatAudioTime(playerSnap.currentTimeSec)}`
-                    : `Слушать эфирный ролик · ${formatAudioTime(item.durationSec)}`}
-                </span>
-              </button>
+                    ? `${formatAudioTime(playerSnap.currentTimeSec)} из ${formatAudioTime(item.durationSec)}`
+                    : `Нажмите или проведите для прослушивания с нужной секунды (${formatAudioTime(item.durationSec)})`
+                }
+              />
 
-              <button
-                type="button"
-                onClick={handleOrderSimilar}
-                className="w-full sm:w-auto min-h-[48px] px-5 sm:px-6 py-3 rounded-full border border-white/24 hover:border-white text-white text-sm font-semibold text-center leading-snug transition-colors cursor-pointer sm:whitespace-nowrap"
-              >
-                Заказать ролик такого уровня
-              </button>
+              <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 min-w-0">
+                <button
+                  type="button"
+                  data-testid="case-detail-play-btn"
+                  onClick={() => onToggleCase(item)}
+                  className={`w-full sm:w-auto min-h-[48px] px-5 sm:px-6 py-3 rounded-full inline-flex items-center justify-center gap-2.5 text-sm font-semibold text-center leading-snug transition-colors cursor-pointer sm:whitespace-nowrap ${
+                    isPlayingThis
+                      ? 'bg-[#FF4820] text-white'
+                      : 'bg-white text-[#111111] hover:bg-[#FF4820] hover:text-white'
+                  }`}
+                >
+                  {isPlayingThis ? (
+                    <Pause className="w-4 h-4 fill-current shrink-0" aria-hidden="true" />
+                  ) : (
+                    <Play className="w-4 h-4 fill-current shrink-0" aria-hidden="true" />
+                  )}
+                  <span className="tabular-nums">
+                    {isPlayingThis
+                      ? `Пауза · ${formatAudioTime(playerSnap.currentTimeSec)}`
+                      : `Слушать эфирный ролик · ${formatAudioTime(item.durationSec)}`}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleOrderSimilar}
+                  className="w-full sm:w-auto min-h-[48px] px-5 sm:px-6 py-3 rounded-full border border-white/24 hover:border-white text-white text-sm font-semibold text-center leading-snug transition-colors cursor-pointer sm:whitespace-nowrap"
+                >
+                  Заказать ролик такого уровня
+                </button>
+              </div>
             </div>
           </div>
 

@@ -557,7 +557,7 @@ export function resolveHeroStagePlayback(
       sourceKind: 'default_reel',
       audioUrl: AUDIOWORKS_WAV_URL,
       label: hero.focusCustomLabel || 'Эталонный шоурил FMWorks',
-      fileName: 'Audioworks_75c6023f.wav',
+      fileName: 'Audioworks_75c6023f.mp3',
       startSec,
       endSec,
       durationSec: dur,

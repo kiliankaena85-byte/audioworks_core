@@ -2,7 +2,8 @@ import type { MotionStyle } from 'motion/react';
 import { motion } from 'motion/react';
 import React, { useEffect, useState } from 'react';
 import {
-  deriveWebpUrl,
+  DEFAULT_ADAPTIVE_CARD_SIZES,
+  deriveResponsiveWebpSrcSet,
   resolveImageLoadingProps,
 } from '../utils/imageOptimization.ts';
 
@@ -28,8 +29,9 @@ export interface OptimizedImageProps {
 }
 
 /**
- * Универсальная обёртка изображений для FMWorks:
- * - использует `<picture>` с приоритетным `<source type="image/webp">` и автоматическим фолбэком на оригинал;
+ * Универсальная адаптивная обёртка изображений для FMWorks:
+ * - использует `<picture>` с многоуровневым `<source type="image/webp" srcSet="... 480w, ... 800w, ... 1280w">`
+ *   для экономии мобильного трафика без потери резкости на Retina/Desktop и автоматическим фолбэком на оригинал;
  * - по умолчанию выставляет `loading="lazy"` и `decoding="async"` для Core Web Vitals, Lighthouse и Яндекса;
  * - поддерживает `motionStyle` для параллакс-эффектов без потери совместимости с `<picture>`.
  */
@@ -63,7 +65,17 @@ export function OptimizedImage({
     setFallbackApplied(false);
   }, [src]);
 
-  const webpCandidate = !webpDisabled ? deriveWebpUrl(activeSrc) : null;
+  const webpResponsive = !webpDisabled
+    ? deriveResponsiveWebpSrcSet(activeSrc)
+    : null;
+  const resolvedSizes =
+    sizes ??
+    (webpResponsive?.isMultiWidth
+      ? priority
+        ? '100vw'
+        : DEFAULT_ADAPTIVE_CARD_SIZES
+      : undefined);
+
   const resolvedLoading = resolveImageLoadingProps({
     priority,
     loading,
@@ -72,7 +84,7 @@ export function OptimizedImage({
   });
 
   const handleError: React.ReactEventHandler<HTMLImageElement> = (event) => {
-    if (webpCandidate && !webpDisabled) {
+    if (webpResponsive && !webpDisabled) {
       setWebpDisabled(true);
       return;
     }
@@ -87,8 +99,12 @@ export function OptimizedImage({
 
   return (
     <picture className="contents">
-      {webpCandidate && (
-        <source srcSet={webpCandidate} type="image/webp" sizes={sizes} />
+      {webpResponsive && (
+        <source
+          srcSet={webpResponsive.srcSet}
+          type="image/webp"
+          sizes={resolvedSizes}
+        />
       )}
       {motionStyle ? (
         <motion.img

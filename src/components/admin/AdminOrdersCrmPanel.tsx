@@ -1,5 +1,6 @@
 import {
   ArrowRight,
+  BarChart3,
   Building2,
   CheckCircle2,
   Clock,
@@ -15,7 +16,15 @@ import {
   UserX,
   Webhook,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   formatFileSizeReadable,
   OrderDeliverableKind,
@@ -66,10 +75,18 @@ import {
 import { studioCmsStore } from '../../cms/studioCmsStore';
 import { AdminProductionKanbanView } from './AdminProductionKanbanView';
 import { AdminScientificPlanView } from './AdminScientificPlanView';
+import { OrderStageHistoryTimeline } from './OrderStageHistoryTimeline';
+
+const LazyAdminStudioAnalyticsPanel = lazy(() =>
+  import('./AdminStudioAnalyticsPanel').then((mod) => ({
+    default: mod.AdminStudioAnalyticsPanel,
+  }))
+);
 
 export type OrdersCrmSubView =
   | 'funnel'
   | 'kanban'
+  | 'analytics'
   | 'channels'
   | 'science'
   | 'legal';
@@ -82,8 +99,14 @@ interface AdminDispatchSettingsResponse {
   telegram: {
     enabled: boolean;
     hasBotToken: boolean;
+    botTokenSource?: 'env' | 'legacy_store' | 'none';
+    envBotTokenConfigured?: boolean;
     maskedBotToken: string;
     chatId: string;
+    hasChatId?: boolean;
+    chatIdSource?: 'admin' | 'auto_discovered' | 'env' | 'none';
+    envChatIdConfigured?: boolean;
+    discoveredChatTitle?: string;
     notifyOnNewOrder: boolean;
     notifyOnStageChange: boolean;
     maskPdnInExternalAlerts?: boolean;
@@ -224,12 +247,20 @@ export function AdminOrdersCrmPanel({
 
   // Состояние формы настроек шлюзов Telegram + Webhook
   const [tgEnabled, setTgEnabled] = useState<boolean>(false);
-  const [tgBotTokenInput, setTgBotTokenInput] = useState<string>('');
+  const [tgMaskedToken, setTgMaskedToken] = useState<string>('');
   const [tgHasToken, setTgHasToken] = useState<boolean>(false);
+  const [tgTokenSource, setTgTokenSource] = useState<
+    'env' | 'legacy_store' | 'none'
+  >('none');
   const [tgChatId, setTgChatId] = useState<string>('');
+  const [tgDiscoveredChatTitle, setTgDiscoveredChatTitle] = useState<string>('');
   const [tgNotifyNew, setTgNotifyNew] = useState<boolean>(true);
   const [tgNotifyStage, setTgNotifyStage] = useState<boolean>(true);
   const [tgMaskPdn, setTgMaskPdn] = useState<boolean>(true);
+  const [tgPreviewEvent, setTgPreviewEvent] = useState<
+    'order.stage_changed' | 'order.created'
+  >('order.stage_changed');
+  const [isDetectingTgChat, setIsDetectingTgChat] = useState<boolean>(false);
 
   const [whEnabled, setWhEnabled] = useState<boolean>(false);
   const [whEndpointUrl, setWhEndpointUrl] = useState<string>('');
@@ -243,8 +274,10 @@ export function AdminOrdersCrmPanel({
   const applyServerSettings = useCallback((settings: AdminDispatchSettingsResponse) => {
     setTgEnabled(settings.telegram.enabled);
     setTgHasToken(settings.telegram.hasBotToken);
-    setTgBotTokenInput(settings.telegram.maskedBotToken || '');
+    setTgTokenSource(settings.telegram.botTokenSource ?? 'none');
+    setTgMaskedToken(settings.telegram.maskedBotToken || '');
     setTgChatId(settings.telegram.chatId || '');
+    setTgDiscoveredChatTitle(settings.telegram.discoveredChatTitle || '');
     setTgNotifyNew(settings.telegram.notifyOnNewOrder);
     setTgNotifyStage(settings.telegram.notifyOnStageChange);
     setTgMaskPdn(settings.telegram.maskPdnInExternalAlerts !== false);
@@ -427,6 +460,11 @@ export function AdminOrdersCrmPanel({
       const json = (await res.json()) as {
         ok: boolean;
         order?: CrmOrderRecord;
+        dispatchLogs?: DispatchAttemptLog[];
+        dispatchResult?: {
+          telegramResult?: { state: ExternalDeliveryState; detail: string };
+          webhookResult?: { state: ExternalDeliveryState; detail: string };
+        } | null;
         soundEngineerEmail?: SoundEngineerEmailNotificationRecord | null;
         soundEngineerEmails?: SoundEngineerEmailNotificationRecord[];
         error?: string;
@@ -436,6 +474,9 @@ export function AdminOrdersCrmPanel({
       }
       const updated = json.order;
       setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+      if (Array.isArray(json.dispatchLogs)) {
+        setDispatchLogs(json.dispatchLogs);
+      }
       if (Array.isArray(json.soundEngineerEmails)) {
         setSoundEngineerEmails(json.soundEngineerEmails);
       } else if (json.soundEngineerEmail) {
@@ -448,10 +489,22 @@ export function AdminOrdersCrmPanel({
       }
       setEdoModalOrder((prev) => (prev && prev.id === updated.id ? updated : prev));
       if (successMessage) {
+        const tgResult = json.dispatchResult?.telegramResult;
+        const tgSuffix =
+          payload.stage && tgResult
+            ? tgResult.state === 'delivered'
+              ? ' Мгновенное уведомление о смене статуса доставлено в Telegram студии.'
+              : tgResult.state === 'failed'
+                ? ` Ошибка Telegram: ${tgResult.detail}.`
+                : ''
+            : '';
         const emailSuffix = json.soundEngineerEmail
           ? ` Уведомление звукорежиссёру (${json.soundEngineerEmail.engineerEmail}) с кнопкой «${SOUND_ENGINEER_EMAIL_CTA_LABEL}» отправлено.`
           : '';
-        setFeedbackBanner({ kind: 'ok', text: `${successMessage}${emailSuffix}` });
+        setFeedbackBanner({
+          kind: 'ok',
+          text: `${successMessage}${tgSuffix}${emailSuffix}`,
+        });
       }
     } catch (err) {
       setFeedbackBanner({
@@ -658,7 +711,6 @@ export function AdminOrdersCrmPanel({
         body: JSON.stringify({
           telegram: {
             enabled: tgEnabled,
-            botToken: tgBotTokenInput,
             chatId: tgChatId,
             notifyOnNewOrder: tgNotifyNew,
             notifyOnStageChange: tgNotifyStage,
@@ -699,6 +751,50 @@ export function AdminOrdersCrmPanel({
     }
   };
 
+  const handleDetectTelegramChat = async () => {
+    setIsDetectingTgChat(true);
+    setFeedbackBanner(null);
+    try {
+      const res = await fetch('/api/cms/orders-dispatch/detect-telegram-chat', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: studioCmsStore.getAuthHeaders(),
+      });
+      const json = (await res.json()) as {
+        ok: boolean;
+        discovered?: { chatId: string; chatTitle: string; chatType: string };
+        settings?: AdminDispatchSettingsResponse;
+        error?: string;
+      };
+      if (!res.ok || !json.ok || !json.discovered) {
+        throw new Error(
+          json.error ??
+            'Не удалось определить Chat ID. Отправьте боту /start в Telegram и повторите.'
+        );
+      }
+      if (json.settings) {
+        applyServerSettings(json.settings);
+      } else {
+        setTgChatId(json.discovered.chatId);
+        setTgDiscoveredChatTitle(json.discovered.chatTitle);
+      }
+      setFeedbackBanner({
+        kind: 'ok',
+        text: `Чат студии успешно привязан из Telegram: «${json.discovered.chatTitle}» (Chat ID: ${json.discovered.chatId}).`,
+      });
+    } catch (err) {
+      setFeedbackBanner({
+        kind: 'error',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Ошибка определения Chat ID через Telegram Bot API',
+      });
+    } finally {
+      setIsDetectingTgChat(false);
+    }
+  };
+
   const handleAnonymizeOrderPdn = async (order: CrmOrderRecord) => {
     setIsUpdatingOrder(true);
     setFeedbackBanner(null);
@@ -732,11 +828,13 @@ export function AdminOrdersCrmPanel({
     }
   };
 
-  const handleTestDispatchGateway = async () => {
+  const handleTestDispatchGateway = async (
+    testEvent: 'dispatch.test' | 'order.stage_changed' = 'order.stage_changed'
+  ) => {
     setIsTestingDispatch(true);
     setFeedbackBanner(null);
     try {
-      // Сначала сохраняем текущие поля формы, чтобы тест шёл по актуальному URL / токену
+      // Сначала сохраняем текущие настройки маршрутизации
       await fetch('/api/cms/orders-dispatch/settings', {
         method: 'PUT',
         credentials: 'same-origin',
@@ -747,7 +845,6 @@ export function AdminOrdersCrmPanel({
         body: JSON.stringify({
           telegram: {
             enabled: tgEnabled,
-            botToken: tgBotTokenInput,
             chatId: tgChatId,
             notifyOnNewOrder: tgNotifyNew,
             notifyOnStageChange: tgNotifyStage,
@@ -766,7 +863,14 @@ export function AdminOrdersCrmPanel({
       const res = await fetch('/api/cms/orders-dispatch/test', {
         method: 'POST',
         credentials: 'same-origin',
-        headers: studioCmsStore.getAuthHeaders(),
+        headers: {
+          'Content-Type': 'application/json',
+          ...studioCmsStore.getAuthHeaders(),
+        },
+        body: JSON.stringify({
+          event: testEvent,
+          orderId: selectedOrder?.id,
+        }),
       });
       const json = (await res.json()) as {
         ok: boolean;
@@ -788,7 +892,9 @@ export function AdminOrdersCrmPanel({
       const tgSummary = json.result?.telegramResult?.detail ?? '';
       setFeedbackBanner({
         kind: 'ok',
-        text: `Контрольная проверка выполнена. Telegram: ${tgSummary} · Webhook: ${whSummary}`,
+        text: `Контрольная проверка (${
+          testEvent === 'order.stage_changed' ? 'смена статуса' : 'новый заказ'
+        }) выполнена. Telegram: ${tgSummary} · Webhook: ${whSummary}`,
       });
     } catch (err) {
       setFeedbackBanner({
@@ -1007,6 +1113,22 @@ export function AdminOrdersCrmPanel({
           <button
             type="button"
             role="tab"
+            aria-selected={subView === 'analytics'}
+            data-testid="crm-subtab-analytics"
+            onClick={() => setSubView('analytics')}
+            className={`min-h-[40px] px-3.5 sm:px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 text-left ${
+              subView === 'analytics'
+                ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                : 'bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:text-[#111111] dark:hover:text-white'
+            }`}
+          >
+            <BarChart3 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+            <span>Аналитика и конверсия</span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
             aria-selected={subView === 'channels'}
             data-testid="crm-subtab-channels"
             onClick={() => setSubView('channels')}
@@ -1114,6 +1236,32 @@ export function AdminOrdersCrmPanel({
           onSoundEngineerEmailsUpdated={setSoundEngineerEmails}
           onFeedback={setFeedbackBanner}
         />
+      )}
+
+      {subView === 'analytics' && (
+        <Suspense
+          fallback={
+            <div className="space-y-6">
+              <div className="h-[62px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                {[0, 1, 2, 3].map((idx) => (
+                  <div
+                    key={idx}
+                    className="h-[116px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse"
+                  />
+                ))}
+              </div>
+              <div className="h-[390px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse" />
+            </div>
+          }
+        >
+          <LazyAdminStudioAnalyticsPanel
+            orders={orders}
+            isRefreshingExternal={isRefreshing}
+            onRefreshOrders={() => fetchOrdersCrm(false)}
+            onOpenOrdersFunnel={() => setSubView('funnel')}
+          />
+        </Suspense>
       )}
 
       {/* ===================================================================== */}
@@ -1449,6 +1597,27 @@ export function AdminOrdersCrmPanel({
                           );
                         })()}
                       </div>
+
+                      {/* Визуальная история перемещений заказа по этапам */}
+                      <OrderStageHistoryTimeline
+                        order={selectedOrder}
+                        assignedEngineerName={
+                          soundEngineers.find(
+                            (eng) =>
+                              eng.id ===
+                              selectedOrder.approvalWorkflow?.assignedEngineerId
+                          )?.name ?? null
+                        }
+                        isUpdating={isUpdatingOrder}
+                        onSelectStage={(targetStage) => {
+                          if (targetStage === selectedOrder.stage) return;
+                          void patchOrderOnServer(
+                            selectedOrder.id,
+                            { stage: targetStage },
+                            `Этап сделки #${selectedOrder.orderNumber} обновлён.`
+                          );
+                        }}
+                      />
 
                       {/* Спецификация медиаплана (радиостанции, хронометраж, выходы, OTS) */}
                       {snap ? (
@@ -2157,15 +2326,16 @@ export function AdminOrdersCrmPanel({
                 <div className="flex items-center justify-between gap-3 pb-3 border-b border-[#111111]/8 dark:border-white/8">
                   <div>
                     <h3 className="text-base font-bold text-[#111111] dark:text-[#F4F3EF]">
-                      Telegram-шлюз отдела продаж
+                      Telegram-шлюз студии
                     </h3>
                     <p className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                      Мгновенные алерты о новых 4-часовых резервах эфира
+                      Мгновенные уведомления при изменении статуса и создании заказов
                     </p>
                   </div>
                   <label className="inline-flex items-center gap-2 text-xs font-semibold cursor-pointer">
                     <input
                       type="checkbox"
+                      data-testid="crm-tg-enabled-checkbox"
                       checked={tgEnabled}
                       onChange={(e) => setTgEnabled(e.target.checked)}
                       className="accent-[#FF4820]"
@@ -2175,38 +2345,69 @@ export function AdminOrdersCrmPanel({
                 </div>
 
                 <div className="space-y-3 text-xs">
-                  <div className="space-y-1">
-                    <label
-                      htmlFor="tg-bot-token"
-                      className="block font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75"
-                    >
-                      Токен бота (@BotFather):
-                    </label>
-                    <input
-                      id="tg-bot-token"
-                      type="password"
-                      value={tgBotTokenInput}
-                      onChange={(e) => setTgBotTokenInput(e.target.value)}
-                      placeholder="123456789:AAH..."
-                      className="w-full min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
-                    />
+                  <div
+                    data-testid="crm-tg-env-token-status"
+                    className="rounded-xl p-3 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 space-y-1"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
+                        Серверный ключ <code>TELEGRAM_ORDERS_BOT_TOKEN</code>
+                      </span>
+                      <span
+                        className={`font-semibold ${
+                          tgHasToken
+                            ? 'text-[#16A34A] dark:text-[#4ADE80]'
+                            : 'text-[#D97706] dark:text-[#FBBF24]'
+                        }`}
+                      >
+                        {tgHasToken
+                          ? tgTokenSource === 'env'
+                            ? `Подключён из окружения · ${tgMaskedToken}`
+                            : `Подключён на сервере · ${tgMaskedToken}`
+                          : 'Ожидает настройки на сервере'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-[#111111]/64 dark:text-[#F4F3EF]/64">
+                      {tgHasToken
+                        ? 'Секретный токен считывается напрямую на сервере и не передаётся в браузер. При отсутствии Chat ID сервер автоматически определит рабочий чат после отправки боту команды /start.'
+                        : 'Задайте переменную окружения TELEGRAM_ORDERS_BOT_TOKEN (и при необходимости TELEGRAM_ORDERS_CHAT_ID) на сервере — отправка включится автоматически.'}
+                    </p>
                   </div>
 
                   <div className="space-y-1">
-                    <label
-                      htmlFor="tg-chat-id"
-                      className="block font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75"
-                    >
-                      Chat ID рабочей группы продюсеров:
-                    </label>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <label
+                        htmlFor="tg-chat-id"
+                        className="font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75"
+                      >
+                        Chat ID рабочей группы студии:
+                      </label>
+                      <button
+                        type="button"
+                        disabled={isDetectingTgChat}
+                        data-testid="crm-detect-tg-chat-btn"
+                        onClick={() => void handleDetectTelegramChat()}
+                        className="text-[11px] font-semibold text-[#FF4820] hover:underline disabled:opacity-50 cursor-pointer"
+                      >
+                        {isDetectingTgChat
+                          ? 'Поиск чата…'
+                          : 'Определить Chat ID из бота'}
+                      </button>
+                    </div>
                     <input
                       id="tg-chat-id"
+                      data-testid="crm-tg-chat-id-input"
                       type="text"
                       value={tgChatId}
                       onChange={(e) => setTgChatId(e.target.value)}
-                      placeholder="-1001987654321"
+                      placeholder="Автоопределение после /start или -1001987654321"
                       className="w-full min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
                     />
+                    {tgDiscoveredChatTitle && tgChatId && (
+                      <p className="text-[11px] text-[#16A34A] dark:text-[#4ADE80]">
+                        Привязанный чат: {tgDiscoveredChatTitle} · ID {tgChatId}
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex flex-col gap-2 pt-1">
@@ -2223,11 +2424,12 @@ export function AdminOrdersCrmPanel({
                       <label className="inline-flex items-center gap-2 cursor-pointer">
                         <input
                           type="checkbox"
+                          data-testid="crm-tg-notify-stage-checkbox"
                           checked={tgNotifyStage}
                           onChange={(e) => setTgNotifyStage(e.target.checked)}
                           className="accent-[#FF4820]"
                         />
-                        <span>Смена этапа сделки</span>
+                        <span>Изменение статуса заказа</span>
                       </label>
                     </div>
 
@@ -2241,22 +2443,71 @@ export function AdminOrdersCrmPanel({
                       />
                       <span className="leading-snug text-[#111111]/85 dark:text-[#F4F3EF]/85">
                         <strong>Обезличивать ПДн в Telegram (ст. 12 152-ФЗ и ФЗ-41-ФЗ):</strong>{' '}
-                        отправлять только номер сделки, бюджет и этап без телефона, e-mail, ИНН и
-                        текста брифа.
+                        отправлять только номер сделки, переход статуса и бюджет без телефона,
+                        e-mail, ИНН и текста брифа.
                       </span>
                     </label>
                   </div>
                 </div>
 
                 {samplePreviewOrder && (
-                  <div className="space-y-1.5 pt-2 border-t border-[#111111]/8 dark:border-white/8">
-                    <p className="text-[11px] font-semibold text-[#111111]/60 dark:text-[#F4F3EF]/60">
-                      Формат сообщения в Telegram (на примере #{samplePreviewOrder.orderNumber}):
-                    </p>
-                    <pre className="p-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[11px] leading-relaxed whitespace-pre-wrap font-mono text-[#111111]/85 dark:text-[#F4F3EF]/85 max-h-44 overflow-y-auto">
-                      {formatTelegramOrderDispatchMessage(samplePreviewOrder, 'order.created', {
-                        maskPdn: tgMaskPdn,
-                      })}
+                  <div className="space-y-2 pt-2 border-t border-[#111111]/8 dark:border-white/8">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[11px] font-semibold text-[#111111]/60 dark:text-[#F4F3EF]/60">
+                        Предпросмотр Telegram (#{samplePreviewOrder.orderNumber}):
+                      </p>
+                      <div className="inline-flex items-center gap-1 p-0.5 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10">
+                        <button
+                          type="button"
+                          data-testid="crm-tg-preview-stage-btn"
+                          onClick={() => setTgPreviewEvent('order.stage_changed')}
+                          className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
+                            tgPreviewEvent === 'order.stage_changed'
+                              ? 'bg-white dark:bg-[#1E1E24] text-[#111111] dark:text-[#F4F3EF] shadow-xs'
+                              : 'text-[#111111]/60 dark:text-[#F4F3EF]/60 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
+                          }`}
+                        >
+                          Смена статуса
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="crm-tg-preview-created-btn"
+                          onClick={() => setTgPreviewEvent('order.created')}
+                          className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
+                            tgPreviewEvent === 'order.created'
+                              ? 'bg-white dark:bg-[#1E1E24] text-[#111111] dark:text-[#F4F3EF] shadow-xs'
+                              : 'text-[#111111]/60 dark:text-[#F4F3EF]/60 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
+                          }`}
+                        >
+                          Новый заказ
+                        </button>
+                      </div>
+                    </div>
+                    <pre
+                      data-testid="crm-tg-message-preview"
+                      className="p-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[11px] leading-relaxed whitespace-pre-wrap font-mono text-[#111111]/85 dark:text-[#F4F3EF]/85 max-h-48 overflow-y-auto"
+                    >
+                      {formatTelegramOrderDispatchMessage(
+                        samplePreviewOrder,
+                        tgPreviewEvent,
+                        {
+                          maskPdn: tgMaskPdn,
+                          statusChange:
+                            tgPreviewEvent === 'order.stage_changed'
+                              ? {
+                                  previousStage: 'new_hold',
+                                  nextStage:
+                                    samplePreviewOrder.stage === 'new_hold'
+                                      ? 'quota_locked'
+                                      : samplePreviewOrder.stage,
+                                  actor: 'producer_crm',
+                                  workflowStepLabel:
+                                    'Статус обновлён продюсером студии в CRM',
+                                  changedAtIso: samplePreviewOrder.updatedAt,
+                                }
+                              : undefined,
+                        }
+                      )}
                     </pre>
                   </div>
                 )}
@@ -2385,9 +2636,25 @@ export function AdminOrdersCrmPanel({
                     <p className="text-[11px] font-semibold text-[#111111]/60 dark:text-[#F4F3EF]/60">
                       JSON-конверт Webhook (на примере #{samplePreviewOrder.orderNumber}):
                     </p>
-                    <pre className="p-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[11px] leading-relaxed whitespace-pre-wrap font-mono text-[#111111]/85 dark:text-[#F4F3EF]/85 max-h-44 overflow-y-auto">
+                    <pre className="p-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[11px] leading-relaxed whitespace-pre-wrap font-mono text-[#111111]/85 dark:text-[#F4F3EF]/85 max-h-48 overflow-y-auto">
                       {JSON.stringify(
-                        buildWebhookOrderEnvelope(samplePreviewOrder, 'order.created'),
+                        buildWebhookOrderEnvelope(
+                          samplePreviewOrder,
+                          tgPreviewEvent,
+                          samplePreviewOrder.updatedAt,
+                          tgPreviewEvent === 'order.stage_changed'
+                            ? {
+                                previousStage: 'new_hold',
+                                nextStage:
+                                  samplePreviewOrder.stage === 'new_hold'
+                                    ? 'quota_locked'
+                                    : samplePreviewOrder.stage,
+                                actor: 'producer_crm',
+                                workflowStepLabel:
+                                  'Статус обновлён продюсером студии в CRM',
+                              }
+                            : undefined
+                        ),
                         null,
                         2
                       )}
@@ -2414,16 +2681,26 @@ export function AdminOrdersCrmPanel({
                 <button
                   type="button"
                   disabled={isTestingDispatch}
-                  data-testid="crm-test-dispatch-btn"
-                  onClick={() => void handleTestDispatchGateway()}
+                  data-testid="crm-test-stage-dispatch-btn"
+                  onClick={() => void handleTestDispatchGateway('order.stage_changed')}
                   className="min-h-[40px] px-4 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820] inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
                 >
                   <Send className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                   <span>
                     {isTestingDispatch
                       ? 'Проверка связи…'
-                      : 'Проверить доставку тестового заказа'}
+                      : 'Проверить уведомление смены статуса'}
                   </span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isTestingDispatch}
+                  data-testid="crm-test-dispatch-btn"
+                  onClick={() => void handleTestDispatchGateway('dispatch.test')}
+                  className="min-h-[40px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:border-[#FF4820] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  <span>Тест нового заказа</span>
                 </button>
 
                 <button
@@ -2443,9 +2720,8 @@ export function AdminOrdersCrmPanel({
 
             {dispatchLogs.length === 0 ? (
               <p className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58 py-3 border-t border-[#111111]/8 dark:border-white/8">
-                Попыток внешней доставки в текущей сессии ещё не зафиксировано. Нажмите
-                «Подставить локальный тест-контур» и «Проверить доставку тестового заказа» для
-                проверки.
+                Попыток внешней доставки в текущей сессии ещё не зафиксировано. Измените статус
+                любой сделки или нажмите «Проверить уведомление смены статуса» для проверки.
               </p>
             ) : (
               <div className="overflow-x-auto border-t border-[#111111]/10 dark:border-white/10">

@@ -8,7 +8,7 @@ import {
   useTransform,
 } from 'motion/react';
 import { PointerEvent as ReactPointerEvent, RefObject, useEffect, useRef, useState } from 'react';
-import { CasePlayerSnapshot } from '../audio/casePlayerEngine';
+import type { CasePlayerSnapshot } from '../audio/lazyAudioEngines';
 import { useStudioCms } from '../cms/StudioCmsContext';
 import { formatAudioTime } from '../data/audioworksCommercial';
 import { OptimizedImage } from './OptimizedImage';
@@ -36,6 +36,8 @@ const HOVER_PREVIEW_DELAY_MS = 80;
 interface CasesGalleryProps {
   playerSnap: CasePlayerSnapshot;
   onToggleCase: (item: BrandCasePoster) => void;
+  onSeekCase?: (item: BrandCasePoster, ratio: number) => void;
+  onWarmCasePlayer?: () => void;
   onStartPreview?: (item: BrandCasePoster) => void;
   onStopPreview?: (caseId: CaseId) => void;
   onOpenCaseDetail?: (caseId: CaseId) => void;
@@ -256,6 +258,8 @@ interface CaseAudioProgressBarProps {
   progress: CaseCardProgressState;
   spectrumBands: readonly number[];
   currentTimeSec: number;
+  onScrubStart?: () => void;
+  onSeekRatio?: (ratio: number) => void;
 }
 
 function CaseAudioProgressBar({
@@ -263,6 +267,8 @@ function CaseAudioProgressBar({
   progress,
   spectrumBands,
   currentTimeSec,
+  onScrubStart,
+  onSeekRatio,
 }: CaseAudioProgressBarProps) {
   const prefersReducedMotion = useReducedMotion();
   const previewWindow = getCasePreviewWindow(item);
@@ -277,7 +283,10 @@ function CaseAudioProgressBar({
       spectrumBands={spectrumBands}
       reducedMotion={Boolean(prefersReducedMotion)}
       variant="dark-surface"
-      heightClass="h-10"
+      heightClass="h-11 sm:h-10"
+      onScrubStart={onScrubStart}
+      onSeekRatio={onSeekRatio}
+      seekAriaLabel={`Перемотка ролика: ${item.client}`}
       visualizerTestId={`case-visualizer-${item.id}`}
       visualizerMode={progress.mode ?? 'idle'}
       progressBarTestId={`case-progress-${item.id}`}
@@ -286,7 +295,7 @@ function CaseAudioProgressBar({
       ariaValueText={
         progress.isActive
           ? `${progress.mode === 'preview' ? 'Превью ' : ''}${progress.percent}% (${formatAudioTime(currentTimeSec)} из ${formatAudioTime(targetDurationSec)})`
-          : 'Не воспроизводится'
+          : `Нажмите или проведите для прослушивания с нужной секунды (${formatAudioTime(item.durationSec)})`
       }
     />
   );
@@ -302,6 +311,8 @@ interface StudioCommercialStripProps {
   isCopied: boolean;
   currentTimeSec: number;
   onToggleCase: (item: BrandCasePoster) => void;
+  onSeekCase?: (item: BrandCasePoster, ratio: number) => void;
+  onWarmCasePlayer?: () => void;
   onStartPreview?: (item: BrandCasePoster) => void;
   onStopPreview?: (caseId: CaseId) => void;
   onShare: (item: BrandCasePoster) => void;
@@ -318,6 +329,8 @@ function StudioCommercialStrip({
   isCopied,
   currentTimeSec,
   onToggleCase,
+  onSeekCase,
+  onWarmCasePlayer,
   onStartPreview,
   onStopPreview,
   onShare,
@@ -465,6 +478,18 @@ function StudioCommercialStrip({
           progress={progress}
           spectrumBands={spectrumBands}
           currentTimeSec={currentTimeSec}
+          onScrubStart={() => {
+            clearPendingTimer();
+            onWarmCasePlayer?.();
+          }}
+          onSeekRatio={
+            onSeekCase
+              ? (ratio) => {
+                  clearPendingTimer();
+                  onSeekCase(reel, ratio);
+                }
+              : undefined
+          }
         />
       </div>
     </div>
@@ -482,6 +507,8 @@ interface BrandCaseCardProps {
   isCopied: boolean;
   currentTimeSec: number;
   onToggleCase: (item: BrandCasePoster) => void;
+  onSeekCase?: (item: BrandCasePoster, ratio: number) => void;
+  onWarmCasePlayer?: () => void;
   onStartPreview?: (item: BrandCasePoster) => void;
   onStopPreview?: (caseId: CaseId) => void;
   onShare: (item: BrandCasePoster) => void;
@@ -499,6 +526,8 @@ function BrandCaseCard({
   isCopied,
   currentTimeSec,
   onToggleCase,
+  onSeekCase,
+  onWarmCasePlayer,
   onStartPreview,
   onStopPreview,
   onShare,
@@ -582,6 +611,18 @@ function BrandCaseCard({
               progress={progress}
               spectrumBands={spectrumBands}
               currentTimeSec={currentTimeSec}
+              onScrubStart={() => {
+                clearPendingTimer();
+                onWarmCasePlayer?.();
+              }}
+              onSeekRatio={
+                onSeekCase
+                  ? (ratio) => {
+                      clearPendingTimer();
+                      onSeekCase(item, ratio);
+                    }
+                  : undefined
+              }
             />
 
             <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
@@ -728,6 +769,18 @@ function BrandCaseCard({
             progress={progress}
             spectrumBands={spectrumBands}
             currentTimeSec={currentTimeSec}
+            onScrubStart={() => {
+              clearPendingTimer();
+              onWarmCasePlayer?.();
+            }}
+            onSeekRatio={
+              onSeekCase
+                ? (ratio) => {
+                    clearPendingTimer();
+                    onSeekCase(item, ratio);
+                  }
+                : undefined
+            }
           />
 
           <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
@@ -804,6 +857,8 @@ function BrandCaseCard({
 export function CasesGallery({
   playerSnap,
   onToggleCase,
+  onSeekCase,
+  onWarmCasePlayer,
   onStartPreview,
   onStopPreview,
   onOpenCaseDetail,
@@ -940,6 +995,8 @@ export function CasesGallery({
             isCopied={copiedCaseId === flagshipReel.id}
             currentTimeSec={playerSnap.currentTimeSec}
             onToggleCase={onToggleCase}
+            onSeekCase={onSeekCase}
+            onWarmCasePlayer={onWarmCasePlayer}
             onStartPreview={onStartPreview}
             onStopPreview={onStopPreview}
             onShare={handleShareCase}
@@ -967,6 +1024,8 @@ export function CasesGallery({
               isCopied={copiedCaseId === item.id}
               currentTimeSec={playerSnap.currentTimeSec}
               onToggleCase={onToggleCase}
+              onSeekCase={onSeekCase}
+              onWarmCasePlayer={onWarmCasePlayer}
               onStartPreview={onStartPreview}
               onStopPreview={onStopPreview}
               onShare={handleShareCase}

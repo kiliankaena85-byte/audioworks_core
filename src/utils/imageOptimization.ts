@@ -6,6 +6,10 @@ const OPTIMIZABLE_LOCAL_PREFIXES = [
   '/assets/aistudio/',
 ] as const;
 
+export const STUDIO_RESPONSIVE_WEBP_TIERS = [480, 800] as const;
+export const DEFAULT_ADAPTIVE_CARD_SIZES =
+  '(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 1200px';
+
 export interface ImageLoadingConfigInput {
   priority?: boolean;
   loading?: 'lazy' | 'eager';
@@ -53,6 +57,45 @@ export function deriveWebpUrl(rawSrc: string | null | undefined): string | null 
   }
 
   return `${pathname.replace(RASTER_EXTENSION_REGEX, '.webp')}${suffix}`;
+}
+
+/**
+ * Формирует адаптивный `srcset` с дескрипторами ширины (`480w`, `800w`, `1280w`)
+ * для студийных фотографий `/src/assets/images/*` (кроме компактных аватаров `avatar_*`),
+ * либо одиночный WebP URL для прочих локальных иллюстраций и CMS-загрузок.
+ */
+export function deriveResponsiveWebpSrcSet(
+  rawSrc: string | null | undefined
+): { srcSet: string; isMultiWidth: boolean } | null {
+  const baseWebp = deriveWebpUrl(rawSrc);
+  if (!baseWebp || typeof rawSrc !== 'string') return null;
+
+  const trimmed = rawSrc.trim();
+  const queryOrHashIdx = trimmed.search(/[?#]/);
+  const pathname =
+    queryOrHashIdx === -1 ? trimmed : trimmed.slice(0, queryOrHashIdx);
+  const suffix = queryOrHashIdx === -1 ? '' : trimmed.slice(queryOrHashIdx);
+
+  const fileName = pathname.split('/').pop() ?? '';
+  const supportsMultiWidth =
+    pathname.startsWith('/src/assets/images/') &&
+    !fileName.startsWith('avatar_') &&
+    RASTER_EXTENSION_REGEX.test(pathname);
+
+  if (!supportsMultiWidth) {
+    return { srcSet: baseWebp, isMultiWidth: false };
+  }
+
+  const tierEntries = STUDIO_RESPONSIVE_WEBP_TIERS.map((w) => {
+    const tierUrl = `${pathname.replace(RASTER_EXTENSION_REGEX, `-${w}w.webp`)}${suffix}`;
+    return `${tierUrl} ${w}w`;
+  });
+  tierEntries.push(`${baseWebp} 1280w`);
+
+  return {
+    srcSet: tierEntries.join(', '),
+    isMultiWidth: true,
+  };
 }
 
 /**

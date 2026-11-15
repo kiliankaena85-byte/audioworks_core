@@ -1,13 +1,6 @@
-import {
-  KeyboardEvent as ReactKeyboardEvent,
-  MouseEvent as ReactMouseEvent,
-  PointerEvent as ReactPointerEvent,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { useId, useMemo, useRef } from 'react';
 import { formatAudioTime } from '../data/audioworksCommercial';
+import { useAudioTrackScrubber } from '../utils/audioScrubbing';
 import {
   BroadcastSegmentId,
   BroadcastSegmentKind,
@@ -271,6 +264,7 @@ export function createDefault150sSegments(): readonly BroadcastTimelineSegment[]
     cursor = endSec;
     return {
       ...item,
+      slotNumber: item.kind === 'competitor' || item.kind === 'target' ? idx - 1 : null,
       orderIndex: idx + 1,
       startSec,
       endSec,
@@ -477,11 +471,14 @@ export interface WaveformTimelineProps {
   elapsedSec?: number;
   activeSegmentId?: BroadcastSegmentId;
   spotMode?: InsertedSpotMode;
+  targetSlotIndex?: number;
+  targetShortLabel?: string;
   isPlaying?: boolean;
   seedKey?: string;
   spectrumBands?: readonly number[];
   reducedMotion?: boolean;
   onSeekRatio?: (ratio: number) => void;
+  onScrubStart?: () => void;
   onSelectSegment?: (segmentId: BroadcastSegmentId) => void;
   seekAriaLabel?: string;
   heightClass?: string;
@@ -496,11 +493,14 @@ export function WaveformTimeline({
   elapsedSec = 0,
   activeSegmentId = 'program_leadin',
   spotMode = 'fmworks_example',
+  targetSlotIndex,
+  targetShortLabel,
   isPlaying = false,
   seedKey = 'broadcast-150s',
   spectrumBands,
   reducedMotion = false,
   onSeekRatio,
+  onScrubStart,
   onSelectSegment,
   seekAriaLabel = 'Перемотка реального радиоэфира по секундам',
   heightClass = 'h-12 sm:h-14',
@@ -510,8 +510,6 @@ export function WaveformTimeline({
 }: WaveformTimelineProps) {
   const uid = useId().replace(/:/g, '');
   const trackRef = useRef<HTMLDivElement | null>(null);
-  const isDraggingRef = useRef(false);
-  const [hoverRatio, setHoverRatio] = useState<number | null>(null);
 
   const geometry = useMemo(
     () =>
@@ -521,28 +519,33 @@ export function WaveformTimeline({
         activeSegmentId,
         spotMode,
         seedKey,
+        spectrumBands,
+        isPlaying,
+        elapsedSec,
         reducedMotion,
       }),
-    [segments, totalDurationSec, activeSegmentId, spotMode, seedKey, reducedMotion]
+    [
+      segments,
+      totalDurationSec,
+      activeSegmentId,
+      spotMode,
+      seedKey,
+      spectrumBands,
+      isPlaying,
+      elapsedSec,
+      reducedMotion,
+    ]
   );
 
-  const progressRatio = Math.min(
+  const engineProgressRatio = Math.min(
     1,
     Math.max(
       0,
       geometry.totalDurationSec > 0 ? elapsedSec / geometry.totalDurationSec : 0
     )
   );
-  const playedClipRightPct = Math.max(0, Math.min(100, (1 - progressRatio) * 100));
   const isInteractive = typeof onSeekRatio === 'function';
-
-  const resolvePointerRatio = (clientX: number): number | null => {
-    const el = trackRef.current;
-    if (!el) return null;
-    const rect = el.getBoundingClientRect();
-    if (rect.width <= 1) return null;
-    return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-  };
+  const canInteract = isInteractive || typeof onSelectSegment === 'function';
 
   const commitSeekAtRatio = (ratio: number) => {
     if (onSeekRatio) {
@@ -558,61 +561,24 @@ export function WaveformTimeline({
     }
   };
 
-  const handlePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!isInteractive && !onSelectSegment) return;
-    isDraggingRef.current = true;
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
-      // Synthetic event fallback
-    }
-    const r = resolvePointerRatio(e.clientX);
-    if (r !== null) commitSeekAtRatio(r);
-  };
+  const {
+    displayRatio: progressRatio,
+    hoverRatio,
+    isScrubbing,
+    eventHandlers,
+  } = useAudioTrackScrubber({
+    trackRef,
+    engineRatio: engineProgressRatio,
+    isInteractive: canInteract,
+    stepRatio: 5 / Math.max(15, geometry.totalDurationSec),
+    onScrubStart,
+    onCommitRatio: commitSeekAtRatio,
+  });
 
-  const handlePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!isInteractive && !onSelectSegment) return;
-    const r = resolvePointerRatio(e.clientX);
-    setHoverRatio(r);
-    if (isDraggingRef.current && r !== null && onSeekRatio) {
-      onSeekRatio(r);
-    }
-  };
-
-  const handlePointerUpOrCancel = (e: ReactPointerEvent<HTMLDivElement>) => {
-    isDraggingRef.current = false;
-    try {
-      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-      }
-    } catch {
-      // Synthetic event fallback
-    }
-  };
-
-  const handleClickFallback = (e: ReactMouseEvent<HTMLDivElement>) => {
-    if (!isInteractive && !onSelectSegment) return;
-    const r = resolvePointerRatio(e.clientX);
-    if (r !== null) commitSeekAtRatio(r);
-  };
-
-  const handleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (!onSeekRatio) return;
-    const stepRatio = 5 / Math.max(15, geometry.totalDurationSec);
-    if (e.key === 'ArrowRight') {
-      e.preventDefault();
-      onSeekRatio(Math.min(1, progressRatio + stepRatio));
-    } else if (e.key === 'ArrowLeft') {
-      e.preventDefault();
-      onSeekRatio(Math.max(0, progressRatio - stepRatio));
-    } else if (e.key === 'Home') {
-      e.preventDefault();
-      onSeekRatio(0);
-    } else if (e.key === 'End') {
-      e.preventDefault();
-      onSeekRatio(1);
-    }
-  };
+  const playedClipRightPct = Math.max(0, Math.min(100, (1 - progressRatio) * 100));
+  const displayedElapsedSec = isScrubbing
+    ? clampSeekRatioToSeconds(progressRatio, geometry.totalDurationSec)
+    : elapsedSec;
 
   const targetLayer =
     geometry.segmentLayers.find((layer) => layer.isTargetSlot) ?? null;
@@ -621,9 +587,10 @@ export function WaveformTimeline({
   const returnLayer =
     geometry.segmentLayers[geometry.segmentLayers.length - 1] ?? null;
 
+  const previewRatio = isScrubbing ? progressRatio : hoverRatio;
   const hoverInfo = useMemo(() => {
-    if (hoverRatio === null) return null;
-    const sec = clampSeekRatioToSeconds(hoverRatio, geometry.totalDurationSec);
+    if (previewRatio === null) return null;
+    const sec = clampSeekRatioToSeconds(previewRatio, geometry.totalDurationSec);
     const hit =
       geometry.segmentLayers.find(
         (layer) => sec >= layer.startSec && sec <= layer.endSec
@@ -632,7 +599,7 @@ export function WaveformTimeline({
       sec,
       label: hit ? hit.compactLabel : '',
     };
-  }, [hoverRatio, geometry.totalDurationSec, geometry.segmentLayers]);
+  }, [previewRatio, geometry.totalDurationSec, geometry.segmentLayers]);
 
   const activeLayer =
     geometry.segmentLayers.find((l) => l.isActive) ?? geometry.segmentLayers[0];
@@ -649,22 +616,17 @@ export function WaveformTimeline({
         aria-label={seekAriaLabel}
         aria-valuemin={0}
         aria-valuemax={Math.round(geometry.totalDurationSec)}
-        aria-valuenow={Math.round(elapsedSec)}
-        aria-valuetext={`${formatAudioTime(elapsedSec)} из ${formatAudioTime(
+        aria-valuenow={Math.round(displayedElapsedSec)}
+        aria-valuetext={`${formatAudioTime(displayedElapsedSec)} из ${formatAudioTime(
           geometry.totalDurationSec
         )}${activeLayer ? `, ${activeLayer.compactLabel}` : ''}`}
         data-testid={progressBarTestId}
         data-playing={isPlaying ? 'true' : 'false'}
+        data-scrubbing={isScrubbing ? 'true' : 'false'}
         data-active-segment={activeSegmentId}
-        onClick={handleClickFallback}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUpOrCancel}
-        onPointerCancel={handlePointerUpOrCancel}
-        onPointerLeave={() => setHoverRatio(null)}
-        onKeyDown={isInteractive ? handleKeyDown : undefined}
+        {...eventHandlers}
         className={`relative w-full ${heightClass} rounded-xl bg-white/[0.02] overflow-hidden ${
-          isInteractive || onSelectSegment
+          canInteract
             ? 'cursor-pointer touch-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF4820]'
             : 'pointer-events-none'
         }`}
@@ -672,8 +634,8 @@ export function WaveformTimeline({
         <div
           aria-hidden="true"
           data-testid={visualizerTestId}
-          data-active={isPlaying || elapsedSec > 0 ? 'true' : 'false'}
-          className="relative w-full h-full"
+          data-active={isPlaying || displayedElapsedSec > 0 ? 'true' : 'false'}
+          className="pointer-events-none relative w-full h-full"
         >
           {/* Подложка целевого слота клиента / эталона FMWorks */}
           {targetLayer && (
@@ -908,14 +870,22 @@ export function WaveformTimeline({
             />
           )}
 
-          {/* Световая каретка текущего момента воспроизведения */}
-          {(isPlaying || progressRatio > 0.003) && progressRatio < 0.998 && (
+          {/* Световая каретка текущего момента воспроизведения и тактильный ползунок */}
+          {(isPlaying || isScrubbing || progressRatio > 0.003) && progressRatio < 0.999 && (
             <span
               style={{
                 left: `${(progressRatio * 100).toFixed(2)}%`,
               }}
-              className="absolute top-0.5 bottom-0.5 w-[1.5px] -translate-x-1/2 rounded-full bg-white shadow-[0_0_10px_rgba(255,72,32,0.95)]"
-            />
+              className="absolute top-0.5 bottom-0.5 w-[2px] -translate-x-1/2 rounded-full bg-white shadow-[0_0_10px_rgba(255,72,32,0.95)]"
+            >
+              {canInteract && (
+                <span
+                  className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-white ring-2 ring-[#FF4820] transition-transform duration-100 ${
+                    isScrubbing ? 'scale-125' : 'scale-100'
+                  }`}
+                />
+              )}
+            </span>
           )}
         </div>
       </div>
@@ -952,17 +922,27 @@ export function WaveformTimeline({
                 className="w-2 h-[2px] rounded-full bg-[#FF4820]"
               />
               <span className="sm:hidden">
-                {spotMode === 'client_upload' ? 'Ваш ролик' : 'Слот №2'}
+                {spotMode === 'client_upload'
+                  ? `Ваш №${targetSlotIndex ?? 2}`
+                  : `Слот №${targetSlotIndex ?? 2}`}
               </span>
               <span className="hidden sm:inline">
                 {spotMode === 'client_upload'
-                  ? 'Ваш ролик'
+                  ? `Ваш ролик (№${targetSlotIndex ?? 2})`
                   : spotMode === 'typical_cliche'
-                    ? 'Шаблон в слоте №2'
-                    : 'Эталон FMWorks'}
+                    ? `Шаблон в слоте №${targetSlotIndex ?? 2}`
+                    : targetShortLabel
+                      ? `${targetShortLabel} · слот №${targetSlotIndex ?? 2}`
+                      : `Эталон FMWorks · слот №${targetSlotIndex ?? 2}`}
               </span>
             </span>
           </div>
+
+          {isScrubbing && hoverInfo && (
+            <span className="sm:hidden text-[#FF8A70] font-semibold shrink-0">
+              {formatAudioTime(hoverInfo.sec)} · {hoverInfo.label}
+            </span>
+          )}
 
           <div className="hidden sm:flex items-center gap-2.5 text-white/42 shrink-0">
             {hoverInfo ? (
@@ -982,7 +962,7 @@ export function WaveformTimeline({
                   <>
                     <span aria-hidden="true">·</span>
                     <span className="text-[#FF8A70]">
-                      Слот №2 {formatAudioTime(targetLayer.startSec)}
+                      Слот №{targetSlotIndex ?? 2} {formatAudioTime(targetLayer.startSec)}
                     </span>
                   </>
                 )}

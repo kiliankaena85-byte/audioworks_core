@@ -1,8 +1,10 @@
 import { ArrowRightLeft, Car, Pause, Play } from 'lucide-react';
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from 'react';
 import { createSafeAudioContext } from '../audio/audioContextHelper';
-import { casePlayerEngine } from '../audio/casePlayerEngine';
-import { contrastAudioEngine } from '../audio/contrastAudioEngine';
+import {
+  claimExclusiveAudioFocus,
+  onExclusiveAudioFocusClaimed,
+} from '../audio/audioFocusCoordinator';
 import {
   duelAudioStore,
   DuelStoreSnapshot,
@@ -73,17 +75,13 @@ export function FifteenSecDuel() {
   };
 
   useEffect(() => {
-    const unsubHero = contrastAudioEngine.onBeforeStart(() => {
-      stopDuelPlayback();
-    });
-    const unsubCases = casePlayerEngine.subscribe((snap) => {
-      if (snap.isPlaying) {
+    const unsubFocus = onExclusiveAudioFocusClaimed((activeChannel) => {
+      if (activeChannel !== 'fifteen_sec_duel') {
         stopDuelPlayback();
       }
     });
     return () => {
-      unsubHero();
-      unsubCases();
+      unsubFocus();
       stopDuelPlayback();
     };
   }, []);
@@ -149,9 +147,12 @@ export function FifteenSecDuel() {
     syncCabinNoise(roadNoiseOn && playingSide !== null);
   }, [roadNoiseOn, playingSide]);
 
-  const launchSideInternal = (side: DuelTrackKind, chainNextToAudioWorks: boolean) => {
-    contrastAudioEngine.stopAll();
-    casePlayerEngine.stop();
+  const launchSideInternal = (
+    side: DuelTrackKind,
+    chainNextToAudioWorks: boolean,
+    initialRatio = 0
+  ) => {
+    claimExclusiveAudioFocus('fifteen_sec_duel');
 
     if (timerRef.current !== null) {
       window.clearInterval(timerRef.current);
@@ -192,12 +193,22 @@ export function FifteenSecDuel() {
           ? customMeta.effectiveDurationSec
           : cmsSpot.durationSec;
 
+    const clampedInitialRatio = Math.min(
+      0.995,
+      Math.max(0, Number.isFinite(initialRatio) ? initialRatio : 0)
+    );
+    const initialElapsedSec = Math.min(
+      Math.max(0, durationLimit - 0.05),
+      clampedInitialRatio * durationLimit
+    );
+    const targetAudioSec = startOffset + initialElapsedSec;
+
     clipStartOffsetRef.current = startOffset;
     maxDurationRef.current = durationLimit;
-    startedAtMsRef.current = performance.now();
+    startedAtMsRef.current = performance.now() - initialElapsedSec * 1000;
 
     setPlayingSide(side);
-    setElapsedSec(0);
+    setElapsedSec(initialElapsedSec);
 
     if (typeof window === 'undefined') return;
 
@@ -226,9 +237,9 @@ export function FifteenSecDuel() {
 
     const launch = () => {
       if (htmlAudioRef.current !== audio) return;
-      if (startOffset > 0) {
+      if (targetAudioSec > 0) {
         try {
-          audio.currentTime = startOffset;
+          audio.currentTime = targetAudioSec;
         } catch {
           // Ignore seek before metadata
         }
@@ -271,6 +282,34 @@ export function FifteenSecDuel() {
     launchSideInternal(side, false);
   };
 
+  const seekDuelSide = (side: DuelTrackKind, ratio: number) => {
+    const clamped = Math.min(
+      0.995,
+      Math.max(0, Number.isFinite(ratio) ? ratio : 0)
+    );
+    if (playingSide === side && htmlAudioRef.current) {
+      sequentialModeRef.current = false;
+      setIsSequentialCompare(false);
+      const targetElapsed = Math.min(
+        Math.max(0, maxDurationRef.current - 0.05),
+        clamped * maxDurationRef.current
+      );
+      startedAtMsRef.current = performance.now() - targetElapsed * 1000;
+      setElapsedSec(targetElapsed);
+      try {
+        htmlAudioRef.current.currentTime =
+          clipStartOffsetRef.current + targetElapsed;
+      } catch {
+        // Ignore seek errors on unbuffered streams
+      }
+      if (htmlAudioRef.current.paused) {
+        htmlAudioRef.current.play().catch(() => {});
+      }
+      return;
+    }
+    launchSideInternal(side, false, clamped);
+  };
+
   const toggleSequentialAbCompare = () => {
     if (playingSide !== null) {
       stopDuelPlayback();
@@ -297,7 +336,8 @@ export function FifteenSecDuel() {
   const renderWaveformStrip = (
     side: DuelTrackKind,
     progressRatio: number,
-    isActive: boolean
+    isActive: boolean,
+    totalSec: number
   ) => {
     const isRadio = side === 'radio';
 
@@ -314,7 +354,20 @@ export function FifteenSecDuel() {
           isActive={isActive}
           progressRatio={isActive ? progressRatio : 0}
           variant={isRadio ? 'adaptive' : 'dark-surface'}
-          heightClass="h-8"
+          heightClass="h-10 sm:h-9"
+          onSeekRatio={(r) => seekDuelSide(side, r)}
+          seekAriaLabel={
+            isRadio
+              ? 'Перемотка обычного ролика'
+              : 'Перемотка примера FMWorks'
+          }
+          progressBarTestId={`duel-waveform-scrubber-${side}`}
+          ariaValueNow={isActive ? Math.round(progressRatio * 100) : 0}
+          ariaValueText={
+            isActive
+              ? `${formatAudioTime(elapsedSec)} из ${formatAudioTime(totalSec)}`
+              : `Нажмите или проведите для прослушивания с нужной секунды (${formatAudioTime(totalSec)})`
+          }
         />
       </div>
     );
@@ -416,7 +469,7 @@ export function FifteenSecDuel() {
             )}
           </button>
 
-          {renderWaveformStrip(side, progressRatio, isActive)}
+          {renderWaveformStrip(side, progressRatio, isActive, totalSec)}
         </div>
 
         {/* Текст сценария без вложенных рамок («card-within-card»), разделённый тонкой линией */}

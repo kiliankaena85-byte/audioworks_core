@@ -260,8 +260,8 @@ test('Editorial FAQ logic & content: 4 questions, smooth toggle state, and respe
   );
 });
 
-test('Studio Commercial WAV integration: chapters, timecode formatting, and showcase wiring', () => {
-  assert.equal(AUDIOWORKS_WAV_URL, '/assets/aistudio/Audioworks_75c6023f.wav');
+test('Studio Commercial audio integration: chapters, timecode formatting, and showcase wiring', () => {
+  assert.equal(AUDIOWORKS_WAV_URL, '/assets/aistudio/Audioworks_75c6023f.mp3');
   assert.equal(formatAudioTime(0), '0:00');
   assert.equal(formatAudioTime(21), '0:21');
   assert.equal(formatAudioTime(Math.round(AUDIOWORKS_TOTAL_DURATION_SEC)), '1:19');
