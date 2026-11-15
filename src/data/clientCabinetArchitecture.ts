@@ -487,8 +487,180 @@ export function summarizeCabinetHistoryStatuses(
 }
 
 /**
+ * Порог автоматической архивации в «Истории заказов»: 6 месяцев (183 календарных суток).
+ */
+export const SIX_MONTHS_MS = 183 * 24 * 60 * 60 * 1000;
+
+/**
+ * Определяет, является ли проект одновременно завершённым («Готово» / `completed_ltv`)
+ * и оплаченным (100% предоплата подтверждена по договору или банковской картой).
+ */
+export function isOrderCompletedAndPaid(
+  order: Pick<
+    ClientCabinetOrderSummary,
+    'stage' | 'deliverables' | 'approvalWorkflow'
+  >
+): boolean {
+  if (order.approvalWorkflow && order.approvalWorkflow.phase !== 'accepted') {
+    return false;
+  }
+  const visual = resolveCabinetOrderVisualStatus(order);
+  return visual.statusId === 'ready';
+}
+
+/**
+ * Возвращает опорную временную метку проекта (мс) по дате последнего обновления или создания.
+ */
+export function resolveOrderReferenceTimestampMs(
+  order: Pick<ClientCabinetOrderSummary, 'createdAt' | 'updatedAt'>
+): number {
+  const updatedMs = Date.parse(order.updatedAt || '');
+  if (Number.isFinite(updatedMs)) {
+    return updatedMs;
+  }
+  return Date.parse(order.createdAt || '');
+}
+
+/**
+ * Проверяет, что проект завершён, оплачен и с момента его закрытия/обновления прошло более 6 месяцев.
+ */
+export function isCompletedOrderOlderThanSixMonths(
+  order: Pick<
+    ClientCabinetOrderSummary,
+    'stage' | 'deliverables' | 'createdAt' | 'updatedAt' | 'approvalWorkflow'
+  >,
+  nowMs = Date.now()
+): boolean {
+  if (!isOrderCompletedAndPaid(order)) {
+    return false;
+  }
+  const refMs = resolveOrderReferenceTimestampMs(order);
+  if (!Number.isFinite(refMs)) {
+    return false;
+  }
+  return nowMs - refMs >= SIX_MONTHS_MS;
+}
+
+function normalizeManualArchiveSet(
+  manuallyArchivedOrderNumbers?: ReadonlySet<string> | readonly string[]
+): Set<string> {
+  if (!manuallyArchivedOrderNumbers) {
+    return new Set<string>();
+  }
+  if (manuallyArchivedOrderNumbers instanceof Set) {
+    return manuallyArchivedOrderNumbers;
+  }
+  return new Set(manuallyArchivedOrderNumbers);
+}
+
+/**
+ * Проверяет, скрыт ли завершённый и оплаченный проект правилами минималистичного архива
+ * (автоматический фильтр > 6 месяцев или ручное добавление проекта в архив клиентом).
+ * Активные заказы («В работе», «На согласовании») никогда не скрываются архивом.
+ */
+export function isOrderArchivedInHistory(
+  order: Pick<
+    ClientCabinetOrderSummary,
+    | 'orderNumber'
+    | 'stage'
+    | 'deliverables'
+    | 'createdAt'
+    | 'updatedAt'
+    | 'approvalWorkflow'
+  >,
+  options?: {
+    hideOlderThanSixMonths?: boolean;
+    manuallyArchivedOrderNumbers?: ReadonlySet<string> | readonly string[];
+    nowMs?: number;
+  }
+): boolean {
+  if (!isOrderCompletedAndPaid(order)) {
+    return false;
+  }
+  const manualSet = normalizeManualArchiveSet(
+    options?.manuallyArchivedOrderNumbers
+  );
+  if (manualSet.has(order.orderNumber)) {
+    return true;
+  }
+  if (
+    options?.hideOlderThanSixMonths &&
+    isCompletedOrderOlderThanSixMonths(order, options.nowMs)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export interface CabinetHistoryArchiveSummary {
+  /** Всего завершённых и оплаченных проектов (доступных для архивации) */
+  archivableCompletedCount: number;
+  /** Завершённые и оплаченные проекты старше 6 месяцев */
+  completedOlderThanSixMonthsCount: number;
+  /** Завершённые проекты, вручную перенесённые клиентом в архив */
+  manuallyArchivedCount: number;
+  /** Сколько проектов прямо сейчас скрыто из основного списка настройками архива */
+  hiddenByArchiveCount: number;
+}
+
+/**
+ * Подсчитывает сводку архива для «Истории заказов», чтобы клиент видел точное количество
+ * скрытых завершённых и оплаченных проектов старше 6 месяцев.
+ */
+export function summarizeCabinetHistoryArchive(
+  orders: readonly ClientCabinetOrderSummary[],
+  options?: {
+    hideOlderThanSixMonths?: boolean;
+    manuallyArchivedOrderNumbers?: ReadonlySet<string> | readonly string[];
+    nowMs?: number;
+  }
+): CabinetHistoryArchiveSummary {
+  const nowMs = options?.nowMs ?? Date.now();
+  const manualSet = normalizeManualArchiveSet(
+    options?.manuallyArchivedOrderNumbers
+  );
+
+  let archivableCompletedCount = 0;
+  let completedOlderThanSixMonthsCount = 0;
+  let manuallyArchivedCount = 0;
+  let hiddenByArchiveCount = 0;
+
+  for (const order of orders) {
+    if (!isOrderCompletedAndPaid(order)) {
+      continue;
+    }
+    archivableCompletedCount += 1;
+    const isOlder6m = isCompletedOrderOlderThanSixMonths(order, nowMs);
+    const isManual = manualSet.has(order.orderNumber);
+    if (isOlder6m) {
+      completedOlderThanSixMonthsCount += 1;
+    }
+    if (isManual) {
+      manuallyArchivedCount += 1;
+    }
+    if (
+      isOrderArchivedInHistory(order, {
+        hideOlderThanSixMonths: options?.hideOlderThanSixMonths,
+        manuallyArchivedOrderNumbers: manualSet,
+        nowMs,
+      })
+    ) {
+      hiddenByArchiveCount += 1;
+    }
+  }
+
+  return {
+    archivableCompletedCount,
+    completedOlderThanSixMonthsCount,
+    manuallyArchivedCount,
+    hiddenByArchiveCount,
+  };
+}
+
+/**
  * Фильтрует список проектов в разделе «История заказов» по визуальному статусу
- * («В работе», «На согласовании», «Готово»), поисковому запросу и флагу наличия мастер-файлов.
+ * («В работе», «На согласовании», «Готово»), поисковому запросу, флагу наличия мастер-файлов
+ * и режиму минималистичного скрытия завершённых и оплаченных проектов старше 6 месяцев.
  */
 export function filterCabinetHistoryOrders(
   historyOrders: readonly ClientCabinetOrderSummary[],
@@ -496,15 +668,42 @@ export function filterCabinetHistoryOrders(
     searchQuery?: string;
     onlyWithMasters?: boolean;
     statusFilter?: CabinetHistoryStatusFilter;
+    hideOlderThanSixMonths?: boolean;
+    manuallyArchivedOrderNumbers?: ReadonlySet<string> | readonly string[];
+    showArchivedOnly?: boolean;
+    nowMs?: number;
   }
 ): ClientCabinetOrderSummary[] {
   const normalizedQuery = (criteria.searchQuery ?? '').trim().toLowerCase();
   const onlyMasters = Boolean(criteria.onlyWithMasters);
   const statusFilter = criteria.statusFilter ?? 'all';
+  const hideOlderThanSixMonths = Boolean(criteria.hideOlderThanSixMonths);
+  const showArchivedOnly = Boolean(criteria.showArchivedOnly);
+  const manualSet = normalizeManualArchiveSet(
+    criteria.manuallyArchivedOrderNumbers
+  );
+  const nowMs = criteria.nowMs ?? Date.now();
 
   return historyOrders.filter((order) => {
     const visualStatus = resolveCabinetOrderVisualStatus(order);
     if (statusFilter !== 'all' && visualStatus.statusId !== statusFilter) {
+      return false;
+    }
+
+    if (showArchivedOnly) {
+      const isCandidateInArchive =
+        isCompletedOrderOlderThanSixMonths(order, nowMs) ||
+        (isOrderCompletedAndPaid(order) && manualSet.has(order.orderNumber));
+      if (!isCandidateInArchive) {
+        return false;
+      }
+    } else if (
+      isOrderArchivedInHistory(order, {
+        hideOlderThanSixMonths,
+        manuallyArchivedOrderNumbers: manualSet,
+        nowMs,
+      })
+    ) {
       return false;
     }
 

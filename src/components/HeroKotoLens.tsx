@@ -1,4 +1,12 @@
-import { Car, Pause, Play } from 'lucide-react';
+import {
+  Car,
+  Pause,
+  Play,
+  RotateCcw,
+  Volume1,
+  Volume2,
+  VolumeX,
+} from 'lucide-react';
 import {
   AnimatePresence,
   motion,
@@ -8,8 +16,10 @@ import {
   useTransform,
 } from 'motion/react';
 import {
+  FormEvent,
   MouseEvent as ReactMouseEvent,
   TouchEvent as ReactTouchEvent,
+  WheelEvent as ReactWheelEvent,
   useEffect,
   useRef,
   useState,
@@ -330,6 +340,19 @@ export function HeroKotoLens({
     contrastAudioEngine.toggleCrashTestOrShowreel();
   };
 
+  const handleVolumeSliderChange = (e: FormEvent<HTMLInputElement>) => {
+    const rawPct = Number.parseFloat(e.currentTarget.value);
+    if (!Number.isFinite(rawPct)) return;
+    contrastAudioEngine.setVolume(rawPct / 100);
+  };
+
+  const handleVolumeWheel = (e: ReactWheelEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    const step = e.deltaY < 0 ? 0.05 : -0.05;
+    const currentEffective = snap.isMuted ? 0 : snap.volume;
+    contrastAudioEngine.setVolume(Math.max(0, Math.min(1, currentEffective + step)));
+  };
+
   const combinedMarqueePhrases = [
     ...GREY_RADIO_MARQUEE_BASE,
     ...slot.streamCliches,
@@ -345,10 +368,24 @@ export function HeroKotoLens({
 
   const activeFilmDur =
     snap.filmDurationSec > 0 ? snap.filmDurationSec : AUDIOWORKS_TOTAL_DURATION_SEC;
+  const focusOffsetSec = Math.max(
+    0,
+    Math.min(activeFilmDur - 0.5, snap.focusSegmentStartSec)
+  );
+  const relativeFilmElapsedSec = Math.max(0, snap.filmElapsedSec - focusOffsetSec);
+  const relativeFilmDurSec = Math.max(1, activeFilmDur - focusOffsetSec);
   const filmProgressPct = Math.min(
     100,
-    Math.max(0, (snap.filmElapsedSec / activeFilmDur) * 100)
+    Math.max(0, (relativeFilmElapsedSec / relativeFilmDurSec) * 100)
   );
+
+  const effectiveVolumePct = snap.isMuted ? 0 : Math.round(snap.volume * 100);
+  const canRestartCrashTest =
+    isExpanded ||
+    isPlayingAny ||
+    isStopPausePhase ||
+    snap.isPausedMidSession ||
+    snap.hasCompletedCrashTest;
 
   const hideNativeCursor = !isExpanded && isPointerInside && !isOverControl;
 
@@ -530,6 +567,7 @@ export function HeroKotoLens({
             >
               <button
                 type="button"
+                data-testid="hero-lens-mode-stream-btn"
                 onClick={() => contrastAudioEngine.selectLens('stream')}
                 aria-pressed={!isExpanded}
                 className={`min-h-[36px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
@@ -542,6 +580,7 @@ export function HeroKotoLens({
               </button>
               <button
                 type="button"
+                data-testid="hero-lens-mode-focus-btn"
                 onClick={() => contrastAudioEngine.selectLens('focus')}
                 aria-pressed={isExpanded}
                 className={`min-h-[36px] px-3.5 py-1 rounded-full text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
@@ -555,8 +594,8 @@ export function HeroKotoLens({
             </div>
           </div>
 
-          {/* Нижняя строка холста: свободный заголовок слева (без перекрытий) + одна кнопка запуска справа */}
-          <div className="relative z-30 mt-auto pt-16 flex flex-col md:flex-row md:items-end justify-between gap-6">
+          {/* Нижняя строка холста: заголовок слева + студийный пульт краш-теста и громкости справа */}
+          <div className="relative z-30 mt-auto pt-16 flex flex-col lg:flex-row lg:items-end justify-between gap-6">
             <div className="max-w-2xl space-y-2 pointer-events-none">
               {isExpanded ? (
                 <AnimatePresence mode="wait">
@@ -595,17 +634,106 @@ export function HeroKotoLens({
 
             <div
               data-lens-interactive="true"
-              className="flex flex-wrap items-center gap-2.5 shrink-0 cursor-default"
+              className="flex flex-wrap items-center gap-2 sm:gap-2.5 shrink-0 cursor-default"
             >
-              {isPlayingAny && (
+              {/* Студийный регулятор громкости в фирменном обсидианово-вермильоновом стиле */}
+              <div
+                data-testid="hero-volume-control"
+                onWheel={handleVolumeWheel}
+                className="min-h-[44px] sm:min-h-[46px] pl-1.5 pr-3.5 rounded-full inline-flex items-center gap-2 bg-black/48 backdrop-blur-md border border-white/16 text-white shrink-0 transition-colors hover:border-white/28"
+              >
                 <button
                   type="button"
+                  data-testid="hero-volume-mute-btn"
+                  onClick={() => contrastAudioEngine.toggleMute()}
+                  aria-pressed={snap.isMuted || effectiveVolumePct === 0}
+                  aria-label={
+                    snap.isMuted || effectiveVolumePct === 0
+                      ? 'Включить звук краш-теста'
+                      : 'Приглушить звук краш-теста'
+                  }
+                  title={
+                    snap.isMuted || effectiveVolumePct === 0
+                      ? 'Включить звук'
+                      : 'Приглушить звук (Mute)'
+                  }
+                  className={`w-8 h-8 rounded-full inline-flex items-center justify-center transition-colors cursor-pointer shrink-0 ${
+                    snap.isMuted || effectiveVolumePct === 0
+                      ? 'bg-[#FF4820]/22 text-[#FF4820]'
+                      : 'text-white/85 hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  {snap.isMuted || effectiveVolumePct === 0 ? (
+                    <VolumeX className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  ) : effectiveVolumePct < 50 ? (
+                    <Volume1 className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  ) : (
+                    <Volume2 className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  )}
+                </button>
+
+                <div className="relative flex items-center w-20 sm:w-24 h-6">
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none w-full h-1.5 rounded-full bg-white/18 overflow-hidden"
+                  >
+                    <div
+                      style={{ width: `${effectiveVolumePct}%` }}
+                      className="h-full bg-[#FF4820] rounded-full transition-[width] duration-75"
+                    />
+                  </div>
+                  <input
+                    type="range"
+                    data-testid="hero-volume-slider"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={effectiveVolumePct}
+                    onChange={handleVolumeSliderChange}
+                    onInput={handleVolumeSliderChange}
+                    aria-label="Громкость краш-теста"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={effectiveVolumePct}
+                    aria-valuetext={
+                      snap.isMuted || effectiveVolumePct === 0
+                        ? 'Без звука'
+                        : `${effectiveVolumePct}%`
+                    }
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  />
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      left: `calc(${effectiveVolumePct}% - ${
+                        (effectiveVolumePct / 100) * 12
+                      }px)`,
+                    }}
+                    className="pointer-events-none absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white shadow-[0_0_0_2px_rgba(255,72,32,0.85)] transition-[left] duration-75"
+                  />
+                </div>
+
+                <span
+                  data-testid="hero-volume-value"
+                  className="text-[11px] font-semibold tabular-nums text-white/78 min-w-[2.25rem] text-right"
+                >
+                  {snap.isMuted || effectiveVolumePct === 0
+                    ? '0%'
+                    : `${effectiveVolumePct}%`}
+                </span>
+              </div>
+
+              {/* Тумблер дорожного шума (доступен во время воспроизведения и паузы) */}
+              {(isPlayingAny || snap.isPausedMidSession || isExpanded) && (
+                <button
+                  type="button"
+                  data-testid="hero-road-noise-btn"
                   onClick={() => contrastAudioEngine.toggleRoadNoise()}
                   aria-pressed={snap.roadNoiseEnabled}
-                  className={`min-h-[44px] px-4 rounded-full inline-flex items-center gap-2 text-xs font-semibold backdrop-blur-md border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  className={`min-h-[44px] sm:min-h-[46px] px-3.5 sm:px-4 rounded-full inline-flex items-center gap-2 text-xs font-semibold backdrop-blur-md border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                     snap.roadNoiseEnabled
                       ? 'bg-[#FF4820]/25 border-[#FF4820] text-white'
-                      : 'bg-black/45 border-white/18 text-white/82 hover:text-white'
+                      : 'bg-black/48 border-white/16 text-white/82 hover:text-white hover:border-white/28'
                   }`}
                 >
                   <Car className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
@@ -613,8 +741,25 @@ export function HeroKotoLens({
                 </button>
               )}
 
+              {/* Кнопка полного повтора 3-фазного краш-теста с 0:00 */}
+              {canRestartCrashTest && (
+                <button
+                  type="button"
+                  data-testid="hero-crash-restart-btn"
+                  onClick={() => contrastAudioEngine.restartCrashTest()}
+                  title="Запустить 3-фазный краш-тест сначала (0:00 · Обычный эфир → Стоп → FMWorks)"
+                  aria-label="Повторить краш-тест сначала"
+                  className="min-h-[44px] sm:min-h-[46px] px-3.5 sm:px-4 rounded-full inline-flex items-center gap-2 text-xs font-semibold bg-black/48 backdrop-blur-md border border-white/16 text-white/88 hover:text-white hover:border-[#FF4820] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
+                  <span>Сначала</span>
+                </button>
+              )}
+
+              {/* Главная кнопка запуска / паузы / продолжения / повтора краш-теста */}
               <button
                 type="button"
+                data-testid="hero-crash-main-btn"
                 onClick={() => contrastAudioEngine.toggleCrashTestOrShowreel()}
                 className={`min-h-[46px] px-5 py-2.5 rounded-full inline-flex items-center gap-2.5 text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                   isPlayingAny || isStopPausePhase
@@ -624,6 +769,8 @@ export function HeroKotoLens({
               >
                 {isPlayingAny || isStopPausePhase ? (
                   <Pause className="w-3.5 h-3.5 fill-current shrink-0" aria-hidden="true" />
+                ) : snap.hasCompletedCrashTest ? (
+                  <RotateCcw className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                 ) : (
                   <Play className="w-3.5 h-3.5 fill-current shrink-0" aria-hidden="true" />
                 )}
@@ -633,15 +780,25 @@ export function HeroKotoLens({
                     : isStopPausePhase
                       ? `Пауза · ${snap.stopPauseDurationSec} сек`
                       : isPlayingAny
-                        ? `Пауза · ${formatAudioTime(snap.filmElapsedSec)}`
-                        : 'Краш-тест в эфире'}
+                        ? `Пауза · ${formatAudioTime(Math.floor(relativeFilmElapsedSec))}`
+                        : snap.hasCompletedCrashTest
+                          ? 'Повторить краш-тест'
+                          : snap.isPausedMidSession
+                            ? `Продолжить · ${formatAudioTime(
+                                Math.floor(
+                                  snap.crashPhase === 'idle' && snap.crashElapsedSec > 0
+                                    ? snap.crashElapsedSec
+                                    : relativeFilmElapsedSec
+                                )
+                              )}`
+                            : 'Краш-тест в эфире'}
                 </span>
               </button>
             </div>
           </div>
 
           {/* Тонкая линия прогресса воспроизведения по нижнему краю */}
-          {isPlayingAny && (
+          {(isPlayingAny || snap.isPausedMidSession) && (
             <div
               aria-hidden="true"
               className="pointer-events-none absolute inset-x-0 bottom-0 z-30 h-0.5 bg-white/12 overflow-hidden"

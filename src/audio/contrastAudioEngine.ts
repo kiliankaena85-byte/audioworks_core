@@ -17,6 +17,32 @@ import { duelAudioStore } from './duelAudioStore';
 
 export type StageMode = CommercialStageMode;
 
+const HERO_VOLUME_STORAGE_KEY = 'fmworks_hero_volume_v1';
+const HERO_MUTED_STORAGE_KEY = 'fmworks_hero_muted_v1';
+const DEFAULT_HERO_VOLUME = 0.85;
+
+function readInitialVolume(): number {
+  if (typeof window === 'undefined') return DEFAULT_HERO_VOLUME;
+  try {
+    const raw = window.localStorage.getItem(HERO_VOLUME_STORAGE_KEY);
+    if (raw === null) return DEFAULT_HERO_VOLUME;
+    const parsed = Number.parseFloat(raw);
+    if (!Number.isFinite(parsed)) return DEFAULT_HERO_VOLUME;
+    return Math.max(0, Math.min(1, parsed));
+  } catch {
+    return DEFAULT_HERO_VOLUME;
+  }
+}
+
+function readInitialMuted(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(HERO_MUTED_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 export interface ContrastStageSnapshot {
   /** Текущая визуально-звуковая фаза сцены */
   mode: StageMode;
@@ -26,10 +52,12 @@ export interface ContrastStageSnapshot {
   isSoundPlaying: boolean;
   /** Включён ли тумблер «🚗 Шум дороги» */
   roadNoiseEnabled: boolean;
-  /** Прошедшее время студийного ролика */
+  /** Прошедшее время студийного ролика (абсолютное в сек) */
   filmElapsedSec: number;
-  /** Полная длительность текущего ролика */
+  /** Полная длительность текущего ролика (абсолютная верхняя граница в сек) */
   filmDurationSec: number;
+  /** Начальная секунда текущего фокус-сегмента (для расчёта чистого прогресса 0..100%) */
+  focusSegmentStartSec: number;
   /** Сколько крупных слов уже отпечаталось в такт диктору */
   revealedWordsCount: number;
   /** Текущая синхронная глава ролика */
@@ -50,6 +78,14 @@ export interface ContrastStageSnapshot {
   crashElapsedSec: number;
   /** Раскрыта ли круглая линза внимания на 100% площади экрана */
   isLensExpanded: boolean;
+  /** Громкость сцены (0..1) */
+  volume: number;
+  /** Приглушён ли звук (Mute) */
+  isMuted: boolean;
+  /** Завершился ли прогон краш-теста / ролика до конца (для умного повтора) */
+  hasCompletedCrashTest: boolean;
+  /** Поставлен ли краш-тест / ролик на паузу посреди воспроизведения */
+  isPausedMidSession: boolean;
 }
 
 type SnapshotListener = (snap: ContrastStageSnapshot) => void;
@@ -57,6 +93,7 @@ type SnapshotListener = (snap: ContrastStageSnapshot) => void;
 class ContrastAudioEngine {
   private ctx: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
+  private synthMasterGain: GainNode | null = null;
   private mediaElementSource: MediaElementAudioSourceNode | null = null;
   private roadGain: GainNode | null = null;
   private roadSource: AudioBufferSourceNode | null = null;
@@ -80,6 +117,7 @@ class ContrastAudioEngine {
   private forceClutterRoadNoise = false;
   private filmElapsedSec = 0;
   private filmDurationSec = AUDIOWORKS_TOTAL_DURATION_SEC;
+  private focusSegmentStartSec = 0;
   private revealedWordsCount = 0;
   private activeChapter: CommercialChapter | null = null;
   private totalFocusWords = 8;
@@ -87,6 +125,16 @@ class ContrastAudioEngine {
   private crashPhase: CrashTestPhase = 'idle';
   private crashElapsedSec = 0;
   private isLensExpanded = false;
+
+  private volume: number = readInitialVolume();
+  private lastNonZeroVolume: number =
+    this.volume > 0.02 ? this.volume : DEFAULT_HERO_VOLUME;
+  private isMuted: boolean = readInitialMuted();
+
+  private hasCompletedCrashTest = false;
+  private isPausedMidSession = false;
+  private pausedInClutter = false;
+  private pausedClutterElapsedSec = 0;
 
   private listeners = new Set<SnapshotListener>();
   private onStartHooks = new Set<() => void>();
@@ -112,6 +160,7 @@ class ContrastAudioEngine {
       roadNoiseEnabled: this.roadNoiseEnabled,
       filmElapsedSec: this.filmElapsedSec,
       filmDurationSec: this.filmDurationSec,
+      focusSegmentStartSec: this.focusSegmentStartSec,
       revealedWordsCount: this.revealedWordsCount,
       activeChapter: this.activeChapter,
       hasCustomAudio: this.customAudioUrl !== null,
@@ -131,12 +180,95 @@ class ContrastAudioEngine {
       crashPhase: this.crashPhase,
       crashElapsedSec: this.crashElapsedSec,
       isLensExpanded: this.isLensExpanded,
+      volume: this.volume,
+      isMuted: this.isMuted,
+      hasCompletedCrashTest: this.hasCompletedCrashTest,
+      isPausedMidSession: this.isPausedMidSession,
     };
   }
 
   private emit(): void {
     const snap = this.getSnapshot();
     this.listeners.forEach((fn) => fn(snap));
+  }
+
+  private getEffectiveGain(): number {
+    if (this.isMuted) return 0;
+    return Math.max(0, Math.min(1, this.volume));
+  }
+
+  private syncVolumeToNodes(): void {
+    const effective = this.getEffectiveGain();
+    if (this.htmlAudio) {
+      this.htmlAudio.volume = effective;
+      this.htmlAudio.muted = this.isMuted;
+    }
+    if (this.ctx && this.synthMasterGain) {
+      try {
+        this.synthMasterGain.gain.setTargetAtTime(
+          effective,
+          this.ctx.currentTime,
+          0.025
+        );
+      } catch {
+        this.synthMasterGain.gain.value = effective;
+      }
+    }
+  }
+
+  private persistVolumeState(): void {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(
+        HERO_VOLUME_STORAGE_KEY,
+        this.volume.toFixed(2)
+      );
+      window.localStorage.setItem(
+        HERO_MUTED_STORAGE_KEY,
+        this.isMuted ? '1' : '0'
+      );
+    } catch {
+      // Ignore storage quota errors
+    }
+  }
+
+  /**
+   * Устанавливает громкость сцены Hero (0..1) и мгновенно синхронизирует HTMLAudioElement + WebAudio.
+   */
+  public setVolume(nextVolume: number): void {
+    const clamped = Math.max(0, Math.min(1, Number.isFinite(nextVolume) ? nextVolume : DEFAULT_HERO_VOLUME));
+    this.volume = clamped;
+    if (clamped > 0.01) {
+      this.lastNonZeroVolume = clamped;
+      if (this.isMuted) {
+        this.isMuted = false;
+      }
+    } else if (clamped === 0) {
+      this.isMuted = true;
+    }
+    this.syncVolumeToNodes();
+    this.persistVolumeState();
+    this.emit();
+  }
+
+  /**
+   * Переключает режим Mute/Unmute с сохранением предыдущего ненулевого уровня громкости.
+   */
+  public toggleMute(): void {
+    if (this.isMuted) {
+      this.isMuted = false;
+      if (this.volume <= 0.01) {
+        this.volume = this.lastNonZeroVolume > 0.02 ? this.lastNonZeroVolume : DEFAULT_HERO_VOLUME;
+      }
+    } else {
+      if (this.volume > 0.01) {
+        this.lastNonZeroVolume = this.volume;
+      }
+      this.isMuted = true;
+    }
+    this.syncVolumeToNodes();
+    this.persistVolumeState();
+    this.emit();
   }
 
   public syncPersonaConfig(
@@ -162,6 +294,7 @@ class ContrastAudioEngine {
       !this.isFilmPlaying &&
       !this.isSoundPlaying
     ) {
+      this.focusSegmentStartSec = resolved.focus.startSec;
       this.filmDurationSec =
         resolved.focus.endSec !== null
           ? resolved.focus.endSec
@@ -249,9 +382,13 @@ class ContrastAudioEngine {
       this.analyser.smoothingTimeConstant = 0.82;
       this.analyser.connect(this.ctx.destination);
 
+      this.synthMasterGain = this.ctx.createGain();
+      this.synthMasterGain.gain.value = this.getEffectiveGain();
+      this.synthMasterGain.connect(this.analyser);
+
       this.roadGain = this.ctx.createGain();
       this.roadGain.gain.value = 0.0001;
-      this.roadGain.connect(this.analyser);
+      this.roadGain.connect(this.synthMasterGain);
     }
 
     if (this.ctx.state === 'suspended') {
@@ -267,6 +404,7 @@ class ContrastAudioEngine {
       }
     }
 
+    this.syncVolumeToNodes();
     return this.ctx;
   }
 
@@ -276,7 +414,8 @@ class ContrastAudioEngine {
     if (!this.htmlAudio) {
       const audio = new Audio(desiredUrl);
       audio.preload = 'metadata';
-      audio.volume = 1.0;
+      audio.volume = this.getEffectiveGain();
+      audio.muted = this.isMuted;
       this.activeSrcUrl = desiredUrl;
 
       audio.addEventListener('loadedmetadata', () => {
@@ -299,6 +438,11 @@ class ContrastAudioEngine {
       this.htmlAudio.src = targetUrl;
       this.htmlAudio.load();
       this.activeSrcUrl = targetUrl;
+      this.htmlAudio.volume = this.getEffectiveGain();
+      this.htmlAudio.muted = this.isMuted;
+    } else {
+      this.htmlAudio.volume = this.getEffectiveGain();
+      this.htmlAudio.muted = this.isMuted;
     }
     return this.htmlAudio;
   }
@@ -320,7 +464,8 @@ class ContrastAudioEngine {
 
   private playSynthClutterBed(durationSec: number): void {
     const ctx = this.ensureAudioGraph();
-    if (!ctx || !this.analyser) return;
+    const targetNode = this.synthMasterGain ?? this.analyser;
+    if (!ctx || !targetNode) return;
     this.stopSynthClutterNodes();
 
     // Глухой сжатый радийный фон с торопливой модуляцией (используется как фоллбэк, если выбран кастомный шоурил без трека радио)
@@ -337,7 +482,7 @@ class ContrastAudioEngine {
     bp.Q.value = 1.9;
 
     bp.connect(bandGain);
-    bandGain.connect(this.analyser);
+    bandGain.connect(targetNode);
     this.clutterNodes.push(bp, bandGain);
 
     const notes = [220, 277.18, 329.63, 246.94, 293.66, 369.99];
@@ -362,7 +507,8 @@ class ContrastAudioEngine {
 
   private playTapeStopCue(): void {
     const ctx = this.ensureAudioGraph();
-    if (!ctx || !this.analyser) return;
+    const targetNode = this.synthMasterGain ?? this.analyser;
+    if (!ctx || !targetNode) return;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
@@ -372,7 +518,7 @@ class ContrastAudioEngine {
     g.gain.setValueAtTime(0.14, now);
     g.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
     osc.connect(g);
-    g.connect(this.analyser);
+    g.connect(targetNode);
     osc.start(now);
     osc.stop(now + 0.24);
   }
@@ -400,9 +546,13 @@ class ContrastAudioEngine {
     this.customAudioUrl = objectUrl;
     this.customAudioName = fileName;
     this.filmElapsedSec = 0;
+    this.focusSegmentStartSec = 0;
     this.mode = 'focus';
     this.crashPhase = 'audioworks';
     this.isLensExpanded = true;
+    this.hasCompletedCrashTest = false;
+    this.isPausedMidSession = false;
+    this.pausedInClutter = false;
     this.activeChapter = getCommercialStateAtTime(AUDIOWORKS_FOCUS_ENTRY_SEC + 1).chapter;
     this.revealedWordsCount = this.totalFocusWords;
 
@@ -439,11 +589,15 @@ class ContrastAudioEngine {
     this.isFilmPlaying = false;
     this.isSoundPlaying = false;
     this.filmElapsedSec = 0;
+    this.focusSegmentStartSec = 0;
     this.filmDurationSec = AUDIOWORKS_TOTAL_DURATION_SEC;
     this.activeChapter = null;
     this.crashPhase = 'idle';
     this.crashElapsedSec = 0;
     this.isLensExpanded = false;
+    this.hasCompletedCrashTest = false;
+    this.isPausedMidSession = false;
+    this.pausedInClutter = false;
     this.mode = 'stream';
 
     this.ensureHtmlAudio(AUDIOWORKS_WAV_URL);
@@ -457,7 +611,7 @@ class ContrastAudioEngine {
    */
   public readFrequencyBins(target: Uint8Array<ArrayBuffer>): boolean {
     const active = this.isSoundPlaying || this.isFilmPlaying;
-    if (!active || this.crashPhase === 'stop_pause') {
+    if (!active || this.crashPhase === 'stop_pause' || this.isMuted || this.volume <= 0.01) {
       return false;
     }
 
@@ -474,7 +628,7 @@ class ContrastAudioEngine {
 
     // Органический спектральный фоллбэк для окружений без физического аудио-выхода (headless preview)
     const t = performance.now() * 0.0042 + this.filmElapsedSec * 1.7;
-    const scale = this.mode === 'stream' ? 115 : 215;
+    const scale = (this.mode === 'stream' ? 115 : 215) * this.getEffectiveGain();
     for (let i = 0; i < target.length; i++) {
       const bandRatio = i / Math.max(1, target.length);
       const voiceFormant = Math.exp(-Math.pow((bandRatio - 0.24) * 4.2, 2));
@@ -498,6 +652,9 @@ class ContrastAudioEngine {
     this.stopSegmentAtSec = null;
     this.isFilmPlaying = false;
     this.isSoundPlaying = false;
+    this.isPausedMidSession = false;
+    this.pausedInClutter = false;
+    this.hasCompletedCrashTest = true;
     if (this.isLensExpanded) {
       this.mode = 'focus';
       this.crashPhase = 'audioworks';
@@ -534,6 +691,8 @@ class ContrastAudioEngine {
     this.clearPlaybackOnly();
     this.isFilmPlaying = false;
     this.isSoundPlaying = false;
+    this.isPausedMidSession = false;
+    this.pausedInClutter = false;
     this.activeChapter = null;
     if (this.crashPhase === 'clutter' || this.crashPhase === 'stop_pause') {
       this.crashPhase = 'idle';
@@ -544,13 +703,25 @@ class ContrastAudioEngine {
   }
 
   /**
-   * Пауза звука с сохранением текущего визуального состояния линзы и режима.
+   * Пауза звука с сохранением текущего визуального состояния линзы, позиции и режима.
    */
   public pauseKeepingMode(): void {
+    const wasInClutter =
+      this.crashPhase === 'clutter' || this.crashPhase === 'stop_pause';
+    if (wasInClutter) {
+      this.pausedInClutter = true;
+      this.pausedClutterElapsedSec = this.crashElapsedSec;
+    } else {
+      this.pausedInClutter = false;
+    }
+
     this.clearPlaybackOnly();
     this.isFilmPlaying = false;
     this.isSoundPlaying = false;
-    if (this.crashPhase === 'clutter' || this.crashPhase === 'stop_pause') {
+    this.isPausedMidSession = true;
+    this.hasCompletedCrashTest = false;
+
+    if (wasInClutter) {
       this.crashPhase = this.isLensExpanded ? 'audioworks' : 'idle';
     }
     this.syncRoadNoiseNode();
@@ -646,18 +817,7 @@ class ContrastAudioEngine {
 
       const t = audio.currentTime;
       if (this.stopSegmentAtSec !== null && t >= this.stopSegmentAtSec) {
-        audio.pause();
-        this.stopSegmentAtSec = null;
-        this.isSoundPlaying = false;
-        this.isFilmPlaying = false;
-        this.forceClutterRoadNoise = false;
-        this.activeChapter = null;
-        this.syncRoadNoiseNode();
-        if (this.tickIntervalId !== null) {
-          window.clearInterval(this.tickIntervalId);
-          this.tickIntervalId = null;
-        }
-        this.emit();
+        this.finishPlaybackOnFocusFrame();
         return;
       }
 
@@ -679,7 +839,8 @@ class ContrastAudioEngine {
     startSec: number,
     endSec: number | null,
     fullFilmMode: boolean,
-    forceFocusMode = false
+    forceFocusMode = false,
+    preserveSegmentStartSec?: number
   ): void {
     this.onStartHooks.forEach((fn) => fn());
     this.clearPlaybackOnly();
@@ -691,8 +852,13 @@ class ContrastAudioEngine {
 
     this.isFilmPlaying = fullFilmMode;
     this.isSoundPlaying = true;
+    this.isPausedMidSession = false;
+    this.pausedInClutter = false;
+    this.hasCompletedCrashTest = false;
     this.stopSegmentAtSec = endSec;
     this.filmElapsedSec = startSec;
+    this.focusSegmentStartSec =
+      preserveSegmentStartSec !== undefined ? preserveSegmentStartSec : startSec;
     if (endSec !== null) {
       this.filmDurationSec = endSec;
     }
@@ -753,21 +919,26 @@ class ContrastAudioEngine {
    * - Фаза 2 (4.0–4.5 с): резкий СТОП и пауза 0.5 сек — круглая линза упруго раскрывается на весь экран (150%).
    * - Фаза 3 (с 4.5 с): чистый, объёмный мир AudioWorks со студийным звуком и живым эквалайзером.
    */
-  public startCrashTest(): void {
+  public startCrashTest(initialClutterOffsetSec = 0): void {
     this.onStartHooks.forEach((fn) => fn());
     this.clearPlaybackOnly();
 
     const clutterDur = this.getClutterDurationSec();
+    const safeOffset = Math.max(0, Math.min(clutterDur - 0.2, initialClutterOffsetSec));
     const cmsClutter = this.cmsHeroPlayback?.clutter;
 
     this.crashPhase = 'clutter';
-    this.crashElapsedSec = 0;
+    this.crashElapsedSec = safeOffset;
     this.isLensExpanded = false;
     this.mode = 'stream';
     this.isFilmPlaying = true;
     this.isSoundPlaying = true;
+    this.isPausedMidSession = false;
+    this.pausedInClutter = false;
+    this.hasCompletedCrashTest = false;
     this.forceClutterRoadNoise = cmsClutter ? cmsClutter.roadNoiseOnClutter : true;
-    this.filmElapsedSec = 0;
+    this.filmElapsedSec = safeOffset;
+    this.focusSegmentStartSec = 0;
 
     const duelSnap = duelAudioStore.getSnapshot();
 
@@ -777,7 +948,7 @@ class ContrastAudioEngine {
       if (audio) {
         const launchCustomClutter = () => {
           try {
-            audio.currentTime = cmsClutter.startSec;
+            audio.currentTime = cmsClutter.startSec + safeOffset;
           } catch {
             // Ignore seek before metadata
           }
@@ -795,7 +966,7 @@ class ContrastAudioEngine {
       this.ensureAudioGraph();
       if (audio) {
         try {
-          audio.currentTime = 0;
+          audio.currentTime = safeOffset;
         } catch {
           // Ignore seek before metadata
         }
@@ -805,7 +976,7 @@ class ContrastAudioEngine {
       const audio = this.ensureHtmlAudio(AUDIOWORKS_WAV_URL);
       this.ensureAudioGraph();
       if (audio) {
-        const startClutterAt = cmsClutter?.startSec ?? 1.6;
+        const startClutterAt = (cmsClutter?.startSec ?? 1.6) + safeOffset;
         const launchClutter = () => {
           try {
             audio.currentTime = startClutterAt;
@@ -823,7 +994,7 @@ class ContrastAudioEngine {
       }
     } else {
       this.ensureAudioGraph();
-      this.playSynthClutterBed(clutterDur);
+      this.playSynthClutterBed(Math.max(0.5, clutterDur - safeOffset));
     }
 
     this.syncRoadNoiseNode();
@@ -831,7 +1002,7 @@ class ContrastAudioEngine {
 
     if (typeof window === 'undefined') return;
 
-    this.crashStartedAtMs = performance.now();
+    this.crashStartedAtMs = performance.now() - safeOffset * 1000;
     let enteredStopPause = false;
 
     this.crashTimerId = window.setInterval(() => {
@@ -881,16 +1052,31 @@ class ContrastAudioEngine {
         focusTarget.startSec,
         focusTarget.endSec,
         true,
-        true
+        true,
+        focusTarget.startSec
       );
     }, 90);
   }
 
   /**
+   * Принудительный перезапуск полного 3-фазного краш-теста с 0:00 (Фаза 1 «Обычный эфир» -> Стоп-пауза -> FMWorks).
+   * Работает из любого состояния (даже когда линза уже раскрыта или трек завершён).
+   */
+  public restartCrashTest(): void {
+    this.pausedInClutter = false;
+    this.pausedClutterElapsedSec = 0;
+    this.isPausedMidSession = false;
+    this.hasCompletedCrashTest = false;
+    this.startCrashTest(0);
+  }
+
+  /**
    * Умный триггер для главной кнопки `[ ▶ Краш-тест в эфире ]` и клика по полотну:
    * - Если звук уже играет — ставит на паузу.
-   * - Если линза ещё свернута — запускает полный 3-фазный краш-тест (4 с радио-блока -> СТОП 0.5 с -> взрыв цвета AudioWorks).
-   * - Если линза уже раскрыта — сразу включает чистый звук AudioWorks.
+   * - Если краш-тест / трек уже доиграл до конца (`hasCompletedCrashTest`) — запускает полный 3-фазный краш-тест с 0:00!
+   * - Если пользователь ставил на паузу посреди воспроизведения (`isPausedMidSession`) — плавно продолжает с места паузы.
+   * - Если линза была переключена вручную в режим FMWorks (`isLensExpanded`) без старта — включает шоурил FMWorks.
+   * - В исходном состоянии — запускает полный 3-фазный краш-тест.
    */
   public toggleCrashTestOrShowreel(): void {
     if (
@@ -903,25 +1089,58 @@ class ContrastAudioEngine {
       return;
     }
 
+    if (this.hasCompletedCrashTest) {
+      this.restartCrashTest();
+      return;
+    }
+
+    if (this.isPausedMidSession) {
+      if (this.pausedInClutter) {
+        this.startCrashTest(this.pausedClutterElapsedSec);
+        return;
+      }
+      const focusTarget = this.getPreferredFocusAudio();
+      const resumeSec =
+        this.filmElapsedSec > focusTarget.startSec &&
+        (focusTarget.endSec === null || this.filmElapsedSec < focusTarget.endSec - 0.3)
+          ? this.filmElapsedSec
+          : focusTarget.startSec;
+      this.isLensExpanded = true;
+      this.crashPhase = 'audioworks';
+      this.seekAndPlayUrl(
+        focusTarget.url,
+        resumeSec,
+        focusTarget.endSec,
+        true,
+        true,
+        focusTarget.startSec
+      );
+      return;
+    }
+
     if (this.isLensExpanded) {
       this.expandLensWithAudioWorks();
       return;
     }
 
-    this.startCrashTest();
+    this.startCrashTest(0);
   }
 
   public expandLensWithAudioWorks(): void {
     this.isLensExpanded = true;
     this.crashPhase = 'audioworks';
     this.crashElapsedSec = CRASH_TEST_TOTAL_INTRO_SEC;
+    this.hasCompletedCrashTest = false;
+    this.isPausedMidSession = false;
+    this.pausedInClutter = false;
     const focusTarget = this.getPreferredFocusAudio();
     this.seekAndPlayUrl(
       focusTarget.url,
       focusTarget.startSec,
       focusTarget.endSec,
       true,
-      true
+      true,
+      focusTarget.startSec
     );
   }
 
@@ -932,6 +1151,9 @@ class ContrastAudioEngine {
     this.isLensExpanded = false;
     this.crashPhase = 'idle';
     this.crashElapsedSec = 0;
+    this.hasCompletedCrashTest = false;
+    this.isPausedMidSession = false;
+    this.pausedInClutter = false;
     this.mode = 'stream';
     this.activeChapter = null;
     this.syncRoadNoiseNode();
@@ -939,50 +1161,22 @@ class ContrastAudioEngine {
   }
 
   /**
-   * Мгновенное переключение режима `[ Серый блок ] <-> [ AudioWorks ]`:
-   * - `stream`: возвращает серый эфирный поток
-   * - `focus`: раскрывает полноцветный мир AudioWorks
+   * Переключение режима сцены `[ Обычный эфир ] <-> [ FMWorks ]`:
+   * - `stream`: если шло воспроизведение — запускает краш-тест с 1-й фазы («Обычный эфир»); если было на паузе/в покое — возвращает свёрнутую линзу без резкого автозапуска.
+   * - `focus`: раскрывает полноцветный мир FMWorks и включает студийный шоурил.
    */
   public selectLens(target: 'stream' | 'focus'): void {
     if (target === 'stream') {
-      this.isLensExpanded = false;
-      this.crashPhase = 'idle';
-      this.crashElapsedSec = 0;
-
-      const cmsClutter = this.cmsHeroPlayback?.clutter;
-      if (cmsClutter && cmsClutter.mode === 'custom_upload') {
-        this.mode = 'stream';
-        this.seekAndPlayUrl(
-          cmsClutter.audioUrl,
-          cmsClutter.startSec,
-          cmsClutter.startSec + cmsClutter.durationSec,
-          false,
-          false
-        );
+      const wasActive =
+        this.isFilmPlaying ||
+        this.isSoundPlaying ||
+        this.crashPhase === 'clutter' ||
+        this.crashPhase === 'stop_pause';
+      if (wasActive) {
+        this.restartCrashTest();
         return;
       }
-
-      const duelSnap = duelAudioStore.getSnapshot();
-      if (!this.cmsHeroPlayback && duelSnap.radioTrack) {
-        this.mode = 'stream';
-        this.seekAndPlayUrl(
-          duelSnap.radioTrack.objectUrl,
-          0,
-          duelSnap.radioTrack.effectiveDurationSec,
-          false,
-          false
-        );
-        return;
-      }
-
-      if (this.customAudioUrl !== null) {
-        this.pauseKeepingMode();
-        this.mode = 'stream';
-        this.emit();
-        return;
-      }
-
-      this.seekAndPlayUrl(AUDIOWORKS_WAV_URL, 0, 5.9, false, false);
+      this.collapseLensToSpotlight();
       return;
     }
 
@@ -995,10 +1189,13 @@ class ContrastAudioEngine {
   public startSignatureShowreel(startSec = AUDIOWORKS_FOCUS_ENTRY_SEC): void {
     this.isLensExpanded = true;
     this.crashPhase = 'audioworks';
+    this.hasCompletedCrashTest = false;
+    this.isPausedMidSession = false;
+    this.pausedInClutter = false;
     if (this.customAudioUrl !== null) {
       const customStart =
         Math.abs(startSec - AUDIOWORKS_FOCUS_ENTRY_SEC) < 0.25 ? 0 : startSec;
-      this.seekAndPlayUrl(this.customAudioUrl, customStart, null, true, true);
+      this.seekAndPlayUrl(this.customAudioUrl, customStart, null, true, true, 0);
       return;
     }
     if (this.cmsHeroPlayback) {
@@ -1012,7 +1209,8 @@ class ContrastAudioEngine {
         effectiveStart,
         target.endSec,
         true,
-        true
+        true,
+        target.startSec
       );
       return;
     }
@@ -1023,11 +1221,12 @@ class ContrastAudioEngine {
         0,
         duelSnap.audioworksTrack.effectiveDurationSec,
         true,
-        true
+        true,
+        0
       );
       return;
     }
-    this.seekAndPlayUrl(AUDIOWORKS_WAV_URL, startSec, null, true, true);
+    this.seekAndPlayUrl(AUDIOWORKS_WAV_URL, startSec, null, true, true, startSec);
   }
 
   public toggleShowreelPlayback(preferredStartSec = AUDIOWORKS_FOCUS_ENTRY_SEC): void {
@@ -1047,7 +1246,14 @@ class ContrastAudioEngine {
     const targetSec = clamped * this.filmDurationSec;
     const forceFocus =
       this.activeSrcUrl !== AUDIOWORKS_WAV_URL || targetSec >= AUDIOWORKS_FOCUS_ENTRY_SEC;
-    this.seekAndPlayUrl(this.activeSrcUrl, targetSec, this.stopSegmentAtSec, true, forceFocus);
+    this.seekAndPlayUrl(
+      this.activeSrcUrl,
+      targetSec,
+      this.stopSegmentAtSec,
+      true,
+      forceFocus,
+      this.focusSegmentStartSec
+    );
   }
 }
 

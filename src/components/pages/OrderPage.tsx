@@ -100,10 +100,15 @@ import {
   resolveOfflineCounterpartyByInn,
 } from '../../data/konturIntegrationCore';
 import {
+  type BrandedDocumentKind,
   createDefaultStudioLegalProfiles,
   type OrderDocumentMeta,
   StudioLegalProfilesConfig,
 } from '../../data/studioDocumentsCore';
+import {
+  buildCommercialProposalFromDraft,
+  downloadCommercialProposalPdfFromDraft,
+} from '../../data/orderDraftKpPdf';
 import { ReservationConfirmedModal } from '../ReservationConfirmedModal';
 import { BrandedDocumentSuiteModal } from '../documents/BrandedDocumentSuiteModal';
 
@@ -171,6 +176,14 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
   const [isDurationIndustryExpanded, setIsDurationIndustryExpanded] =
     useState<boolean>(false);
   const [isDocModalOpen, setIsDocModalOpen] = useState<boolean>(false);
+  const [docModalInitialKind, setDocModalInitialKind] =
+    useState<BrandedDocumentKind>('invoice');
+  const [isGeneratingKpPdf, setIsGeneratingKpPdf] = useState<boolean>(false);
+  const [downloadedKpFeedback, setDownloadedKpFeedback] = useState<{
+    fileName: string;
+    kpNumber: string;
+    totalFormatted: string;
+  } | null>(null);
   const [quickInnName, setQuickInnName] = useState<string>('');
   const [quickInnDigits, setQuickInnDigits] = useState<string>('');
   const [quickInnError, setQuickInnError] = useState<string | null>(null);
@@ -249,6 +262,33 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       draft.reservationProdSelection
     );
   }, [mediaReservation, draft.reservationProdSelection]);
+
+  const draftCommercialProposal = useMemo(
+    () => buildCommercialProposalFromDraft(draft, { legalProfiles }),
+    [draft, legalProfiles]
+  );
+
+  const handleDownloadDraftKpPdf = useCallback(async () => {
+    if (isGeneratingKpPdf) return;
+    setIsGeneratingKpPdf(true);
+    try {
+      const result = await downloadCommercialProposalPdfFromDraft(draft, {
+        legalProfiles,
+      });
+      setDownloadedKpFeedback({
+        fileName: result.fileName,
+        kpNumber: result.proposal.kpNumber,
+        totalFormatted: result.proposal.totalPayableFormatted,
+      });
+    } finally {
+      setIsGeneratingKpPdf(false);
+    }
+  }, [draft, isGeneratingKpPdf, legalProfiles]);
+
+  const handleOpenDraftKpPreview = useCallback(() => {
+    setDocModalInitialKind('kp');
+    setIsDocModalOpen(true);
+  }, []);
 
   // Загружаем актуальное расписание смен и праздников студии с сервера (с локальным резервом)
   useEffect(() => {
@@ -1336,7 +1376,10 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
               <button
                 type="button"
                 data-testid="confirmed-open-invoice-btn"
-                onClick={() => setIsDocModalOpen(true)}
+                onClick={() => {
+                  setDocModalInitialKind('invoice');
+                  setIsDocModalOpen(true);
+                }}
                 className="min-h-[46px] px-5 py-2.5 rounded-full bg-[#FF4820] hover:bg-[#E63C17] text-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
               >
                 <FileText className="w-4 h-4 shrink-0" aria-hidden="true" />
@@ -2887,6 +2930,52 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                     </div>
                   </div>
 
+                  {/* Коммерческое предложение до оплаты (для эфира + продакшна) */}
+                  <div
+                    data-testid="order-draft-kp-pdf-box"
+                    className="pt-3.5 border-t border-[#111111]/10 dark:border-white/10 space-y-2.5"
+                  >
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
+                        Коммерческое предложение до оплаты
+                      </span>
+                      <span className="text-[#111111]/56 dark:text-[#F4F3EF]/56 tabular-nums">
+                        № {draftCommercialProposal.kpNumber}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        disabled={isGeneratingKpPdf}
+                        data-testid="order-draft-download-kp-pdf-btn"
+                        onClick={() => void handleDownloadDraftKpPdf()}
+                        className="min-h-[42px] px-3.5 py-2 rounded-xl bg-[#111111] hover:bg-[#FF4820] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0"
+                      >
+                        <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                        <span>
+                          {isGeneratingKpPdf ? 'Формируем PDF…' : 'Скачать КП в PDF'}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="order-draft-preview-kp-btn"
+                        onClick={handleOpenDraftKpPreview}
+                        className="min-h-[42px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
+                        <span>Бланк КП (A4)</span>
+                      </button>
+                    </div>
+                    {downloadedKpFeedback && (
+                      <p
+                        data-testid="order-draft-kp-pdf-status"
+                        className="text-[11px] font-medium text-emerald-700 dark:text-emerald-400 leading-snug tabular-nums"
+                      >
+                        КП № {downloadedKpFeedback.kpNumber} ({downloadedKpFeedback.totalFormatted}) скачано: {downloadedKpFeedback.fileName}
+                      </p>
+                    )}
+                  </div>
+
                   <div className="pt-2 flex items-center justify-between gap-3 text-xs">
                     <button
                       type="button"
@@ -2972,6 +3061,55 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                     </div>
                   </div>
 
+                  {/* Коммерческое предложение в PDF из текущего черновика до оплаты */}
+                  <div
+                    data-testid="order-draft-kp-pdf-box"
+                    className="pt-3.5 border-t border-[#111111]/10 dark:border-white/10 space-y-2.5"
+                  >
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
+                        Коммерческое предложение до оплаты
+                      </span>
+                      <span className="text-[#111111]/56 dark:text-[#F4F3EF]/56 tabular-nums">
+                        № {draftCommercialProposal.kpNumber}
+                      </span>
+                    </div>
+                    <p className="text-xs text-[#111111]/66 dark:text-[#F4F3EF]/66 leading-relaxed">
+                      Скачайте официальное КП в формате PDF по текущим параметрам заказа для согласования с руководством или бухгалтерией перед оплатой.
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        disabled={isGeneratingKpPdf}
+                        data-testid="order-draft-download-kp-pdf-btn"
+                        onClick={() => void handleDownloadDraftKpPdf()}
+                        className="min-h-[42px] px-3.5 py-2 rounded-xl bg-[#111111] hover:bg-[#FF4820] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap shrink-0"
+                      >
+                        <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                        <span>
+                          {isGeneratingKpPdf ? 'Формируем PDF…' : 'Скачать КП в PDF'}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="order-draft-preview-kp-btn"
+                        onClick={handleOpenDraftKpPreview}
+                        className="min-h-[42px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
+                        <span>Бланк КП (A4)</span>
+                      </button>
+                    </div>
+                    {downloadedKpFeedback && (
+                      <p
+                        data-testid="order-draft-kp-pdf-status"
+                        className="text-[11px] font-medium text-emerald-700 dark:text-emerald-400 leading-snug tabular-nums"
+                      >
+                        КП № {downloadedKpFeedback.kpNumber} ({downloadedKpFeedback.totalFormatted}) скачано: {downloadedKpFeedback.fileName}
+                      </p>
+                    )}
+                  </div>
+
                   <p className="pt-3 border-t border-[#111111]/10 dark:border-white/10 text-xs text-[#111111]/68 dark:text-[#F4F3EF]/68 leading-relaxed">
                     Продюсер свяжется, уточнит детали и поможет со стартом (100% предоплата по договору или банковской картой). Статус заказа, счёт и готовые файлы всегда доступны в Личном кабинете.
                   </p>
@@ -3035,30 +3173,44 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
         }
       />
 
-      {isDocModalOpen && confirmedOrder && (
+      {isDocModalOpen && (
         <Suspense fallback={null}>
           <BrandedDocumentSuiteModal
             isOpen={isDocModalOpen}
             onClose={() => setIsDocModalOpen(false)}
             mode="client"
-            initialDoc="invoice"
+            initialDoc={docModalInitialKind}
             legalProfiles={legalProfiles}
-            order={{
-              orderNumber: confirmedOrder.orderNumber,
-              createdAtIso: new Date(confirmedOrder.confirmedAtMs).toISOString(),
-              formatLabel: confirmedOrder.formatLabel,
-              baseBudgetRub:
-                confirmedOrder.lockedTotals?.unifiedTotalRub ??
-                (typeof confirmedOrder.selectedBudgetRub === 'number'
-                  ? confirmedOrder.selectedBudgetRub
-                  : 0),
-              defaultDurationSec: confirmedOrder.spotDurationSec || 15,
-              contact: confirmedOrder.contactLine,
-              companyOrInn: confirmedOrder.companyLine,
-              briefText: confirmedOrder.briefNote,
-              documentMeta:
-                confirmedOrder.documentMeta ?? draft.resolvedCounterpartyMeta ?? null,
-            }}
+            order={
+              confirmedOrder && showConfirmedView
+                ? {
+                    orderNumber: confirmedOrder.orderNumber,
+                    createdAtIso: new Date(confirmedOrder.confirmedAtMs).toISOString(),
+                    formatLabel: confirmedOrder.formatLabel,
+                    baseBudgetRub:
+                      confirmedOrder.lockedTotals?.unifiedTotalRub ??
+                      (typeof confirmedOrder.selectedBudgetRub === 'number'
+                        ? confirmedOrder.selectedBudgetRub
+                        : 0),
+                    defaultDurationSec: confirmedOrder.spotDurationSec || 15,
+                    contact: confirmedOrder.contactLine,
+                    companyOrInn: confirmedOrder.companyLine,
+                    briefText: confirmedOrder.briefNote,
+                    documentMeta:
+                      confirmedOrder.documentMeta ?? draft.resolvedCounterpartyMeta ?? null,
+                  }
+                : {
+                    orderNumber: draftCommercialProposal.draftOrderNumber,
+                    createdAtIso: draftCommercialProposal.issueDateIso,
+                    formatLabel: draftCommercialProposal.formatTitle,
+                    baseBudgetRub: draftCommercialProposal.totalPayableRub,
+                    defaultDurationSec: draftCommercialProposal.spotDurationSec,
+                    contact: draftCommercialProposal.customerContact,
+                    companyOrInn: draft.companyLine || draft.companyName || draft.companyInn,
+                    briefText: draftCommercialProposal.briefSummary,
+                    documentMeta: draft.resolvedCounterpartyMeta ?? null,
+                  }
+            }
           />
         </Suspense>
       )}

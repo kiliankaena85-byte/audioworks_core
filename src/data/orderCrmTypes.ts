@@ -1479,9 +1479,9 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
     {
       id: 'crm-seed-completed-2309',
       orderNumber: 'FM-2309',
-      createdAt: isoAt(-132_480),
-      updatedAt: isoAt(-128_160),
-      holdExpiresAt: isoAt(-132_240),
+      createdAt: isoAt(-324_000),
+      updatedAt: isoAt(-319_680),
+      holdExpiresAt: isoAt(-323_760),
       source: 'order_page',
       checkoutMode: 'production_only',
       stage: 'completed_ltv',
@@ -1510,7 +1510,7 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
           fileName: 'transflot_roadtech_20s_master.wav',
           mimeType: 'audio/wav',
           sizeBytes: 2_707_838,
-          uploadedAt: isoAt(-128_200),
+          uploadedAt: isoAt(-319_720),
           versionCode: 'master',
           versionStage: 'master',
           versionNote:
@@ -1524,7 +1524,7 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
           fileName: 'transflot_roadtech_20s_v1.wav',
           mimeType: 'audio/wav',
           sizeBytes: 2_618_000,
-          uploadedAt: isoAt(-128_860),
+          uploadedAt: isoAt(-320_380),
           versionCode: 'v1',
           versionStage: 'draft',
           versionNote:
@@ -1544,13 +1544,13 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
         crmRegistry: 'saved',
         telegram: {
           state: 'delivered',
-          updatedAt: isoAt(-128_160),
+          updatedAt: isoAt(-319_680),
           httpStatus: 200,
           detail: 'Архивная сделка завершена',
         },
         webhook: {
           state: 'delivered',
-          updatedAt: isoAt(-128_160),
+          updatedAt: isoAt(-319_680),
           httpStatus: 200,
           detail: 'Синхронизирован статус completed_ltv',
         },

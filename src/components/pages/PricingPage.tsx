@@ -1,5 +1,5 @@
 import { ArrowRight, ArrowUpRight, Check, FileCheck2, ShieldCheck } from 'lucide-react';
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect } from 'react';
 import {
   LEGAL_RIGHTS_DELIVERABLES,
   LOCAL_EDITORIAL_IMAGES,
@@ -15,33 +15,32 @@ import {
 } from '../../data/pricingData';
 import { BROADCAST_TECH_STANDARD_ROWS } from '../../data/studioDocumentsCore';
 import { OptimizedImage } from '../OptimizedImage';
+import { PricingPackageCharts } from '../PricingPackageCharts';
 import { PricingSection } from '../PricingSection';
 
 interface PricingPageProps {
   scrollAnchor?: string;
+  navigationTick?: number;
   onSelectFormat: (formatId: OrderFormatId) => void;
   onNavigate: (route: PlatformRoute) => void;
 }
 
 export function PricingPage({
   scrollAnchor,
+  navigationTick = 0,
   onSelectFormat,
   onNavigate,
 }: PricingPageProps) {
-  const isFirstMountRef = useRef(true);
-
   useLayoutEffect(() => {
-    const isInitialMount = isFirstMountRef.current;
-    isFirstMountRef.current = false;
     if (!scrollAnchor || typeof document === 'undefined') return;
     const target = document.getElementById(scrollAnchor);
     if (target) {
       target.scrollIntoView({
-        behavior: isInitialMount ? ('instant' as ScrollBehavior) : 'smooth',
+        behavior: 'instant' as ScrollBehavior,
         block: 'start',
       });
     }
-  }, [scrollAnchor]);
+  }, [scrollAnchor, navigationTick]);
 
   const scrollToLocalId = (id: string) => {
     if (typeof document === 'undefined') return;
@@ -85,6 +84,14 @@ export function PricingPage({
             <div className="lg:col-span-4 flex flex-wrap lg:justify-end gap-x-5 gap-y-2 text-xs sm:text-sm font-semibold text-[#111111]/68 dark:text-[#F4F3EF]/68">
               <button
                 type="button"
+                data-testid="pricing-charts-anchor-btn"
+                onClick={() => scrollToLocalId('pricing-visual-charts')}
+                className="min-h-[40px] inline-flex items-center hover:text-[#FF4820] transition-colors cursor-pointer whitespace-nowrap"
+              >
+                Графики наполнения ↓
+              </button>
+              <button
+                type="button"
                 onClick={() => scrollToLocalId('stages-24-48')}
                 className="min-h-[40px] inline-flex items-center hover:text-[#FF4820] transition-colors cursor-pointer whitespace-nowrap"
               >
@@ -112,6 +119,9 @@ export function PricingPage({
 
       {/* Линейка студийных тарифов */}
       <PricingSection onSelectFormat={onSelectFormat} />
+
+      {/* Интерактивные графики сравнения пакетов (Хронометраж / Сложность / Сроки) */}
+      <PricingPackageCharts onSelectFormat={onSelectFormat} />
 
       {/* Сводная сравнительная таблица тарифов и вещательных стандартов (для коммерческих факторов и ИИ-поиска) */}
       <section

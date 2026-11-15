@@ -968,8 +968,13 @@ function readOrdersCrmStore(): PersistedOrdersCrmStore {
               ? normalizeClientEmail(withSla.clientEmail)
               : normalizeClientEmail(seedMatch?.clientEmail);
         if (seedMatch) {
+          const syncArchiveTimestamps =
+            seedMatch.id === 'crm-seed-completed-2309' &&
+            withSla.stage === 'completed_ltv';
           return ensureOrderApprovalWorkflow({
             ...withSla,
+            createdAt: syncArchiveTimestamps ? seedMatch.createdAt : withSla.createdAt,
+            updatedAt: syncArchiveTimestamps ? seedMatch.updatedAt : withSla.updatedAt,
             clientEmail: resolvedSeedEmail,
             preferredDeliveryChannel: normPref.channel,
             preferredDeliveryDetail: normPref.detail,

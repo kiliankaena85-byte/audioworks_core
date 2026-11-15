@@ -1,5 +1,5 @@
 import { ArrowRight, Mic, Radio } from 'lucide-react';
-import { Suspense, useLayoutEffect, useRef } from 'react';
+import { Suspense, useLayoutEffect } from 'react';
 import { CasePlayerSnapshot } from '../../audio/casePlayerEngine';
 import { BrandDomainVariant } from '../../data/brandKitData';
 import { BrandCasePoster, CaseId } from '../../data/casesData';
@@ -20,6 +20,7 @@ function SectionPlaceholder() {
 
 interface HomePageProps {
   scrollAnchor?: string;
+  navigationTick?: number;
   brandVariant: BrandDomainVariant;
   onOpenBrandKit?: () => void;
   playerSnap: CasePlayerSnapshot;
@@ -32,6 +33,7 @@ interface HomePageProps {
 
 export function HomePage({
   scrollAnchor,
+  navigationTick = 0,
   brandVariant,
   onOpenBrandKit,
   playerSnap,
@@ -41,20 +43,16 @@ export function HomePage({
   onNavigate,
   onStartStudioOrder,
 }: HomePageProps) {
-  const isFirstMountRef = useRef(true);
-
   useLayoutEffect(() => {
-    const isInitialMount = isFirstMountRef.current;
-    isFirstMountRef.current = false;
     if (!scrollAnchor || typeof document === 'undefined') return;
     const target = document.getElementById(scrollAnchor);
     if (target) {
       target.scrollIntoView({
-        behavior: isInitialMount ? ('instant' as ScrollBehavior) : 'smooth',
+        behavior: 'instant' as ScrollBehavior,
         block: 'start',
       });
     }
-  }, [scrollAnchor]);
+  }, [scrollAnchor, navigationTick]);
 
   const handleRelatedTestimonialNavigate = (href: string) => {
     if (href.startsWith('#duel')) {
@@ -128,7 +126,9 @@ export function HomePage({
           <button
             type="button"
             data-testid="home-approach-bridge-btn"
-            onClick={() => onNavigate({ kind: 'approach' })}
+            onClick={() =>
+              onNavigate({ kind: 'approach', scrollAnchor: 'radio-mistakes' })
+            }
             className="min-h-[44px] inline-flex items-center gap-2 text-sm font-semibold text-left leading-snug text-[#111111] dark:text-[#F4F3EF] hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors cursor-pointer sm:whitespace-nowrap sm:shrink-0"
           >
             <span>Разбор 5 ошибок в радиороликах</span>

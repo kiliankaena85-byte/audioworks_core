@@ -32,6 +32,7 @@ import {
   MAIN_PLATFORM_NAV_ITEMS,
   parsePlatformRoute,
   resolveActiveTopNavSection,
+  resolveRouteScrollAnchor,
   resolveRouteSeoMeta,
 } from './platformRouter';
 import { BANNED_EDITORIAL_TERMS } from './studioCmsTypes';
@@ -78,6 +79,10 @@ test('parsePlatformRoute в студийном режиме перенаправ
   assert.deepEqual(parsePlatformRoute('/', '', '#hot-air'), { kind: 'home' });
 
   assert.deepEqual(parsePlatformRoute('/cases'), { kind: 'cases' });
+  assert.deepEqual(parsePlatformRoute('/cases', '', '#industry-solutions-hub'), {
+    kind: 'cases',
+    scrollAnchor: 'industry-solutions-hub',
+  });
   assert.deepEqual(parsePlatformRoute('/cases/dmitrogorsky'), {
     kind: 'case-detail',
     caseSlug: 'dmitrogorsky',
@@ -98,6 +103,23 @@ test('parsePlatformRoute в студийном режиме перенаправ
     scrollAnchor: 'legal-clearance',
   });
   assert.deepEqual(parsePlatformRoute('/approach'), { kind: 'approach' });
+  assert.deepEqual(parsePlatformRoute('/approach', '', '#radio-mistakes'), {
+    kind: 'approach',
+    scrollAnchor: 'radio-mistakes',
+  });
+  assert.equal(
+    buildPlatformPath({ kind: 'approach', scrollAnchor: 'radio-mistakes' }),
+    '/approach#radio-mistakes'
+  );
+  assert.equal(
+    resolveRouteScrollAnchor({ kind: 'approach', scrollAnchor: 'radio-mistakes' }),
+    'radio-mistakes'
+  );
+  assert.equal(
+    resolveRouteScrollAnchor({ kind: 'pricing', scrollAnchor: 'stages-24-48' }),
+    'stages-24-48'
+  );
+  assert.equal(resolveRouteScrollAnchor({ kind: 'faq' }), undefined);
   assert.deepEqual(parsePlatformRoute('/approach/phonebook-syndrome'), {
     kind: 'mistake-detail',
     articleSlug: 'phonebook-syndrome',

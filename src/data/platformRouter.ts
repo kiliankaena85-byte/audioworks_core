@@ -44,11 +44,11 @@ export type PlatformRoute =
   | { kind: 'home'; scrollAnchor?: string }
   | { kind: 'hot-air' }
   | { kind: 'station-detail'; stationSlug: string }
-  | { kind: 'cases' }
+  | { kind: 'cases'; scrollAnchor?: string }
   | { kind: 'case-detail'; caseSlug: string }
   | { kind: 'industry-detail'; industrySlug: IndustryVerticalSlug }
   | { kind: 'pricing'; scrollAnchor?: string }
-  | { kind: 'approach' }
+  | { kind: 'approach'; scrollAnchor?: string }
   | { kind: 'mistake-detail'; articleSlug: string }
   | { kind: 'faq' }
   | { kind: 'order' }
@@ -62,6 +62,18 @@ export type PlatformRoute =
       dropToken?: string;
     }
   | { kind: 'admin' };
+
+export function resolveRouteScrollAnchor(route: PlatformRoute): string | undefined {
+  if (
+    route.kind === 'home' ||
+    route.kind === 'pricing' ||
+    route.kind === 'approach' ||
+    route.kind === 'cases'
+  ) {
+    return route.scrollAnchor;
+  }
+  return undefined;
+}
 
 export interface MainPlatformNavItem {
   key: TopNavSectionKey;
@@ -208,7 +220,12 @@ export function parsePlatformRoute(
   }
 
   if (normalizedPath === '/cases') {
-    return { kind: 'cases' };
+    return {
+      kind: 'cases',
+      ...(normalizedHash === 'industry-solutions-hub'
+        ? { scrollAnchor: normalizedHash }
+        : {}),
+    };
   }
 
   if (normalizedPath.startsWith('/cases/industry/')) {
@@ -233,14 +250,22 @@ export function parsePlatformRoute(
     return {
       kind: 'pricing',
       scrollAnchor:
-        normalizedHash === 'stages-24-48' || normalizedHash === 'legal-clearance'
+        normalizedHash === 'stages-24-48' ||
+        normalizedHash === 'legal-clearance' ||
+        normalizedHash === 'pricing-visual-charts'
           ? normalizedHash
           : undefined,
     };
   }
 
   if (normalizedPath === '/approach') {
-    return { kind: 'approach' };
+    return {
+      kind: 'approach',
+      ...(normalizedHash === 'radio-mistakes' ||
+      normalizedHash === 'effective-frequency-science'
+        ? { scrollAnchor: normalizedHash }
+        : {}),
+    };
   }
 
   if (normalizedPath.startsWith('/approach/')) {
@@ -279,6 +304,9 @@ export function parsePlatformRoute(
   if (normalizedHash === 'approach') {
     return { kind: 'approach' };
   }
+  if (normalizedHash === 'radio-mistakes') {
+    return { kind: 'approach', scrollAnchor: 'radio-mistakes' };
+  }
   if (normalizedHash === 'cabinet') {
     return { kind: 'cabinet' };
   }
@@ -307,7 +335,7 @@ export function buildPlatformPath(route: PlatformRoute): string {
     case 'station-detail':
       return `/hot-air/stations/${encodeURIComponent(route.stationSlug)}`;
     case 'cases':
-      return '/cases';
+      return route.scrollAnchor ? `/cases#${route.scrollAnchor}` : '/cases';
     case 'case-detail':
       return `/cases/${encodeURIComponent(route.caseSlug)}`;
     case 'industry-detail':
@@ -315,7 +343,7 @@ export function buildPlatformPath(route: PlatformRoute): string {
     case 'pricing':
       return route.scrollAnchor ? `/pricing#${route.scrollAnchor}` : '/pricing';
     case 'approach':
-      return '/approach';
+      return route.scrollAnchor ? `/approach#${route.scrollAnchor}` : '/approach';
     case 'mistake-detail':
       return `/approach/${encodeURIComponent(route.articleSlug)}`;
     case 'faq':

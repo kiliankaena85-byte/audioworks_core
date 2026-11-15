@@ -428,6 +428,26 @@ test('Waves 1-4 & HeroKoto Guardrails: verifies Koto 4-frame showreel, manifesto
   assert.equal(resetSnap.customAudioName, null);
   assert.equal(resetSnap.isLensExpanded, false);
 
+  // Verify volume & mute regulation + 3-phase crash-test replay from expanded state
+  contrastAudioEngine.setVolume(0.42);
+  assert.equal(contrastAudioEngine.getSnapshot().volume, 0.42);
+  assert.equal(contrastAudioEngine.getSnapshot().isMuted, false);
+  contrastAudioEngine.toggleMute();
+  assert.equal(contrastAudioEngine.getSnapshot().isMuted, true);
+  contrastAudioEngine.toggleMute();
+  assert.equal(contrastAudioEngine.getSnapshot().isMuted, false);
+  assert.equal(contrastAudioEngine.getSnapshot().volume, 0.42);
+  contrastAudioEngine.setVolume(0.85);
+
+  contrastAudioEngine.selectLens('focus');
+  assert.equal(contrastAudioEngine.getSnapshot().isLensExpanded, true);
+  assert.equal(contrastAudioEngine.getSnapshot().crashPhase, 'audioworks');
+  contrastAudioEngine.restartCrashTest();
+  assert.equal(contrastAudioEngine.getSnapshot().isLensExpanded, false);
+  assert.equal(contrastAudioEngine.getSnapshot().crashPhase, 'clutter');
+  contrastAudioEngine.stopAll();
+  contrastAudioEngine.collapseLensToSpotlight();
+
   const {
     CLIENT_TESTIMONIALS,
     getTestimonialsForFilterAndPersona,

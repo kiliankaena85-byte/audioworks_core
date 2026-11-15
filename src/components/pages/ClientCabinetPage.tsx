@@ -446,6 +446,20 @@ export function ClientCabinetPage({
                 onToggleOnlyWithMasters={() =>
                   ctrl.setHistoryOnlyWithMasters((prev) => !prev)
                 }
+                hideOlderThanSixMonths={ctrl.historyHideOlderThanSixMonths}
+                onToggleHideOlderThanSixMonths={() =>
+                  ctrl.setHistoryHideOlderThanSixMonths(
+                    !ctrl.historyHideOlderThanSixMonths
+                  )
+                }
+                completedOlderThanSixMonthsCount={
+                  ctrl.historyArchiveSummary.completedOlderThanSixMonthsCount
+                }
+                hiddenByArchiveCount={
+                  ctrl.historyArchiveSummary.hiddenByArchiveCount
+                }
+                manuallyArchivedOrderNumbers={ctrl.manuallyArchivedOrderNumbers}
+                onToggleManualArchiveOrder={ctrl.toggleManualArchiveOrder}
                 onResetFilters={ctrl.resetHistoryFilters}
                 onOpenInvoiceModal={(order) => ctrl.setInvoiceModalOrder(order)}
                 onRepeatOrder={ctrl.handleRepeatOrder}

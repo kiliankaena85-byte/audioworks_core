@@ -5,6 +5,7 @@ import {
   Check,
   XCircle,
 } from 'lucide-react';
+import { useLayoutEffect } from 'react';
 import { RADIO_SCIENCE_PILLARS } from '../../data/hotAirPackages';
 import {
   LOCAL_EDITORIAL_IMAGES,
@@ -18,6 +19,8 @@ import { OptimizedImage } from '../OptimizedImage';
 
 interface ApproachPageProps {
   articleSlug?: string;
+  scrollAnchor?: string;
+  navigationTick?: number;
   onNavigate: (route: PlatformRoute) => void;
   onStartOrder: () => void;
 }
@@ -250,9 +253,22 @@ function MistakeArticleDetailView({
 
 export function ApproachPage({
   articleSlug,
+  scrollAnchor,
+  navigationTick = 0,
   onNavigate,
   onStartOrder,
 }: ApproachPageProps) {
+  useLayoutEffect(() => {
+    if (articleSlug || !scrollAnchor || typeof document === 'undefined') return;
+    const target = document.getElementById(scrollAnchor);
+    if (target) {
+      target.scrollIntoView({
+        behavior: 'instant' as ScrollBehavior,
+        block: 'start',
+      });
+    }
+  }, [articleSlug, scrollAnchor, navigationTick]);
+
   if (articleSlug) {
     const matched = RADIO_MISTAKE_ARTICLES.find((item) => item.slug === articleSlug);
     if (matched) {

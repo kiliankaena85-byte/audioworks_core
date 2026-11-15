@@ -16,6 +16,7 @@ import {
   partitionCabinetOrders,
   pickUnboundDeviceOrderTokens,
   resolveWorkspaceFilterFromRoute,
+  summarizeCabinetHistoryArchive,
   summarizeCabinetHistoryStatuses,
 } from '../../data/clientCabinetArchitecture';
 import {
@@ -134,6 +135,59 @@ function writeDeviceAvatarPreferences(prefs: DeviceAvatarPreferences): void {
   }
 }
 
+const HISTORY_HIDE_OLDER_6M_KEY = 'fmworks_cabinet_hide_older_6m_v1';
+const HISTORY_MANUAL_ARCHIVE_KEY = 'fmworks_cabinet_manual_archive_v1';
+
+function readHideOlderThanSixMonthsPreference(): boolean {
+  if (typeof window === 'undefined') return true;
+  try {
+    const raw = window.localStorage.getItem(HISTORY_HIDE_OLDER_6M_KEY);
+    if (raw === '0' || raw === 'false') return false;
+    if (raw === '1' || raw === 'true') return true;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+function writeHideOlderThanSixMonthsPreference(value: boolean): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(HISTORY_HIDE_OLDER_6M_KEY, value ? '1' : '0');
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+function readManuallyArchivedOrderNumbers(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(HISTORY_MANUAL_ARCHIVE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function writeManuallyArchivedOrderNumbers(orderNumbers: readonly string[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (orderNumbers.length === 0) {
+      window.localStorage.removeItem(HISTORY_MANUAL_ARCHIVE_KEY);
+      return;
+    }
+    window.localStorage.setItem(
+      HISTORY_MANUAL_ARCHIVE_KEY,
+      JSON.stringify(Array.from(new Set(orderNumbers)))
+    );
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
 export interface UseClientCabinetControllerParams {
   subroute?: CabinetSubrouteMode;
   magicToken?: string;
@@ -234,6 +288,27 @@ export function useClientCabinetController({
   const [historySearchQuery, setHistorySearchQuery] = useState<string>('');
   const [historyOnlyWithMasters, setHistoryOnlyWithMasters] =
     useState<boolean>(false);
+  const [historyHideOlderThanSixMonths, setHistoryHideOlderThanSixMonthsState] =
+    useState<boolean>(() => readHideOlderThanSixMonthsPreference());
+  const [manuallyArchivedOrderNumbers, setManuallyArchivedOrderNumbersState] =
+    useState<string[]>(() => readManuallyArchivedOrderNumbers());
+
+  const setHistoryHideOlderThanSixMonths = useCallback((nextValue: boolean) => {
+    setHistoryHideOlderThanSixMonthsState(nextValue);
+    writeHideOlderThanSixMonthsPreference(nextValue);
+  }, []);
+
+  const toggleManualArchiveOrder = useCallback((orderNumber: string) => {
+    const cleanNum = orderNumber.trim();
+    if (!cleanNum) return;
+    setManuallyArchivedOrderNumbersState((prev) => {
+      const next = prev.includes(cleanNum)
+        ? prev.filter((item) => item !== cleanNum)
+        : [...prev, cleanNum];
+      writeManuallyArchivedOrderNumbers(next);
+      return next;
+    });
+  }, []);
 
   // Синхронизация подмаршрутов `/cabinet/reset` и `/cabinet/history` из `platformRouter.ts` / `App.tsx`
   useEffect(() => {
@@ -269,6 +344,8 @@ export function useClientCabinetController({
     setHistoryStatusFilter('all');
     setHistorySearchQuery('');
     setHistoryOnlyWithMasters(false);
+    setHistoryHideOlderThanSixMonthsState(false);
+    writeHideOlderThanSixMonthsPreference(false);
   }, []);
 
   const selectAccessTab = useCallback(
@@ -1246,14 +1323,32 @@ export function useClientCabinetController({
     [orders]
   );
 
+  const historyArchiveSummary = useMemo(
+    () =>
+      summarizeCabinetHistoryArchive(orders, {
+        hideOlderThanSixMonths: historyHideOlderThanSixMonths,
+        manuallyArchivedOrderNumbers,
+      }),
+    [historyHideOlderThanSixMonths, manuallyArchivedOrderNumbers, orders]
+  );
+
   const filteredHistoryOrders = useMemo(
     () =>
       filterCabinetHistoryOrders(orders, {
         searchQuery: historySearchQuery,
         onlyWithMasters: historyOnlyWithMasters,
         statusFilter: historyStatusFilter,
+        hideOlderThanSixMonths: historyHideOlderThanSixMonths,
+        manuallyArchivedOrderNumbers,
       }),
-    [historyOnlyWithMasters, historySearchQuery, historyStatusFilter, orders]
+    [
+      historyHideOlderThanSixMonths,
+      historyOnlyWithMasters,
+      historySearchQuery,
+      historyStatusFilter,
+      manuallyArchivedOrderNumbers,
+      orders,
+    ]
   );
 
   return {
@@ -1262,6 +1357,7 @@ export function useClientCabinetController({
     activeOrders: partitionedOrders.activeOrders,
     historyOrders: partitionedOrders.historyOrders,
     historyStatusSummary,
+    historyArchiveSummary,
     totalHistoryMastersCount: historyStatusSummary.totalMasterFilesCount,
     filteredHistoryOrders,
     workspaceFilter,
@@ -1272,6 +1368,10 @@ export function useClientCabinetController({
     setHistorySearchQuery,
     historyOnlyWithMasters,
     setHistoryOnlyWithMasters,
+    historyHideOlderThanSixMonths,
+    setHistoryHideOlderThanSixMonths,
+    manuallyArchivedOrderNumbers,
+    toggleManualArchiveOrder,
     resetHistoryFilters,
     clientAccount,
     profileAvatar,

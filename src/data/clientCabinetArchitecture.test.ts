@@ -15,12 +15,17 @@ import {
   extractMagicTokenFromCabinetHref,
   extractOrderMasterFiles,
   filterCabinetHistoryOrders,
+  isCompletedOrderOlderThanSixMonths,
+  isOrderArchivedInHistory,
+  isOrderCompletedAndPaid,
   mergeAuthenticatedAndDeviceOrders,
   partitionCabinetOrders,
   pickUnboundDeviceOrderTokens,
   resolveCabinetAccessUiFromRoute,
   resolveCabinetOrderVisualStatus,
   resolveWorkspaceFilterFromRoute,
+  SIX_MONTHS_MS,
+  summarizeCabinetHistoryArchive,
   summarizeCabinetHistoryStatuses,
 } from './clientCabinetArchitecture';
 import type {
@@ -574,3 +579,172 @@ test('Визуальные статусы в «Истории заказов»: 
     ['FM-305', 'FM-306']
   );
 });
+
+test('Архивация и фильтрация истории заказов: скрытие завершённых и оплаченных проектов старше 6 месяцев', () => {
+  const nowMs = Date.parse('2026-11-15T12:00:00.000Z');
+  const recentIso = new Date(nowMs - 45 * 24 * 60 * 60 * 1000).toISOString(); // 1.5 мес. назад
+  const olderThan6mIso = new Date(
+    nowMs - SIX_MONTHS_MS - 15 * 24 * 60 * 60 * 1000
+  ).toISOString(); // ~6.5 мес. назад
+
+  const wavMaster: OrderDeliverableFile = {
+    id: 'deliv-master-arch',
+    title: 'Финальный эфирный мастер WAV',
+    kind: 'audio_master',
+    fileName: 'spot_final.wav',
+    mimeType: 'audio/wav',
+    sizeBytes: 2_500_000,
+    uploadedAt: olderThan6mIso,
+  };
+
+  const makeOrder = (
+    orderNumber: string,
+    stage: ClientCabinetOrderSummary['stage'],
+    updatedAt: string,
+    deliverables: OrderDeliverableFile[] = [],
+    acceptedAndPaid = true
+  ): ClientCabinetOrderSummary => ({
+    orderNumber,
+    rescueToken: `tok-${orderNumber}`,
+    createdAt: updatedAt,
+    updatedAt,
+    stage,
+    formatLabel: 'Продакшн под ключ (20 сек)',
+    totalBudgetRub: 25_000,
+    contact: '+7 999 111-22-33',
+    clientEmail: 'director@transflot-leasing.ru',
+    companyOrInn: 'АО «ТрансФлот Лизинг» · ИНН 7702070139',
+    innVerified: true,
+    briefText: 'Лизинговая программа',
+    hasVoiceRecording: false,
+    voiceDurationSec: 0,
+    attachedFileName: null,
+    preferredDeliveryChannel: 'cabinet',
+    cloudDiskUrl: null,
+    deliverables,
+    clientUploads: [],
+    documentMeta: null,
+    approvalWorkflow: {
+      targetSlotSec: 20,
+      phase: acceptedAndPaid ? 'accepted' : 'spot_client_review',
+      externalStep: '03_spot',
+      whoseTurnActor: acceptedAndPaid ? 'completed' : 'client',
+      whoseTurnLabel: acceptedAndPaid ? 'Проект завершён и принят' : 'Ждём приёмки',
+      scriptVersions: [],
+      lockedScript: null,
+      serviceRoundUsed: false,
+      serviceRoundUsedAt: null,
+      serviceRoundSummary: null,
+      spotRevisions: [],
+      hasPendingQcTake: false,
+      acceptedAt: acceptedAndPaid ? updatedAt : null,
+      acceptedDeliverableId: acceptedAndPaid ? 'deliv-master-arch' : null,
+    },
+  });
+
+  const activeRecent = makeOrder('FM-2948', 'in_production', recentIso);
+  const activeOldHold = makeOrder('FM-1900', 'in_production', olderThan6mIso);
+  const completedRecentPaid = makeOrder(
+    'FM-2418',
+    'completed_ltv',
+    recentIso,
+    [wavMaster],
+    true
+  );
+  const completedOldPaid = makeOrder(
+    'FM-2309',
+    'completed_ltv',
+    olderThan6mIso,
+    [wavMaster],
+    true
+  );
+  const completedOldUnpaid = makeOrder(
+    'FM-2301',
+    'completed_ltv',
+    olderThan6mIso,
+    [wavMaster],
+    false
+  );
+
+  assert.equal(isOrderCompletedAndPaid(activeRecent), false);
+  assert.equal(isOrderCompletedAndPaid(completedRecentPaid), true);
+  assert.equal(isOrderCompletedAndPaid(completedOldPaid), true);
+  assert.equal(isOrderCompletedAndPaid(completedOldUnpaid), false);
+
+  assert.equal(isCompletedOrderOlderThanSixMonths(activeOldHold, nowMs), false);
+  assert.equal(
+    isCompletedOrderOlderThanSixMonths(completedRecentPaid, nowMs),
+    false
+  );
+  assert.equal(
+    isCompletedOrderOlderThanSixMonths(completedOldPaid, nowMs),
+    true
+  );
+  assert.equal(
+    isCompletedOrderOlderThanSixMonths(completedOldUnpaid, nowMs),
+    false
+  );
+
+  const orders = [
+    activeRecent,
+    completedRecentPaid,
+    completedOldPaid,
+    completedOldUnpaid,
+  ];
+
+  const archiveSummaryHidden = summarizeCabinetHistoryArchive(orders, {
+    hideOlderThanSixMonths: true,
+    nowMs,
+  });
+  assert.deepEqual(archiveSummaryHidden, {
+    archivableCompletedCount: 2,
+    completedOlderThanSixMonthsCount: 1,
+    manuallyArchivedCount: 0,
+    hiddenByArchiveCount: 1,
+  });
+
+  // При включённом фильтре > 6 мес. скрывается только оплаченный завершённый проект старше 6 мес. (FM-2309)
+  assert.deepEqual(
+    filterCabinetHistoryOrders(orders, {
+      hideOlderThanSixMonths: true,
+      nowMs,
+    }).map((o) => o.orderNumber),
+    ['FM-2948', 'FM-2418', 'FM-2301']
+  );
+
+  // При отключённом фильтре > 6 мес. видны все проекты, включая архивный FM-2309
+  assert.deepEqual(
+    filterCabinetHistoryOrders(orders, {
+      hideOlderThanSixMonths: false,
+      nowMs,
+    }).map((o) => o.orderNumber),
+    ['FM-2948', 'FM-2418', 'FM-2309', 'FM-2301']
+  );
+
+  // Ручная архивация позволяет скрыть даже свежий завершённый и оплаченный проект (FM-2418), но не активный заказ (FM-2948)
+  assert.equal(
+    isOrderArchivedInHistory(completedRecentPaid, {
+      hideOlderThanSixMonths: false,
+      manuallyArchivedOrderNumbers: ['FM-2418'],
+      nowMs,
+    }),
+    true
+  );
+  assert.equal(
+    isOrderArchivedInHistory(activeRecent, {
+      hideOlderThanSixMonths: false,
+      manuallyArchivedOrderNumbers: ['FM-2948'],
+      nowMs,
+    }),
+    false
+  );
+  assert.deepEqual(
+    filterCabinetHistoryOrders(orders, {
+      hideOlderThanSixMonths: true,
+      manuallyArchivedOrderNumbers: ['FM-2418'],
+      nowMs,
+    }).map((o) => o.orderNumber),
+    ['FM-2948', 'FM-2301']
+  );
+});
+

@@ -7,6 +7,7 @@ import {
   Radio,
   ShieldCheck,
 } from 'lucide-react';
+import { useLayoutEffect } from 'react';
 import { CasePlayerSnapshot } from '../../audio/casePlayerEngine';
 import { useStudioCms } from '../../cms/StudioCmsContext';
 import { formatAudioTime } from '../../data/audioworksCommercial';
@@ -32,6 +33,8 @@ import { OptimizedImage } from '../OptimizedImage';
 interface CasesPageProps {
   caseSlug?: string;
   industrySlug?: IndustryVerticalSlug;
+  scrollAnchor?: string;
+  navigationTick?: number;
   playerSnap: CasePlayerSnapshot;
   onToggleCase: (item: BrandCasePoster) => void;
   onStartPreview: (item: BrandCasePoster) => void;
@@ -42,6 +45,8 @@ interface CasesPageProps {
 export function CasesPage({
   caseSlug,
   industrySlug,
+  scrollAnchor,
+  navigationTick = 0,
   playerSnap,
   onToggleCase,
   onStartPreview,
@@ -49,6 +54,17 @@ export function CasesPage({
   onNavigate,
 }: CasesPageProps) {
   const { snapshot } = useStudioCms();
+
+  useLayoutEffect(() => {
+    if (caseSlug || industrySlug || !scrollAnchor || typeof document === 'undefined') return;
+    const target = document.getElementById(scrollAnchor);
+    if (target) {
+      target.scrollIntoView({
+        behavior: 'instant' as ScrollBehavior,
+        block: 'start',
+      });
+    }
+  }, [caseSlug, industrySlug, scrollAnchor, navigationTick]);
 
   const allCases = [snapshot.flagshipReel, ...snapshot.portfolioCases];
 
@@ -97,6 +113,12 @@ export function CasesPage({
 
           <a
             href="#industry-solutions-hub"
+            onClick={(e) => {
+              e.preventDefault();
+              document
+                .getElementById('industry-solutions-hub')
+                ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }}
             className="min-h-[44px] max-w-full px-4 sm:px-5 py-2.5 rounded-full border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition-colors sm:whitespace-nowrap shrink-0 self-start lg:self-auto"
           >
             <span>Отраслевые решения: ЖК, медицина, ритейл, B2B ↓</span>

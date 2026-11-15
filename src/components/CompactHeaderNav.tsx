@@ -154,10 +154,6 @@ export function CompactHeaderNav({
   const handleBrandClick = (e: ReactMouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
     setIsMobileMenuOpen(false);
-    if (activeRoute.kind === 'home') {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
     onNavigate({ kind: 'home' });
   };
 
@@ -168,28 +164,6 @@ export function CompactHeaderNav({
     e.preventDefault();
     setIsMobileMenuOpen(false);
     const targetRoute = resolveHeaderNavTargetRoute(key, AIRTIME_SALES_ENABLED);
-    if (
-      targetRoute.kind === 'home' &&
-      targetRoute.scrollAnchor &&
-      activeRoute.kind === 'home'
-    ) {
-      onNavigate(targetRoute);
-      const anchorEl = document.getElementById(targetRoute.scrollAnchor);
-      anchorEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      return;
-    }
-    if (
-      activeRoute.kind === targetRoute.kind &&
-      !(activeRoute.kind === 'home' && activeRoute.scrollAnchor)
-    ) {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-    if (targetRoute.kind === 'home' && !targetRoute.scrollAnchor && activeRoute.kind === 'home') {
-      onNavigate(targetRoute);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
     onNavigate(targetRoute);
   };
 

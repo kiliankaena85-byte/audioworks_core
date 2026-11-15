@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { broadcastAircheckEngine } from './audio/broadcastAircheckEngine';
 import { casePlayerEngine, CasePlayerSnapshot } from './audio/casePlayerEngine';
 import { contrastAudioEngine } from './audio/contrastAudioEngine';
@@ -51,6 +51,7 @@ import {
   buildPlatformPath,
   parsePlatformRoute,
   PlatformRoute,
+  resolveRouteScrollAnchor,
   resolveRouteSeoMeta,
 } from './data/platformRouter';
 import { OrderFormatId } from './data/pricingData';
@@ -92,6 +93,7 @@ function FmworksExperience() {
   const [isRadioAdminOpen, setIsRadioAdminOpen] = useState(false);
   const [isHeaderConfirmedModalOpen, setIsHeaderConfirmedModalOpen] =
     useState(false);
+  const [navigationTick, setNavigationTick] = useState<number>(0);
   const [brandVariant, setBrandVariant] =
     useState<BrandDomainVariant>('fmworks_reg');
   const [caseSnap, setCaseSnap] = useState<CasePlayerSnapshot>(() =>
@@ -150,6 +152,7 @@ function FmworksExperience() {
         broadcastAircheckEngine.stop();
       }
       setRoute(next);
+      setNavigationTick((prev) => prev + 1);
     };
 
     window.addEventListener('popstate', handlePopState);
@@ -226,15 +229,38 @@ function FmworksExperience() {
         }
       }
 
-      const hasScrollAnchor =
-        (effectiveRoute.kind === 'home' && Boolean(effectiveRoute.scrollAnchor)) ||
-        (effectiveRoute.kind === 'pricing' && Boolean(effectiveRoute.scrollAnchor));
-      if (!hasScrollAnchor && !options?.replace) {
-        window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
+      const scrollAnchor = resolveRouteScrollAnchor(effectiveRoute);
+      if (!scrollAnchor && !options?.replace) {
+        const previousPath = buildPlatformPath(route);
+        const isExactSameRoute = previousPath === targetPath;
+        window.scrollTo({
+          top: 0,
+          left: 0,
+          behavior: isExactSameRoute ? 'smooth' : ('instant' as ScrollBehavior),
+        });
       }
     }
     setRoute(effectiveRoute);
+    setNavigationTick((prev) => prev + 1);
   };
+
+  useLayoutEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    const scrollAnchor = resolveRouteScrollAnchor(route);
+    if (scrollAnchor) {
+      const target = document.getElementById(scrollAnchor);
+      if (target) {
+        target.scrollIntoView({
+          behavior: 'instant' as ScrollBehavior,
+          block: 'start',
+        });
+      }
+      return;
+    }
+    if (navigationTick > 0) {
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
+    }
+  }, [route, navigationTick]);
 
   const currentRoutePath = buildPlatformPath(route);
 
@@ -358,6 +384,7 @@ function FmworksExperience() {
           {route.kind === 'home' && (
             <HomePage
               scrollAnchor={route.scrollAnchor}
+              navigationTick={navigationTick}
               brandVariant={brandVariant}
               playerSnap={caseSnap}
               onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
@@ -388,6 +415,8 @@ function FmworksExperience() {
               industrySlug={
                 route.kind === 'industry-detail' ? route.industrySlug : undefined
               }
+              scrollAnchor={route.kind === 'cases' ? route.scrollAnchor : undefined}
+              navigationTick={navigationTick}
               playerSnap={caseSnap}
               onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
               onStartPreview={(item) => casePlayerEngine.startPreview(item)}
@@ -399,6 +428,7 @@ function FmworksExperience() {
           {route.kind === 'pricing' && (
             <PricingPage
               scrollAnchor={route.scrollAnchor}
+              navigationTick={navigationTick}
               onSelectFormat={(formatId) => handleOpenStudioOrder(formatId)}
               onNavigate={navigateTo}
             />
@@ -409,6 +439,8 @@ function FmworksExperience() {
               articleSlug={
                 route.kind === 'mistake-detail' ? route.articleSlug : undefined
               }
+              scrollAnchor={route.kind === 'approach' ? route.scrollAnchor : undefined}
+              navigationTick={navigationTick}
               onNavigate={navigateTo}
               onStartOrder={() => handleOpenStudioOrder('turnkey')}
             />
@@ -438,6 +470,7 @@ function FmworksExperience() {
       <Footer
         brandVariant={brandVariant}
         onOpenAdmin={() => navigateTo({ kind: 'admin' })}
+        onOpenOrder={handleHeaderOrderClick}
         onNavigate={navigateTo}
       />
 

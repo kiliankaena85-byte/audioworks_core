@@ -40,14 +40,35 @@ interface FooterProps {
   brandVariant?: BrandDomainVariant;
   onOpenBrandKit?: () => void;
   onOpenAdmin?: () => void;
+  onOpenOrder?: () => void;
   onNavigate?: (route: PlatformRoute) => void;
 }
 
-const FOOTER_INDUSTRY_LINKS: readonly { label: string; route: PlatformRoute }[] = [
-  { label: 'ЖК и девелопмент', route: { kind: 'industry-detail', industrySlug: 'real-estate' } },
-  { label: 'Медицина и клиники', route: { kind: 'industry-detail', industrySlug: 'medicine' } },
-  { label: 'Ритейл и FMCG', route: { kind: 'industry-detail', industrySlug: 'retail-fmcg' } },
-  { label: 'B2B и финансы', route: { kind: 'industry-detail', industrySlug: 'b2b-finance' } },
+const FOOTER_INDUSTRY_LINKS: readonly {
+  id: string;
+  label: string;
+  route: PlatformRoute;
+}[] = [
+  {
+    id: 'real-estate',
+    label: 'ЖК и девелопмент',
+    route: { kind: 'industry-detail', industrySlug: 'real-estate' },
+  },
+  {
+    id: 'medicine',
+    label: 'Медицина и клиники',
+    route: { kind: 'industry-detail', industrySlug: 'medicine' },
+  },
+  {
+    id: 'retail-fmcg',
+    label: 'Ритейл и FMCG',
+    route: { kind: 'industry-detail', industrySlug: 'retail-fmcg' },
+  },
+  {
+    id: 'b2b-finance',
+    label: 'B2B и финансы',
+    route: { kind: 'industry-detail', industrySlug: 'b2b-finance' },
+  },
 ] as const;
 
 const FOOTER_STATION_LINKS: readonly { label: string; route: PlatformRoute }[] = [
@@ -58,22 +79,27 @@ const FOOTER_STATION_LINKS: readonly { label: string; route: PlatformRoute }[] =
 ] as const;
 
 const FOOTER_STUDIO_EXPERTISE_LINKS: readonly {
+  id: string;
   label: string;
   route: PlatformRoute;
 }[] = [
   {
+    id: 'stages-24-48',
     label: 'Этапы производства и сроки',
     route: { kind: 'pricing', scrollAnchor: 'stages-24-48' },
   },
   {
+    id: 'legal-clearance',
     label: 'Паспорт прав РАО / ВОИС',
     route: { kind: 'pricing', scrollAnchor: 'legal-clearance' },
   },
   {
+    id: 'radio-mistakes',
     label: 'Разбор 5 ошибок в сценариях',
-    route: { kind: 'approach' },
+    route: { kind: 'approach', scrollAnchor: 'radio-mistakes' },
   },
   {
+    id: 'faq',
     label: 'Частые вопросы заказчиков',
     route: { kind: 'faq' },
   },
@@ -83,6 +109,7 @@ export function Footer({
   brandVariant = 'fmworks_reg',
   onOpenBrandKit,
   onOpenAdmin,
+  onOpenOrder,
   onNavigate,
 }: FooterProps = {}) {
   const [studioTime, setStudioTime] = useState<string>(() => readStudioTimeHHMM());
@@ -233,6 +260,7 @@ export function Footer({
                   <li key={item.key}>
                     <a
                       href={item.href}
+                      data-testid={`footer-nav-${item.key}`}
                       onClick={(e) => handleRouteClick(e, route)}
                       className="inline-flex py-0.5 text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors"
                     >
@@ -244,7 +272,15 @@ export function Footer({
               <li>
                 <a
                   href="/order"
-                  onClick={(e) => handleRouteClick(e, { kind: 'order' })}
+                  data-testid="footer-order-link"
+                  onClick={(e) => {
+                    if (onOpenOrder) {
+                      e.preventDefault();
+                      onOpenOrder();
+                      return;
+                    }
+                    handleRouteClick(e, { kind: 'order' });
+                  }}
                   className="inline-flex py-0.5 font-semibold text-[#FF4820] hover:underline"
                 >
                   {AIRTIME_SALES_ENABLED
@@ -274,6 +310,7 @@ export function Footer({
                 <li key={entry.label}>
                   <a
                     href={buildPlatformPath(entry.route)}
+                    data-testid={`footer-industry-${entry.id}`}
                     onClick={(e) => handleRouteClick(e, entry.route)}
                     className="inline-flex py-0.5 text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors"
                   >
@@ -319,6 +356,7 @@ export function Footer({
                   <li key={entry.label}>
                     <a
                       href={buildPlatformPath(entry.route)}
+                      data-testid={`footer-expertise-${entry.id}`}
                       onClick={(e) => handleRouteClick(e, entry.route)}
                       className="inline-flex py-0.5 text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors"
                     >
