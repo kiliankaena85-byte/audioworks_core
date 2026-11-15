@@ -79,13 +79,13 @@ export function FaqPage({ onNavigate, onStartOrder }: FaqPageProps) {
           data-testid="faq-urgent-order-block"
           className="max-w-7xl mx-auto rounded-3xl p-6 sm:p-8 lg:p-10 bg-[#EFECE5]/75 dark:bg-[#15151A] border border-[#111111]/12 dark:border-white/12 flex flex-col lg:flex-row lg:items-center justify-between gap-6"
         >
-          <div className="space-y-2.5 max-w-3xl">
+          <div className="space-y-3 max-w-3xl">
             <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs sm:text-sm font-semibold text-[#FF4820] tabular-nums">
-              <span>Срочный заказ</span>
+              <span>Готовность от 1 часа</span>
               <span aria-hidden="true" className="opacity-40">
                 ·
               </span>
-              <span>Готовность от 1 часа</span>
+              <span>Без разработки сценария</span>
               <span aria-hidden="true" className="opacity-40">
                 ·
               </span>
@@ -94,15 +94,22 @@ export function FaqPage({ onNavigate, onStartOrder }: FaqPageProps) {
 
             <h2
               id="faq-urgent-order-heading"
-              className="text-xl sm:text-2xl lg:text-3xl font-bold tracking-tight leading-snug text-[#111111] dark:text-[#F4F3EF] editorial-balance"
+              className="text-2xl sm:text-3xl font-bold tracking-tight leading-snug text-[#111111] dark:text-[#F4F3EF] editorial-balance"
             >
-              Да, мы делаем ролики от 1 часа. Запись голоса и сведение — без разработки сценария.
+              Срочный заказ
             </h2>
 
-            <p className="text-sm sm:text-base leading-relaxed text-[#111111]/74 dark:text-[#F4F3EF]/74 editorial-pretty">
-              Если у вас уже есть утверждённый текст и нужно экстренно выйти в эфир, мы вне очереди
-              записываем диктора и делаем чистовое эфирное сведение (−14 LUFS, WAV + MP3). Срочные
-              заказы оплачиваются по договорной цене — 100% предоплата по договору или банковской
+            <p
+              data-testid="faq-urgent-order-copy"
+              className="text-base sm:text-lg font-medium leading-relaxed text-[#111111] dark:text-[#F4F3EF] editorial-pretty"
+            >
+              Да, мы делаем ролики от 1 часа. Запись голоса и сведение. Без разработки сценария.
+              Срочные заказы оплачиваются по договорной цене.
+            </p>
+
+            <p className="text-xs sm:text-sm leading-relaxed text-[#111111]/68 dark:text-[#F4F3EF]/68 editorial-pretty">
+              По вашему готовому тексту вне очереди записываем диктора и выпускаем чистовой эфирный
+              мастер (−14 LUFS, WAV + MP3) на условиях 100% предоплаты по договору или банковской
               картой.
             </p>
           </div>

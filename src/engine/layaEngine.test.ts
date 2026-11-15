@@ -222,8 +222,8 @@ test('Editorial FAQ logic & content: 4 questions, smooth toggle state, and respe
   assert.ok(HOME_PROCESS_FAQ_ITEMS[4].answer.includes('Индивидуальный проект'));
   assert.ok(HOME_PROCESS_FAQ_ITEMS[5].answer.includes('Только сценарий'.slice(6)) || HOME_PROCESS_FAQ_ITEMS[5].question.includes('только сценарий'));
   assert.ok(HOME_PROCESS_FAQ_ITEMS[6].question.includes('Срочный заказ'));
-  assert.ok(HOME_PROCESS_FAQ_ITEMS[6].answer.includes('от 1 часа'));
-  assert.ok(HOME_PROCESS_FAQ_ITEMS[6].answer.includes('без разработки сценария'));
+  assert.ok(HOME_PROCESS_FAQ_ITEMS[6].answer.includes('Да, мы делаем ролики от 1 часа. Запись голоса и сведение. Без разработки сценария. Срочные заказы оплачиваются по договорной цене'));
+  assert.ok(HOME_PROCESS_FAQ_ITEMS[6].answer.toLowerCase().includes('без разработки сценария'));
   assert.ok(HOME_PROCESS_FAQ_ITEMS[6].answer.includes('по договорной цене'));
   assert.equal(
     toggleFaqItem(HOME_PROCESS_FAQ_ITEMS[0].id, HOME_PROCESS_FAQ_ITEMS[0].id),
