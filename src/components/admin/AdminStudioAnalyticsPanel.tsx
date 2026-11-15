@@ -1,4 +1,10 @@
-import { ArrowRight, RefreshCw } from 'lucide-react';
+import {
+  ArrowRight,
+  CheckCircle2,
+  Download,
+  FileSpreadsheet,
+  RefreshCw,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Area,
@@ -26,6 +32,10 @@ import {
   type MonthlyConversionPoint,
   type StageEfficiencyPoint,
 } from '../../data/studioAnalyticsCore';
+import {
+  downloadStudioAnalyticsCsvReport,
+  downloadStudioAnalyticsPdfReport,
+} from '../../utils/studioAnalyticsPdfDownload';
 
 export interface AdminStudioAnalyticsPanelProps {
   orders?: CrmOrderRecord[];
@@ -464,6 +474,64 @@ export function AdminStudioAnalyticsPanel({
     [activeOrders, periodMonths, segment, scope]
   );
 
+  const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
+  const [exportFeedback, setExportFeedback] = useState<{
+    kind: 'ok' | 'error';
+    text: string;
+  } | null>(null);
+
+  useEffect(() => {
+    setExportFeedback(null);
+  }, [periodMonths, segment, scope, metricMode]);
+
+  const handleExportCsv = useCallback(() => {
+    try {
+      const result = downloadStudioAnalyticsCsvReport(summary, {
+        periodMonths,
+        segment,
+        scope,
+      });
+      setExportFeedback({
+        kind: 'ok',
+        text: `Отчёт CSV сформирован и скачан: ${result.fileName}`,
+      });
+    } catch (err) {
+      setExportFeedback({
+        kind: 'error',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Не удалось сформировать CSV-выгрузку аналитики',
+      });
+    }
+  }, [summary, periodMonths, segment, scope]);
+
+  const handleExportPdf = useCallback(() => {
+    if (isExportingPdf) return;
+    setIsExportingPdf(true);
+    try {
+      const result = downloadStudioAnalyticsPdfReport(
+        summary,
+        { periodMonths, segment, scope },
+        metricMode
+      );
+      setExportFeedback({
+        kind: 'ok',
+        text: `Отчёт PDF (A4) сформирован и скачан: ${result.fileName}`,
+      });
+    } catch (err) {
+      setExportFeedback({
+        kind: 'error',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Не удалось сформировать PDF-отчёт аналитики',
+      });
+    } finally {
+      setIsExportingPdf(false);
+    }
+  }, [isExportingPdf, summary, periodMonths, segment, scope, metricMode]);
+
   const bottleneckStage = useMemo(
     () => summary.stageEfficiency.find((item) => item.isBottleneck) ?? null,
     [summary.stageEfficiency]
@@ -489,9 +557,7 @@ export function AdminStudioAnalyticsPanel({
         ? 'text-[#D97706] dark:text-[#FBBF24]'
         : 'text-[#DC2626] dark:text-[#F87171]';
   const slaKpiStatusNote =
-    summary.totals.slaCompliancePct >= 85
-      ? 'норма ≤ 15 мин'
-      : 'ниже порога 90%';
+    summary.totals.slaCompliancePct >= 85 ? 'SLA ≤ 15 мин' : 'цель ≥ 90%';
 
   if (isLoadingInternal) {
     return (
@@ -589,7 +655,7 @@ export function AdminStudioAnalyticsPanel({
               onChange={(e) =>
                 setSegment(e.target.value as AnalyticsSegmentFilter)
               }
-              className="min-h-[40px] px-3.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] cursor-pointer"
+              className="min-h-[40px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] cursor-pointer"
             >
               <option value="all">Все направления</option>
               <option value="production_only">Аудиопродакшн</option>
@@ -607,7 +673,7 @@ export function AdminStudioAnalyticsPanel({
               data-testid="analytics-scope-select"
               value={scope}
               onChange={(e) => setScope(e.target.value as AnalyticsDataScope)}
-              className="min-h-[40px] px-3.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] cursor-pointer"
+              className="min-h-[40px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] cursor-pointer"
             >
               <option value="crm_plus_archive">Реестр CRM + архив</option>
               <option value="live_crm_only">Только живой реестр CRM</option>
@@ -616,12 +682,37 @@ export function AdminStudioAnalyticsPanel({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            data-testid="analytics-export-pdf-btn"
+            disabled={summary.totals.totalOrders === 0 || isExportingPdf}
+            onClick={handleExportPdf}
+            className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[#111111] hover:bg-[#26262B] dark:bg-[#F4F3EF] dark:hover:bg-white disabled:opacity-45 text-white dark:text-[#0D0D0F] text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:cursor-default whitespace-nowrap shrink-0"
+          >
+            <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+            <span>{isExportingPdf ? 'Сборка PDF…' : 'Скачать PDF'}</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="analytics-export-csv-btn"
+            disabled={summary.totals.totalOrders === 0}
+            onClick={handleExportCsv}
+            className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] disabled:opacity-45 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:cursor-default whitespace-nowrap shrink-0"
+          >
+            <FileSpreadsheet
+              className="w-3.5 h-3.5 shrink-0"
+              aria-hidden="true"
+            />
+            <span>Скачать CSV</span>
+          </button>
+
           {onOpenOrdersFunnel && (
             <button
               type="button"
               data-testid="analytics-open-funnel-btn"
               onClick={onOpenOrdersFunnel}
-              className="min-h-[40px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:border-[#FF4820] hover:text-[#111111] dark:hover:text-white inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              className="min-h-[40px] px-3 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:border-[#FF4820] hover:text-[#111111] dark:hover:text-white inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
               <span>К сделкам CRM ({activeOrders.length})</span>
               <ArrowRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
@@ -632,9 +723,11 @@ export function AdminStudioAnalyticsPanel({
             <button
               type="button"
               data-testid="analytics-refresh-btn"
+              aria-label="Обновить данные аналитики"
+              title="Обновить данные аналитики"
               onClick={handleRefresh}
               disabled={isRefreshing}
-              className="min-h-[40px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:text-[#111111] dark:hover:text-white inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              className="min-h-[40px] w-[40px] rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:border-[#FF4820] hover:text-[#111111] dark:hover:text-white inline-flex items-center justify-center transition-colors cursor-pointer shrink-0"
             >
               <RefreshCw
                 className={`w-3.5 h-3.5 shrink-0 ${
@@ -642,11 +735,40 @@ export function AdminStudioAnalyticsPanel({
                 }`}
                 aria-hidden="true"
               />
-              <span>Обновить данные</span>
             </button>
           )}
         </div>
       </div>
+
+      {exportFeedback && (
+        <div
+          role={exportFeedback.kind === 'error' ? 'alert' : 'status'}
+          data-testid="studio-analytics-export-status"
+          className={`rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs tabular-nums ${
+            exportFeedback.kind === 'error'
+              ? 'bg-[#DC2626]/10 border border-[#DC2626]/30 text-[#DC2626] dark:text-[#F87171]'
+              : 'bg-white dark:bg-[#141418] border border-[#16A34A]/30 dark:border-[#4ADE80]/30 text-[#111111] dark:text-[#F4F3EF]'
+          }`}
+        >
+          <span className="inline-flex items-center gap-2 font-medium">
+            {exportFeedback.kind === 'ok' && (
+              <CheckCircle2
+                className="w-4 h-4 shrink-0 text-[#16A34A] dark:text-[#4ADE80]"
+                aria-hidden="true"
+              />
+            )}
+            <span>{exportFeedback.text}</span>
+          </span>
+          <button
+            type="button"
+            aria-label="Скрыть уведомление об экспорте"
+            onClick={() => setExportFeedback(null)}
+            className="text-xs font-semibold text-[#111111]/65 dark:text-[#F4F3EF]/65 hover:text-[#111111] dark:hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
+          >
+            Скрыть
+          </button>
+        </div>
+      )}
 
       {/* Сводные KPI-карточки (одноуровневая плоскость без пилюль и вложенных рамок) */}
       <div
@@ -696,8 +818,7 @@ export function AdminStudioAnalyticsPanel({
             {summary.totals.slaCompliancePct}%
           </p>
           <p className="text-xs text-[#111111]/60 dark:text-[#F4F3EF]/60 tabular-nums">
-            Средний отклик {summary.totals.avgFirstResponseMin} мин ·{' '}
-            {slaKpiStatusNote}
+            Отклик {summary.totals.avgFirstResponseMin} мин · {slaKpiStatusNote}
           </p>
         </div>
 
