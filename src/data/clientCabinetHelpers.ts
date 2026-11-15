@@ -1,4 +1,5 @@
 import type { OrderDocumentMeta, StudioLegalProfilesConfig } from './studioDocumentsCore.ts';
+import type { ClientApprovalWorkflowView } from './productionApprovalWorkflow.ts';
 
 export type ClientDeliveryChannel =
   | 'messenger'
@@ -16,6 +17,8 @@ export type OrderDeliverableKind =
   | 'passport'
   | 'archive';
 
+export type DeliverableVersionStage = 'draft' | 'revision' | 'master';
+
 export interface OrderDeliverableFile {
   id: string;
   title: string;
@@ -24,6 +27,12 @@ export interface OrderDeliverableFile {
   mimeType: string;
   sizeBytes: number;
   uploadedAt: string;
+  /** Код версии итерации аудиоролика: например, 'v1', 'v2', 'v3', 'master' */
+  versionCode?: string;
+  /** Стадия итерации: черновой дубль ('draft'), правка ('revision') или финальный мастер ('master') */
+  versionStage?: DeliverableVersionStage;
+  /** Комментарий продюсера к итерации (что изменилось относительно прошлой версии) */
+  versionNote?: string;
   /** Имя сохранённого файла в закрытом хранилище сервера (если загружен через CRM) */
   storageKey?: string;
   /** Безопасный проверенный путь к демо-мастеру студии (для стартовых примеров) */
@@ -70,6 +79,7 @@ export interface ClientCabinetOrderSummary {
   documentMeta: OrderDocumentMeta | null;
   legalProfiles?: StudioLegalProfilesConfig | null;
   producerStatusNote?: string;
+  approvalWorkflow?: ClientApprovalWorkflowView | null;
 }
 
 export interface ClientCabinetStoredEntry {

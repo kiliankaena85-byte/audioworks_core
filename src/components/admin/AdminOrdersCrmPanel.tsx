@@ -22,6 +22,10 @@ import {
   resolveDeliveryChannelLabel,
 } from '../../data/clientCabinetHelpers';
 import {
+  type DeliverableVersionPreset,
+  suggestNextAudioVersionCode,
+} from '../../data/deliverableVersioning';
+import {
   buildWebhookOrderEnvelope,
   computeOrderHoldStatus,
   CRM_ORDER_STAGES,
@@ -53,10 +57,20 @@ import {
 } from '../../data/studioDocumentsCore';
 import { BrandedDocumentSuiteModal } from '../documents/BrandedDocumentSuiteModal';
 import { evaluateWebhookEndpointRfSafety } from '../../security/rfLegalCompliance';
+import {
+  createDefaultSoundEngineerRoster,
+  type SoundEngineerContact,
+} from '../../data/productionApprovalWorkflow';
 import { studioCmsStore } from '../../cms/studioCmsStore';
+import { AdminProductionKanbanView } from './AdminProductionKanbanView';
 import { AdminScientificPlanView } from './AdminScientificPlanView';
 
-export type OrdersCrmSubView = 'funnel' | 'channels' | 'science' | 'legal';
+export type OrdersCrmSubView =
+  | 'funnel'
+  | 'kanban'
+  | 'channels'
+  | 'science'
+  | 'legal';
 
 interface AdminOrdersCrmPanelProps {
   initialSubView?: OrdersCrmSubView;
@@ -136,6 +150,9 @@ export function AdminOrdersCrmPanel({
 }: AdminOrdersCrmPanelProps) {
   const [subView, setSubView] = useState<OrdersCrmSubView>(initialSubView);
   const [orders, setOrders] = useState<CrmOrderRecord[]>([]);
+  const [soundEngineers, setSoundEngineers] = useState<SoundEngineerContact[]>(
+    () => createDefaultSoundEngineerRoster()
+  );
   const [dispatchLogs, setDispatchLogs] = useState<DispatchAttemptLog[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -169,6 +186,10 @@ export function AdminOrdersCrmPanel({
   const [deliverableTitleDraft, setDeliverableTitleDraft] = useState<string>('');
   const [deliverableKindDraft, setDeliverableKindDraft] =
     useState<OrderDeliverableKind>('audio_master');
+  const [deliverableVersionDraft, setDeliverableVersionDraft] =
+    useState<DeliverableVersionPreset>('auto');
+  const [deliverableVersionNoteDraft, setDeliverableVersionNoteDraft] =
+    useState<string>('');
   const [isUploadingDeliverable, setIsUploadingDeliverable] =
     useState<boolean>(false);
   const deliverableFileRef = useRef<HTMLInputElement | null>(null);
@@ -244,6 +265,7 @@ export function AdminOrdersCrmPanel({
         const json = (await res.json()) as {
           ok: boolean;
           orders: CrmOrderRecord[];
+          soundEngineers?: SoundEngineerContact[];
           dispatchLogs: DispatchAttemptLog[];
           settings: AdminDispatchSettingsResponse;
           legalProfiles?: StudioLegalProfilesConfig;
@@ -251,6 +273,9 @@ export function AdminOrdersCrmPanel({
         };
 
         setOrders(json.orders);
+        if (Array.isArray(json.soundEngineers)) {
+          setSoundEngineers(json.soundEngineers);
+        }
         setDispatchLogs(json.dispatchLogs);
         applyServerSettings(json.settings);
         if (json.konturStatus) {
@@ -455,6 +480,11 @@ export function AdminOrdersCrmPanel({
             kind: deliverableKindDraft,
             fileName: file.name,
             dataBase64,
+            versionCode:
+              deliverableKindDraft === 'audio_master'
+                ? deliverableVersionDraft
+                : undefined,
+            versionNote: deliverableVersionNoteDraft.trim() || undefined,
           }),
         }
       );
@@ -470,9 +500,11 @@ export function AdminOrdersCrmPanel({
         prev.map((o) => (o.id === json.order!.id ? json.order! : o))
       );
       setDeliverableTitleDraft('');
+      setDeliverableVersionDraft('auto');
+      setDeliverableVersionNoteDraft('');
       setFeedbackBanner({
         kind: 'ok',
-        text: `Файл «${file.name}» загружен в личный кабинет заказа #${order.orderNumber}.`,
+        text: `Файл «${file.name}» загружен в историю версий заказа #${order.orderNumber}.`,
       });
     } catch (err) {
       setFeedbackBanner({
@@ -923,13 +955,29 @@ export function AdminOrdersCrmPanel({
             aria-selected={subView === 'funnel'}
             data-testid="crm-subtab-funnel"
             onClick={() => setSubView('funnel')}
-            className={`min-h-[40px] px-3.5 sm:px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap text-left ${
+            className={`min-h-[40px] px-3.5 sm:px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 text-left ${
               subView === 'funnel'
                 ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
                 : 'bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:text-[#111111] dark:hover:text-white'
             }`}
           >
             <span>Воронка заказов ({orders.length})</span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={subView === 'kanban'}
+            data-testid="crm-subtab-kanban"
+            onClick={() => setSubView('kanban')}
+            className={`min-h-[40px] px-3.5 sm:px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 text-left ${
+              subView === 'kanban'
+                ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                : 'bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:text-[#111111] dark:hover:text-white'
+            }`}
+          >
+            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+            <span>Конвейер продакшна (Канбан)</span>
           </button>
 
           <button
@@ -1021,6 +1069,25 @@ export function AdminOrdersCrmPanel({
         >
           {feedbackBanner.text}
         </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* ВКЛАДКА 1А: СТУДИЙНЫЙ КОНВЕЙЕР СОГЛАСОВАНИЯ И ШЛЮЗ ЗВУКОРЕЖИССЁРА     */}
+      {/* ===================================================================== */}
+      {subView === 'kanban' && (
+        <AdminProductionKanbanView
+          orders={orders}
+          soundEngineers={soundEngineers}
+          selectedOrderId={selectedOrderId}
+          onSelectOrderId={setSelectedOrderId}
+          onOrderUpdated={(updated) =>
+            setOrders((prev) =>
+              prev.map((o) => (o.id === updated.id ? updated : o))
+            )
+          }
+          onSoundEngineersUpdated={setSoundEngineers}
+          onFeedback={setFeedbackBanner}
+        />
       )}
 
       {/* ===================================================================== */}
@@ -1704,67 +1771,105 @@ export function AdminOrdersCrmPanel({
                           </button>
                         </div>
 
-                        {/* Загрузка файла выдачи в Личный кабинет */}
-                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
-                          <input
-                            type="text"
-                            aria-label="Название файла для клиента"
-                            value={deliverableTitleDraft}
-                            onChange={(e) => setDeliverableTitleDraft(e.target.value)}
-                            placeholder="Название (напр. Финальный мастер 20 сек WAV)"
-                            className="sm:col-span-5 min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
-                          />
-                          <select
-                            aria-label="Тип файла выдачи"
-                            value={deliverableKindDraft}
-                            onChange={(e) =>
-                              setDeliverableKindDraft(
-                                e.target.value as OrderDeliverableKind
-                              )
-                            }
-                            className="sm:col-span-3 min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
-                          >
-                            <option value="audio_master">Аудиомастер</option>
-                            <option value="script">Сценарий</option>
-                            <option value="passport">Паспорт прав</option>
-                            <option value="invoice">Счёт / документы</option>
-                            <option value="archive">Архив / прочее</option>
-                          </select>
-                          <div className="sm:col-span-4">
+                        {/* Загрузка файла выдачи в Личный кабинет с поддержкой версий (v1, v2, master) */}
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
                             <input
-                              ref={deliverableFileRef}
-                              type="file"
-                              data-testid="crm-deliverable-file-input"
+                              type="text"
+                              aria-label="Название файла для клиента"
+                              value={deliverableTitleDraft}
+                              onChange={(e) => setDeliverableTitleDraft(e.target.value)}
+                              placeholder="Название (напр. Итерация v2 — правка паузы)"
+                              className="sm:col-span-5 min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                            />
+                            <select
+                              aria-label="Тип файла выдачи"
+                              value={deliverableKindDraft}
                               onChange={(e) =>
-                                void handleUploadDeliverable(
-                                  selectedOrder,
-                                  e.target.files?.[0] ?? null
+                                setDeliverableKindDraft(
+                                  e.target.value as OrderDeliverableKind
                                 )
                               }
-                              className="sr-only"
-                            />
-                            <button
-                              type="button"
-                              disabled={isUploadingDeliverable}
-                              data-testid="crm-upload-deliverable-btn"
-                              onClick={() => deliverableFileRef.current?.click()}
-                              className="w-full min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                              className="sm:col-span-3 min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
                             >
-                              <Upload className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                              <span>
-                                {isUploadingDeliverable
-                                  ? 'Загрузка…'
-                                  : 'Загрузить файл клиенту'}
-                              </span>
-                            </button>
+                              <option value="audio_master">Аудиоролик (WAV/MP3)</option>
+                              <option value="script">Сценарий</option>
+                              <option value="passport">Паспорт прав</option>
+                              <option value="invoice">Счёт / документы</option>
+                              <option value="archive">Архив / прочее</option>
+                            </select>
+                            <div className="sm:col-span-4">
+                              <input
+                                ref={deliverableFileRef}
+                                type="file"
+                                data-testid="crm-deliverable-file-input"
+                                onChange={(e) =>
+                                  void handleUploadDeliverable(
+                                    selectedOrder,
+                                    e.target.files?.[0] ?? null
+                                  )
+                                }
+                                className="sr-only"
+                              />
+                              <button
+                                type="button"
+                                disabled={isUploadingDeliverable}
+                                data-testid="crm-upload-deliverable-btn"
+                                onClick={() => deliverableFileRef.current?.click()}
+                                className="w-full min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
+                              >
+                                <Upload className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                                <span>
+                                  {isUploadingDeliverable
+                                    ? 'Загрузка…'
+                                    : 'Загрузить файл клиенту'}
+                                </span>
+                              </button>
+                            </div>
                           </div>
+
+                          {deliverableKindDraft === 'audio_master' && (
+                            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                              <select
+                                aria-label="Версия итерации аудиоролика"
+                                data-testid="crm-deliverable-version-select"
+                                value={deliverableVersionDraft}
+                                onChange={(e) =>
+                                  setDeliverableVersionDraft(
+                                    e.target.value as DeliverableVersionPreset
+                                  )
+                                }
+                                className="sm:col-span-4 min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs font-mono"
+                              >
+                                <option value="auto">
+                                  Авто ({suggestNextAudioVersionCode(selectedOrder.deliverables ?? [])})
+                                </option>
+                                <option value="v1">v1 — Черновой дубль</option>
+                                <option value="v2">v2 — Правка</option>
+                                <option value="v3">v3 — Доработка</option>
+                                <option value="v4">v4 — Доп. правка</option>
+                                <option value="master">master — Финальный мастер</option>
+                              </select>
+                              <input
+                                type="text"
+                                aria-label="Комментарий к версии ролика для клиента"
+                                data-testid="crm-deliverable-version-note-input"
+                                value={deliverableVersionNoteDraft}
+                                onChange={(e) =>
+                                  setDeliverableVersionNoteDraft(e.target.value)
+                                }
+                                placeholder="Комментарий к итерации (напр. Уплотнён финал и усилена пауза)"
+                                className="sm:col-span-8 min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                              />
+                            </div>
+                          )}
                         </div>
 
                         {/* Список выданных файлов и вложений клиента */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                           <div className="space-y-1.5">
                             <p className="font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                              Файлы в кабинете клиента (
+                              Файлы и итерации в кабинете клиента (
                               {selectedOrder.deliverables?.length ?? 0}):
                             </p>
                             {!selectedOrder.deliverables ||
@@ -1773,18 +1878,30 @@ export function AdminOrdersCrmPanel({
                                 Пока нет загруженных файлов выдачи.
                               </p>
                             ) : (
-                              <ul className="space-y-1.5">
+                              <ul className="divide-y divide-[#111111]/8 dark:divide-white/8 border-t border-b border-[#111111]/8 dark:border-white/8">
                                 {selectedOrder.deliverables.map((d) => (
                                   <li
                                     key={d.id}
-                                    className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/8 dark:border-white/8"
+                                    className="flex items-start justify-between gap-2 py-2"
                                   >
-                                    <span className="truncate font-medium">
-                                      {d.title}{' '}
-                                      <span className="text-[#111111]/50 dark:text-[#F4F3EF]/50">
-                                        ({formatFileSizeReadable(d.sizeBytes)})
-                                      </span>
-                                    </span>
+                                    <div className="min-w-0 flex-1 space-y-0.5">
+                                      <p className="truncate font-medium text-[#111111] dark:text-[#F4F3EF]">
+                                        {d.versionCode && (
+                                          <span className="font-mono font-bold text-[#FF4820] mr-1.5">
+                                            {d.versionCode}
+                                          </span>
+                                        )}
+                                        <span>{d.title}</span>{' '}
+                                        <span className="text-[#111111]/50 dark:text-[#F4F3EF]/50 tabular-nums">
+                                          ({formatFileSizeReadable(d.sizeBytes)})
+                                        </span>
+                                      </p>
+                                      {d.versionNote && (
+                                        <p className="text-[11px] text-[#111111]/56 dark:text-[#F4F3EF]/56 line-clamp-1">
+                                          {d.versionNote}
+                                        </p>
+                                      )}
+                                    </div>
                                     <button
                                       type="button"
                                       disabled={isUpdatingOrder}

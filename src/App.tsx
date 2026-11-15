@@ -52,6 +52,11 @@ const ClientCabinetPage = lazy(() =>
     default: m.ClientCabinetPage,
   }))
 );
+const SoundEngineerDropPage = lazy(() =>
+  import('./components/pages/SoundEngineerDropPage').then((m) => ({
+    default: m.SoundEngineerDropPage,
+  }))
+);
 const PricingPage = lazy(() =>
   import('./components/pages/PricingPage').then((m) => ({
     default: m.PricingPage,
@@ -185,7 +190,7 @@ function FmworksExperience() {
         window.location.search,
         window.location.hash
       );
-      if (next.kind === 'admin') {
+      if (next.kind === 'admin' || next.kind === 'sound-drop') {
         casePlayerEngine.stop();
         contrastAudioEngine.stopAll();
         broadcastAircheckEngine.stop();
@@ -237,7 +242,10 @@ function FmworksExperience() {
     applyRouteSeoToDocument(seoMeta);
   }, [route, snapshot.flagshipReel, snapshot.portfolioCases]);
 
-  const navigateTo = (nextRoute: PlatformRoute) => {
+  const navigateTo = (
+    nextRoute: PlatformRoute,
+    options?: { replace?: boolean }
+  ) => {
     const effectiveRoute: PlatformRoute =
       !AIRTIME_SALES_ENABLED &&
       (nextRoute.kind === 'hot-air' || nextRoute.kind === 'station-detail')
@@ -245,7 +253,10 @@ function FmworksExperience() {
         : nextRoute;
     const targetPath = buildPlatformPath(effectiveRoute);
     if (typeof window !== 'undefined') {
-      if (effectiveRoute.kind === 'admin') {
+      if (
+        effectiveRoute.kind === 'admin' ||
+        effectiveRoute.kind === 'sound-drop'
+      ) {
         casePlayerEngine.stop();
         contrastAudioEngine.stopAll();
         broadcastAircheckEngine.stop();
@@ -255,15 +266,19 @@ function FmworksExperience() {
         broadcastAircheckEngine.stop();
       }
 
-      const currentUrl = `${window.location.pathname}${window.location.hash}`;
+      const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
       if (currentUrl !== targetPath) {
-        window.history.pushState({}, '', targetPath);
+        if (options?.replace) {
+          window.history.replaceState({}, '', targetPath);
+        } else {
+          window.history.pushState({}, '', targetPath);
+        }
       }
 
       const hasScrollAnchor =
         (effectiveRoute.kind === 'home' && Boolean(effectiveRoute.scrollAnchor)) ||
         (effectiveRoute.kind === 'pricing' && Boolean(effectiveRoute.scrollAnchor));
-      if (!hasScrollAnchor) {
+      if (!hasScrollAnchor && !options?.replace) {
         window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
       }
     }
@@ -271,6 +286,21 @@ function FmworksExperience() {
   };
 
   const currentRoutePath = buildPlatformPath(route);
+
+  if (route.kind === 'sound-drop') {
+    return (
+      <>
+        <PerformanceMonitor routeKey={currentRoutePath} />
+        <Suspense fallback={<RouteLoadingFallback />}>
+          <SoundEngineerDropPage
+            dropToken={route.dropToken}
+            isDark={isDark}
+            onToggleTheme={() => setIsDark((prev) => !prev)}
+          />
+        </Suspense>
+      </>
+    );
+  }
 
   if (route.kind === 'admin') {
     return (
@@ -445,7 +475,11 @@ function FmworksExperience() {
           )}
 
           {route.kind === 'cabinet' && (
-            <ClientCabinetPage onNavigate={navigateTo} />
+            <ClientCabinetPage
+              subroute={route.subroute}
+              magicToken={route.magicToken}
+              onNavigate={navigateTo}
+            />
           )}
         </Suspense>
       </main>

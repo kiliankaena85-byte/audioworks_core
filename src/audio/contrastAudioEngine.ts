@@ -5,11 +5,12 @@ import {
   CommercialChapter,
   CommercialStageMode,
   CRASH_TEST_CLUTTER_DURATION_SEC,
+  CRASH_TEST_STOP_DURATION_SEC,
   CRASH_TEST_TOTAL_INTRO_SEC,
   CrashTestPhase,
   getCommercialStateAtTime,
-  getCrashTestPhaseAtElapsed,
 } from '../data/audioworksCommercial';
+import type { ResolvedHeroStagePlayback } from '../data/heroStageCms';
 import { LayaPersonaSlot } from '../engine/layaTypes';
 import { createSafeAudioContext } from './audioContextHelper';
 import { duelAudioStore } from './duelAudioStore';
@@ -37,6 +38,12 @@ export interface ContrastStageSnapshot {
   hasCustomAudio: boolean;
   /** Имя загруженного пользовательского шоурила */
   customAudioName: string | null;
+  /** Подпись активного ролика Hero из серверной CMS (если выбран кейс или загружен файл) */
+  activeHeroTrackLabel: string | null;
+  /** Длительность Фазы А («Обычный рекламный блок») в секундах */
+  clutterDurationSec: number;
+  /** Длительность Фазы Б («Стоп · Пауза») в секундах */
+  stopPauseDurationSec: number;
   /** Фаза эфирного краш-теста на первом экране HeroKotoLens */
   crashPhase: CrashTestPhase;
   /** Секундомер с момента запуска краш-теста (0..4.5+) */
@@ -64,6 +71,7 @@ class ContrastAudioEngine {
 
   private customAudioUrl: string | null = null;
   private customAudioName: string | null = null;
+  private cmsHeroPlayback: ResolvedHeroStagePlayback | null = null;
 
   private mode: StageMode = 'stream';
   private isFilmPlaying = false;
@@ -108,6 +116,18 @@ class ContrastAudioEngine {
       activeChapter: this.activeChapter,
       hasCustomAudio: this.customAudioUrl !== null,
       customAudioName: this.customAudioName,
+      activeHeroTrackLabel:
+        this.customAudioName ??
+        (this.cmsHeroPlayback &&
+        this.cmsHeroPlayback.focus.sourceKind !== 'default_reel'
+          ? this.cmsHeroPlayback.focus.label
+          : null),
+      clutterDurationSec:
+        this.cmsHeroPlayback?.clutter.durationSec ??
+        CRASH_TEST_CLUTTER_DURATION_SEC,
+      stopPauseDurationSec:
+        this.cmsHeroPlayback?.stopPauseDurationSec ??
+        CRASH_TEST_STOP_DURATION_SEC,
       crashPhase: this.crashPhase,
       crashElapsedSec: this.crashElapsedSec,
       isLensExpanded: this.isLensExpanded,
@@ -130,6 +150,64 @@ class ContrastAudioEngine {
     }
   }
 
+  /**
+   * Синхронизирует движок первого экрана с опубликованной/редактируемой конфигурацией CMS `heroStage`.
+   */
+  public syncCmsHeroStage(resolved: ResolvedHeroStagePlayback): void {
+    const prevFocusUrl = this.cmsHeroPlayback?.focus.audioUrl ?? null;
+    this.cmsHeroPlayback = resolved;
+
+    if (
+      this.customAudioUrl === null &&
+      !this.isFilmPlaying &&
+      !this.isSoundPlaying
+    ) {
+      this.filmDurationSec =
+        resolved.focus.endSec !== null
+          ? resolved.focus.endSec
+          : Math.max(1, resolved.focus.startSec + resolved.focus.durationSec);
+    } else if (
+      this.customAudioUrl === null &&
+      prevFocusUrl !== null &&
+      prevFocusUrl !== resolved.focus.audioUrl &&
+      (this.isFilmPlaying || this.isSoundPlaying)
+    ) {
+      this.pauseKeepingMode();
+      return;
+    }
+
+    this.emit();
+  }
+
+  private getClutterDurationSec(): number {
+    return (
+      this.cmsHeroPlayback?.clutter.durationSec ??
+      CRASH_TEST_CLUTTER_DURATION_SEC
+    );
+  }
+
+  private getStopPauseDurationSec(): number {
+    return (
+      this.cmsHeroPlayback?.stopPauseDurationSec ??
+      CRASH_TEST_STOP_DURATION_SEC
+    );
+  }
+
+  private getCrashPhaseAt(elapsedSec: number): CrashTestPhase {
+    if (!Number.isFinite(elapsedSec) || elapsedSec < 0) {
+      return 'idle';
+    }
+    const clutterDur = this.getClutterDurationSec();
+    const totalIntro = clutterDur + this.getStopPauseDurationSec();
+    if (elapsedSec < clutterDur) {
+      return 'clutter';
+    }
+    if (elapsedSec < totalIntro) {
+      return 'stop_pause';
+    }
+    return 'audioworks';
+  }
+
   private getPreferredFocusAudio(): {
     url: string;
     startSec: number;
@@ -137,6 +215,13 @@ class ContrastAudioEngine {
   } {
     if (this.customAudioUrl) {
       return { url: this.customAudioUrl, startSec: 0, endSec: null };
+    }
+    if (this.cmsHeroPlayback) {
+      return {
+        url: this.cmsHeroPlayback.focus.audioUrl,
+        startSec: this.cmsHeroPlayback.focus.startSec,
+        endSec: this.cmsHeroPlayback.focus.endSec,
+      };
     }
     const duelSnap = duelAudioStore.getSnapshot();
     if (duelSnap.audioworksTrack) {
@@ -672,18 +757,40 @@ class ContrastAudioEngine {
     this.onStartHooks.forEach((fn) => fn());
     this.clearPlaybackOnly();
 
+    const clutterDur = this.getClutterDurationSec();
+    const cmsClutter = this.cmsHeroPlayback?.clutter;
+
     this.crashPhase = 'clutter';
     this.crashElapsedSec = 0;
     this.isLensExpanded = false;
     this.mode = 'stream';
     this.isFilmPlaying = true;
     this.isSoundPlaying = true;
-    this.forceClutterRoadNoise = true;
+    this.forceClutterRoadNoise = cmsClutter ? cmsClutter.roadNoiseOnClutter : true;
     this.filmElapsedSec = 0;
 
     const duelSnap = duelAudioStore.getSnapshot();
 
-    if (duelSnap.radioTrack) {
+    if (cmsClutter && cmsClutter.mode === 'custom_upload') {
+      const audio = this.ensureHtmlAudio(cmsClutter.audioUrl);
+      this.ensureAudioGraph();
+      if (audio) {
+        const launchCustomClutter = () => {
+          try {
+            audio.currentTime = cmsClutter.startSec;
+          } catch {
+            // Ignore seek before metadata
+          }
+          audio.play().catch(() => {});
+        };
+        if (audio.readyState >= 1) {
+          launchCustomClutter();
+        } else {
+          audio.addEventListener('loadedmetadata', launchCustomClutter, { once: true });
+          audio.load();
+        }
+      }
+    } else if (!this.cmsHeroPlayback && duelSnap.radioTrack) {
       const audio = this.ensureHtmlAudio(duelSnap.radioTrack.objectUrl);
       this.ensureAudioGraph();
       if (audio) {
@@ -698,7 +805,7 @@ class ContrastAudioEngine {
       const audio = this.ensureHtmlAudio(AUDIOWORKS_WAV_URL);
       this.ensureAudioGraph();
       if (audio) {
-        const startClutterAt = 1.6;
+        const startClutterAt = cmsClutter?.startSec ?? 1.6;
         const launchClutter = () => {
           try {
             audio.currentTime = startClutterAt;
@@ -716,7 +823,7 @@ class ContrastAudioEngine {
       }
     } else {
       this.ensureAudioGraph();
-      this.playSynthClutterBed(CRASH_TEST_CLUTTER_DURATION_SEC);
+      this.playSynthClutterBed(clutterDur);
     }
 
     this.syncRoadNoiseNode();
@@ -730,10 +837,10 @@ class ContrastAudioEngine {
     this.crashTimerId = window.setInterval(() => {
       const elapsed = Math.max(0, (performance.now() - this.crashStartedAtMs) / 1000);
       this.crashElapsedSec = elapsed;
-      const nextPhase = getCrashTestPhaseAtElapsed(elapsed);
+      const nextPhase = this.getCrashPhaseAt(elapsed);
 
       if (nextPhase === 'clutter') {
-        this.filmElapsedSec = Math.min(CRASH_TEST_CLUTTER_DURATION_SEC, elapsed);
+        this.filmElapsedSec = Math.min(clutterDur, elapsed);
         this.emit();
         return;
       }
@@ -842,8 +949,21 @@ class ContrastAudioEngine {
       this.crashPhase = 'idle';
       this.crashElapsedSec = 0;
 
+      const cmsClutter = this.cmsHeroPlayback?.clutter;
+      if (cmsClutter && cmsClutter.mode === 'custom_upload') {
+        this.mode = 'stream';
+        this.seekAndPlayUrl(
+          cmsClutter.audioUrl,
+          cmsClutter.startSec,
+          cmsClutter.startSec + cmsClutter.durationSec,
+          false,
+          false
+        );
+        return;
+      }
+
       const duelSnap = duelAudioStore.getSnapshot();
-      if (duelSnap.radioTrack) {
+      if (!this.cmsHeroPlayback && duelSnap.radioTrack) {
         this.mode = 'stream';
         this.seekAndPlayUrl(
           duelSnap.radioTrack.objectUrl,
@@ -879,6 +999,21 @@ class ContrastAudioEngine {
       const customStart =
         Math.abs(startSec - AUDIOWORKS_FOCUS_ENTRY_SEC) < 0.25 ? 0 : startSec;
       this.seekAndPlayUrl(this.customAudioUrl, customStart, null, true, true);
+      return;
+    }
+    if (this.cmsHeroPlayback) {
+      const target = this.cmsHeroPlayback.focus;
+      const effectiveStart =
+        Math.abs(startSec - AUDIOWORKS_FOCUS_ENTRY_SEC) < 0.25
+          ? target.startSec
+          : startSec;
+      this.seekAndPlayUrl(
+        target.audioUrl,
+        effectiveStart,
+        target.endSec,
+        true,
+        true
+      );
       return;
     }
     const duelSnap = duelAudioStore.getSnapshot();

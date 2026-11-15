@@ -174,14 +174,23 @@ export function FifteenSecDuel() {
       side === 'radio' ? latestSnap.radioTrack : latestSnap.audioworksTrack;
     const cmsSpot = side === 'radio' ? duelCfg.radioSpot : duelCfg.audioworksSpot;
 
-    const srcUrl = customMeta
+    const preferLocalIdb = customMeta?.source === 'local';
+    const srcUrl = preferLocalIdb
       ? customMeta.objectUrl
-      : cmsSpot.audioUrl || AUDIOWORKS_WAV_URL;
+      : cmsSpot.audioUrl || customMeta?.objectUrl || AUDIOWORKS_WAV_URL;
     const startOffset =
-      customMeta || cmsSpot.audioUrl ? 0 : side === 'radio' ? 0 : 15.5;
-    const durationLimit = customMeta
+      preferLocalIdb || cmsSpot.audioUrl || customMeta
+        ? 0
+        : side === 'radio'
+          ? 0
+          : 15.5;
+    const durationLimit = preferLocalIdb
       ? customMeta.effectiveDurationSec
-      : cmsSpot.durationSec;
+      : cmsSpot.audioUrl
+        ? cmsSpot.durationSec
+        : customMeta
+          ? customMeta.effectiveDurationSec
+          : cmsSpot.durationSec;
 
     clipStartOffsetRef.current = startOffset;
     maxDurationRef.current = durationLimit;

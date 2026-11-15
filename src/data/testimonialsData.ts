@@ -1,5 +1,5 @@
-import { LayaPersona } from '../engine/layaTypes';
-import { CaseId } from './casesData';
+import type { LayaPersona } from '../engine/layaTypes.ts';
+import type { CaseId } from './casesData.ts';
 
 export type TestimonialCategory =
   | 'all'

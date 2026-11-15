@@ -22,6 +22,25 @@ import {
 import { EDITORIAL_FAQ_ITEMS, type FaqItem } from './faqData.ts';
 import { EDITORIAL_PRICING_ROWS, type EditorialPricingRow } from './pricingData.ts';
 import { checkBannedForeignServiceUrl } from '../security/rfLegalCompliance.ts';
+import {
+  createDefaultHeroStageCmsConfig,
+  normalizeHeroStageCmsConfig,
+  type HeroStageCmsConfig,
+} from './heroStageCms.ts';
+import {
+  createDefaultTestimonialsCmsConfig,
+  normalizeTestimonialsCmsConfig,
+  type ClientTestimonialCmsRecord,
+  type TestimonialsCmsConfig,
+  type TestimonialTrustMetric,
+} from './testimonialsCms.ts';
+
+export type {
+  ClientTestimonialCmsRecord,
+  HeroStageCmsConfig,
+  TestimonialsCmsConfig,
+  TestimonialTrustMetric,
+};
 
 export type PortfolioPersonaFocus = 'fmcg' | 'real_estate' | 'general';
 
@@ -77,11 +96,13 @@ export interface SiteCopyCmsConfig {
 export interface StudioCmsSnapshot {
   schemaVersion: 1;
   updatedAt: string;
+  heroStage: HeroStageCmsConfig;
   flagshipReel: PortfolioCaseRecord;
   portfolioCases: PortfolioCaseRecord[];
   duel: DuelCmsConfig;
   neuroApproach: NeuroApproachConfig;
   siteCopy: SiteCopyCmsConfig;
+  testimonials: TestimonialsCmsConfig;
 }
 
 export const BANNED_EDITORIAL_TERMS = [
@@ -209,6 +230,7 @@ export function createDefaultStudioCmsSnapshot(): StudioCmsSnapshot {
   return {
     schemaVersion: 1,
     updatedAt: '2026-11-12T00:00:00.000Z',
+    heroStage: createDefaultHeroStageCmsConfig(),
     flagshipReel: {
       ...FLAGSHIP_STUDIO_REEL,
       clipStartSec: FLAGSHIP_STUDIO_REEL.clipStartSec ?? 0,
@@ -268,6 +290,7 @@ export function createDefaultStudioCmsSnapshot(): StudioCmsSnapshot {
         'Без сложных терминов и мелкого шрифта — прозрачно про бюджет, эфирную модерацию и сроки.',
       faqItems: EDITORIAL_FAQ_ITEMS.map((item) => ({ ...item })),
     },
+    testimonials: createDefaultTestimonialsCmsConfig(),
   };
 }
 
@@ -276,11 +299,13 @@ export function createDefaultStudioCmsSnapshot(): StudioCmsSnapshot {
  */
 export function auditEditorialCopyGuardrails(snapshot: StudioCmsSnapshot): string[] {
   const serialized = JSON.stringify({
+    heroStage: snapshot.heroStage,
     flagshipReel: snapshot.flagshipReel,
     portfolioCases: snapshot.portfolioCases,
     duel: snapshot.duel,
     neuroApproach: snapshot.neuroApproach,
     siteCopy: snapshot.siteCopy,
+    testimonials: snapshot.testimonials,
   }).toLowerCase();
 
   const found: string[] = [];
@@ -748,17 +773,28 @@ export function validateAndNormalizeCmsSnapshot(
     faqItems,
   };
 
+  const heroStage = normalizeHeroStageCmsConfig(raw.heroStage);
+  const testimonialsResult = normalizeTestimonialsCmsConfig(raw.testimonials);
+  if (!testimonialsResult.ok) {
+    return {
+      ok: false,
+      error: testimonialsResult.error,
+    };
+  }
+
   const normalizedSnapshot: StudioCmsSnapshot = {
     schemaVersion: 1,
     updatedAt:
       typeof raw.updatedAt === 'string' && raw.updatedAt.trim()
         ? raw.updatedAt.trim()
         : new Date().toISOString(),
+    heroStage,
     flagshipReel,
     portfolioCases,
     duel,
     neuroApproach,
     siteCopy,
+    testimonials: testimonialsResult.data,
   };
 
   const editorialWarnings = auditEditorialCopyGuardrails(normalizedSnapshot);

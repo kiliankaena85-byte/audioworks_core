@@ -24,6 +24,7 @@ import {
   resolveAudioBadgeLabel,
   WAVE1_DEFAULT_PREVIEW_DURATION_SEC,
 } from '../../data/portfolioWave1Helpers';
+import { HeroStageCmsConfig } from '../../data/heroStageCms';
 import {
   clampPreviewTiming,
   PortfolioCaseRecord,
@@ -33,8 +34,11 @@ import {
 interface AdminPortfolioPanelProps {
   flagshipReel: PortfolioCaseRecord;
   portfolioCases: PortfolioCaseRecord[];
+  heroStage?: HeroStageCmsConfig;
   onPatchCase: (caseId: string, patch: Partial<PortfolioCaseRecord>) => void;
   onChangePortfolioCases: (nextCases: PortfolioCaseRecord[]) => void;
+  onAssignCaseToHero?: (item: PortfolioCaseRecord) => void;
+  onOpenHeroStageTab?: () => void;
   onUploadAudio: (
     file: File
   ) => Promise<{ ok: true; result: UploadedAudioResult } | { ok: false; error: string }>;
@@ -76,8 +80,11 @@ type AuditionMode = 'preview' | 'full' | null;
 export function AdminPortfolioPanel({
   flagshipReel,
   portfolioCases,
+  heroStage,
   onPatchCase,
   onChangePortfolioCases,
+  onAssignCaseToHero,
+  onOpenHeroStageTab,
   onUploadAudio,
   onUploadImage,
   onNavigateToGallery,
@@ -504,8 +511,8 @@ export function AdminPortfolioPanel({
           <div className="space-y-1 min-w-0">
             <p className="text-xs font-medium text-[#111111]/55 dark:text-[#F4F3EF]/55">
               {isEditingFlagship
-                ? 'Флагманский шоурил студии · синхронизация с локальным состоянием CMS'
-                : `Кейс портфолио (${activeCase.id}) · синхронизация с локальным состоянием CMS`}
+                ? 'Экран 3 главной страницы · Широкая полоса «Слушать шоурил» над сеткой работ (#work)'
+                : `Экран 3 главной страницы · Сетка «Наши работы» (#work) и раздел /cases · ${activeCase.id}`}
             </p>
             <h3 className="text-xl font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF] truncate">
               {activeCase.client}
@@ -513,6 +520,36 @@ export function AdminPortfolioPanel({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            {heroStage?.focusSourceMode === 'portfolio_case' &&
+            heroStage.linkedCaseId === activeCase.id ? (
+              <button
+                type="button"
+                data-testid="assigned-in-hero-status-btn"
+                onClick={onOpenHeroStageTab}
+                className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-[#16A34A]/35 bg-[#16A34A]/10 text-[#15803D] dark:text-[#4ADE80] text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <span>Звучит в Hero (Экран 1)</span>
+                <ArrowUpRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+              </button>
+            ) : (
+              onAssignCaseToHero && (
+                <button
+                  type="button"
+                  data-testid="assign-case-to-hero-btn"
+                  onClick={() => {
+                    onAssignCaseToHero(activeCase);
+                    setUploadNotice({
+                      kind: 'ok',
+                      text: `Ролик «${activeCase.client}» назначен на первый экран Hero («Краш-тест в эфире»). Нажмите «Сохранить на сервере», чтобы закрепить выбор.`,
+                    });
+                  }}
+                  className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-[#FF4820]/35 text-[#FF4820] hover:bg-[#FF4820] hover:text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  <span>Назначить в Hero (Экран 1)</span>
+                </button>
+              )
+            )}
+
             <label className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-[#111111]/14 dark:border-white/14 inline-flex items-center gap-2 text-xs font-semibold cursor-pointer select-none whitespace-nowrap">
               <input
                 type="checkbox"

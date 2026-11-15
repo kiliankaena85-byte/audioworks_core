@@ -19,17 +19,21 @@ import {
   ContrastStageSnapshot,
 } from '../audio/contrastAudioEngine';
 import { useSiteTextBlocks } from '../cms/SiteTextBlocksContext';
+import { useStudioCms } from '../cms/StudioCmsContext';
 import { OptimizedImage } from './OptimizedImage';
 import {
   AUDIOWORKS_TOTAL_DURATION_SEC,
-  CRASH_TEST_CLUTTER_DURATION_SEC,
   formatAudioTime,
   GREY_RADIO_MARQUEE_BASE,
   HERO_GREY_TRAFFIC_IMAGE,
   HERO_LENS_FRAMES,
 } from '../data/audioworksCommercial';
 import { BrandDomainVariant } from '../data/brandKitData';
-import { isSiteTextBlockSubtitleModified } from '../data/siteTextBlocksData';
+import { resolveHeroStagePlayback } from '../data/heroStageCms';
+import {
+  isSiteTextBlockModified,
+  isSiteTextBlockSubtitleModified,
+} from '../data/siteTextBlocksData';
 import { useLayaDecision } from '../engine/LayaContext';
 import { BrandLogo } from './BrandLogo';
 
@@ -82,10 +86,25 @@ export function HeroKotoLens({
   brandVariant = 'fmworks_reg',
   onOpenBrandKit,
 }: HeroKotoLensProps = {}) {
-  const { slot } = useLayaDecision();
+  const { slot, decision } = useLayaDecision();
+  const { snapshot } = useStudioCms();
   const { getBlock } = useSiteTextBlocks();
   const heroStageBlock = getBlock('hero-stage');
   const heroManifestoBlock = getBlock('hero-manifesto');
+
+  const stageBlockModifiedInSession = isSiteTextBlockModified(heroStageBlock);
+  const manifestoModifiedInSession = isSiteTextBlockModified(heroManifestoBlock);
+
+  const stageEyebrow = stageBlockModifiedInSession
+    ? heroStageBlock.eyebrow
+    : snapshot.siteCopy.heroLensClutterKicker || heroStageBlock.eyebrow;
+  const stageHeadline = stageBlockModifiedInSession
+    ? heroStageBlock.title
+    : snapshot.siteCopy.heroLensClutterHeadline || heroStageBlock.title;
+  const manifestoDescription = manifestoModifiedInSession
+    ? heroManifestoBlock.description
+    : snapshot.siteCopy.heroManifestoLead || heroManifestoBlock.description;
+
   const manifestoSubtitle = isSiteTextBlockSubtitleModified(heroManifestoBlock)
     ? heroManifestoBlock.subtitle ?? slot.kotoManifestoTagline
     : slot.kotoManifestoTagline;
@@ -137,6 +156,11 @@ export function HeroKotoLens({
   useEffect(() => {
     contrastAudioEngine.syncPersonaConfig(slot.focusChordPreset, slot.focusWords.length);
   }, [slot.focusChordPreset, slot.focusWords.length]);
+
+  useEffect(() => {
+    const resolvedHero = resolveHeroStagePlayback(snapshot, decision.choice);
+    contrastAudioEngine.syncCmsHeroStage(resolvedHero);
+  }, [snapshot, decision.choice]);
 
   const spotlightBaseRadiusRef = useRef(spotlightBaseRadius);
   spotlightBaseRadiusRef.current = spotlightBaseRadius;
@@ -313,14 +337,17 @@ export function HeroKotoLens({
     ...slot.streamCliches,
   ];
 
+  const activeClutterDur = Math.max(1, snap.clutterDurationSec);
   const clutterProgressPct = Math.min(
     100,
-    Math.max(0, (snap.crashElapsedSec / CRASH_TEST_CLUTTER_DURATION_SEC) * 100)
+    Math.max(0, (snap.crashElapsedSec / activeClutterDur) * 100)
   );
 
+  const activeFilmDur =
+    snap.filmDurationSec > 0 ? snap.filmDurationSec : AUDIOWORKS_TOTAL_DURATION_SEC;
   const filmProgressPct = Math.min(
     100,
-    Math.max(0, (snap.filmElapsedSec / AUDIOWORKS_TOTAL_DURATION_SEC) * 100)
+    Math.max(0, (snap.filmElapsedSec / activeFilmDur) * 100)
   );
 
   const hideNativeCursor = !isExpanded && isPointerInside && !isOverControl;
@@ -446,7 +473,9 @@ export function HeroKotoLens({
                   data-testid="crash-phase-clutter-badge"
                   className="flex items-center gap-3 text-xs sm:text-sm font-medium text-white/90 tabular-nums"
                 >
-                  <span>0:00–0:04 · Обычный рекламный блок</span>
+                  <span>
+                    0:00–{formatAudioTime(Math.round(snap.clutterDurationSec))} · Обычный рекламный блок
+                  </span>
                   <span className="hidden sm:inline-block w-16 h-0.5 bg-white/20 overflow-hidden">
                     <span
                       style={{ transform: `scaleX(${clutterProgressPct / 100})` }}
@@ -457,9 +486,9 @@ export function HeroKotoLens({
               ) : isStopPausePhase ? (
                 <div
                   data-testid="crash-phase-stop-badge"
-                  className="text-xs sm:text-sm font-semibold text-[#FF4820] tracking-tight"
+                  className="text-xs sm:text-sm font-semibold text-[#FF4820] tracking-tight tabular-nums"
                 >
-                  Стоп · Пауза 0.5 сек
+                  Стоп · Пауза {snap.stopPauseDurationSec} сек
                 </div>
               ) : isExpanded ? (
                 <div
@@ -539,9 +568,12 @@ export function HeroKotoLens({
                     transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
                     className="space-y-1.5"
                   >
-                    <p className="text-xs sm:text-sm font-medium text-white/72">
-                      {snap.hasCustomAudio && snap.customAudioName
-                        ? `Шоурил · ${snap.customAudioName}`
+                    <p
+                      data-testid="hero-expanded-track-kicker"
+                      className="text-xs sm:text-sm font-medium text-white/72"
+                    >
+                      {snap.activeHeroTrackLabel
+                        ? snap.activeHeroTrackLabel
                         : activeFrame.kicker}
                     </p>
                     <h2 className="text-2xl sm:text-4xl lg:text-[2.75rem] font-bold tracking-tight leading-[1.08] text-white editorial-balance">
@@ -552,10 +584,10 @@ export function HeroKotoLens({
               ) : (
                 <div className="space-y-1.5">
                   <p className="text-xs sm:text-sm font-medium text-white/68">
-                    {heroStageBlock.eyebrow}
+                    {stageEyebrow}
                   </p>
                   <h2 className="text-xl sm:text-3xl lg:text-4xl font-bold tracking-tight leading-[1.12] text-white editorial-balance">
-                    {heroStageBlock.title}
+                    {stageHeadline}
                   </h2>
                 </div>
               )}
@@ -597,9 +629,9 @@ export function HeroKotoLens({
                 )}
                 <span className="tabular-nums">
                   {isClutterPhase
-                    ? `Эфирный блок · 0:0${Math.min(4, Math.floor(snap.crashElapsedSec))}`
+                    ? `Эфирный блок · ${formatAudioTime(Math.floor(snap.crashElapsedSec))}`
                     : isStopPausePhase
-                      ? 'Пауза · 0.5 сек'
+                      ? `Пауза · ${snap.stopPauseDurationSec} сек`
                       : isPlayingAny
                         ? `Пауза · ${formatAudioTime(snap.filmElapsedSec)}`
                         : 'Краш-тест в эфире'}
@@ -650,7 +682,7 @@ export function HeroKotoLens({
             </h1>
 
             <p className="text-lg sm:text-2xl leading-[1.45] tracking-tight text-[#111111]/76 dark:text-[#F4F3EF]/76 max-w-3xl editorial-pretty">
-              {heroManifestoBlock.description}
+              {manifestoDescription}
             </p>
           </div>
         </div>

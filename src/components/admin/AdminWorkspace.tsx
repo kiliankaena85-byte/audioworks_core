@@ -8,7 +8,9 @@ import {
   FlaskConical,
   FolderKanban,
   LogOut,
+  MessageSquareQuote,
   Moon,
+  Radio,
   RotateCcw,
   Save,
   ShieldCheck,
@@ -20,6 +22,7 @@ import { useMemo, useState } from 'react';
 import { useSiteTextBlocks } from '../../cms/SiteTextBlocksContext';
 import { useStudioCms } from '../../cms/StudioCmsContext';
 import { BrandDomainVariant } from '../../data/brandKitData';
+import { assignPortfolioCaseToHeroStage } from '../../data/heroStageCms';
 import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
 import {
   auditEditorialCopyGuardrails,
@@ -28,19 +31,24 @@ import {
 import { BrandLogo } from '../BrandLogo';
 import { LayaSimulationConsole } from '../LayaSimulationConsole';
 import { AdminDuelPanel } from './AdminDuelPanel';
+import { AdminHeroStagePanel } from './AdminHeroStagePanel';
 import { AdminLoginScreen } from './AdminLoginScreen';
 import { AdminOrdersCrmPanel } from './AdminOrdersCrmPanel';
 import { AdminPortfolioPanel } from './AdminPortfolioPanel';
 import { AdminSecurityPanel } from './AdminSecurityPanel';
+import { AdminShowcaseScenesBar } from './AdminShowcaseScenesBar';
 import { AdminSiteCopyPanel } from './AdminSiteCopyPanel';
+import { AdminTestimonialsPanel } from './AdminTestimonialsPanel';
 import { AdminTextBlocksPanel } from './AdminTextBlocksPanel';
 
 export type AdminSectionTab =
   | 'orders_crm'
   | 'science_plan'
+  | 'hero_stage'
   | 'portfolio'
   | 'text_blocks'
   | 'duel'
+  | 'testimonials'
   | 'copy'
   | 'laya_brand'
   | 'security';
@@ -78,7 +86,9 @@ export function AdminWorkspace({
   const {
     snapshot,
     hasLocalChanges,
+    hasLocalHeroChanges,
     localPortfolioChangeCount,
+    localTestimonialsChangeCount,
     isCustomizedOnServer,
     isAuthenticated,
     isAuthChecking,
@@ -170,16 +180,26 @@ export function AdminWorkspace({
     }
   };
 
-  const handleNavigateToGallery = () => {
+  const handleNavigateToAnchor = (
+    anchorHash: '#top' | '#work' | '#duel' | '#testimonials'
+  ) => {
     onNavigateHome();
     if (typeof window !== 'undefined') {
       window.setTimeout(() => {
-        const workEl = document.getElementById('work');
-        if (workEl) {
-          workEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (anchorHash === '#top') {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          return;
+        }
+        const targetEl = document.getElementById(anchorHash.slice(1));
+        if (targetEl) {
+          targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
       }, 80);
     }
+  };
+
+  const handleNavigateToGallery = () => {
+    handleNavigateToAnchor('#work');
   };
 
   const SECTION_META: Record<
@@ -197,10 +217,15 @@ export function AdminWorkspace({
       subtitle:
         'Когнитивный порог 5+ касаний, атрибуция Search Lift за рулём, психоакустика первых 3 секунд и LTV повторных волн',
     },
-    portfolio: {
-      label: 'Портфолио и звук · Волна 1',
+    hero_stage: {
+      label: 'Первый экран (Hero · Краш-тест)',
       subtitle:
-        'Загрузка WAV/MP3, заголовки кейсов и настройка 3-секундного превью с мгновенным сохранением в локальное состояние CMS',
+        'Прямая загрузка аудиоролика WAV/MP3 на первый экран сайта, подключение кейса из Портфолио в 1 клик и настройка 3 фаз краш-теста',
+    },
+    portfolio: {
+      label: 'Портфолио и звук · Экран 3',
+      subtitle:
+        'Загрузка WAV/MP3 для секции «Наши работы» (#work) и каталога /cases, заголовки кейсов и настройка 3-секундного превью',
     },
     text_blocks: {
       label: 'Текстовые блоки (Live)',
@@ -208,9 +233,14 @@ export function AdminWorkspace({
         'Мгновенное редактирование заголовков и описаний секций Hero, Approach и Pricing в памяти сессии',
     },
     duel: {
-      label: 'Дуэль 15 секунд',
+      label: 'Дуэль 15 секунд · Экран 4',
       subtitle:
-        'Аудиодорожки сторон А и Б, условия брифа и синхронные реплики по таймкодам',
+        'Аудиодорожки сторон А и Б для секции «Один бриф на 15 секунд» (#duel), условия брифа и синхронные реплики по таймкодам',
+    },
+    testimonials: {
+      label: 'Отзывы клиентов · StudioCMS',
+      subtitle:
+        'Динамические отзывы брендов на главной (#testimonials), показатели доверия, привязка аудиороликов из портфолио и отраслевые рубрики',
     },
     copy: {
       label: 'Исследования, FAQ и архив',
@@ -220,7 +250,7 @@ export function AdminWorkspace({
     laya_brand: {
       label: 'Персонализация Laya AI и Brand Kit',
       subtitle:
-        'Симуляция профилей аудитории, локальный тест шоурила и управление фирменным стилем FMWorks без вывода на клиентскую витрину',
+        'Симуляция профилей аудитории, маршрутизация звука под отрасль и управление фирменным стилем FMWorks без вывода на клиентскую витрину',
     },
     security: {
       label: 'Защита от спама и заявки',
@@ -298,6 +328,30 @@ export function AdminWorkspace({
 
             <button
               type="button"
+              data-testid="admin-nav-hero-stage"
+              onClick={() => {
+                setActiveTab('hero_stage');
+                setSaveBanner(null);
+              }}
+              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
+                activeTab === 'hero_stage'
+                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+              }`}
+            >
+              <span className="inline-flex items-center gap-2.5">
+                <Radio className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span>Первый экран (Hero)</span>
+              </span>
+              {hasLocalHeroChanges && (
+                <span className="text-[11px] font-bold tabular-nums text-[#FF4820]">
+                  1
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
               data-testid="admin-nav-portfolio"
               onClick={() => {
                 setActiveTab('portfolio');
@@ -359,6 +413,30 @@ export function AdminWorkspace({
             >
               <AudioWaveform className="w-4 h-4 shrink-0" aria-hidden="true" />
               <span>Дуэль 15 секунд</span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="admin-nav-testimonials"
+              onClick={() => {
+                setActiveTab('testimonials');
+                setSaveBanner(null);
+              }}
+              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
+                activeTab === 'testimonials'
+                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+              }`}
+            >
+              <span className="inline-flex items-center gap-2.5">
+                <MessageSquareQuote className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span>Отзывы клиентов</span>
+              </span>
+              {localTestimonialsChangeCount > 0 && (
+                <span className="text-[11px] font-bold tabular-nums text-[#FF4820]">
+                  {localTestimonialsChangeCount}
+                </span>
+              )}
             </button>
 
             <button
@@ -540,7 +618,7 @@ export function AdminWorkspace({
             </p>
           </div>
 
-          <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
             {isOrdersOrScienceTab ? (
               <button
                 type="button"
@@ -602,7 +680,11 @@ export function AdminWorkspace({
                 <button
                   type="button"
                   data-testid="admin-open-live-site-btn"
-                  onClick={onNavigateHome}
+                  onClick={() =>
+                    activeTab === 'testimonials'
+                      ? handleNavigateToAnchor('#testimonials')
+                      : onNavigateHome()
+                  }
                   className="min-h-[40px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
                 >
                   <span>Проверить на витрине</span>
@@ -660,6 +742,20 @@ export function AdminWorkspace({
             </div>
           )}
 
+          {(activeTab === 'hero_stage' ||
+            activeTab === 'portfolio' ||
+            activeTab === 'duel') && (
+            <AdminShowcaseScenesBar
+              snapshot={snapshot}
+              activeScene={activeTab}
+              onSelectScene={(sceneId) => {
+                setActiveTab(sceneId);
+                setSaveBanner(null);
+              }}
+              onNavigateToAnchor={handleNavigateToAnchor}
+            />
+          )}
+
           {(activeTab === 'orders_crm' || activeTab === 'science_plan') && (
             <AdminOrdersCrmPanel
               initialSubView={activeTab === 'science_plan' ? 'science' : 'funnel'}
@@ -672,6 +768,41 @@ export function AdminWorkspace({
               activeBrandVariant={brandVariant}
               onSelectBrandVariant={onSelectBrandVariant}
               onOpenBrandKit={onOpenBrandKit}
+              onOpenHeroStageAdmin={() => {
+                setActiveTab('hero_stage');
+                setSaveBanner(null);
+              }}
+              onOpenDuelAdmin={() => {
+                setActiveTab('duel');
+                setSaveBanner(null);
+              }}
+            />
+          )}
+
+          {activeTab === 'hero_stage' && (
+            <AdminHeroStagePanel
+              snapshot={snapshot}
+              onChangeHeroStage={(nextHero) =>
+                updateLocalSnapshot((prev) => ({
+                  ...prev,
+                  heroStage: nextHero,
+                }))
+              }
+              onChangeHeroCopy={(patch) =>
+                updateLocalSnapshot((prev) => ({
+                  ...prev,
+                  siteCopy: {
+                    ...prev.siteCopy,
+                    ...patch,
+                  },
+                }))
+              }
+              onUploadAudio={uploadAudioFile}
+              onOpenPortfolioTab={() => {
+                setActiveTab('portfolio');
+                setSaveBanner(null);
+              }}
+              onNavigateToHeroOnSite={() => handleNavigateToAnchor('#top')}
             />
           )}
 
@@ -679,6 +810,7 @@ export function AdminWorkspace({
             <AdminPortfolioPanel
               flagshipReel={snapshot.flagshipReel}
               portfolioCases={snapshot.portfolioCases}
+              heroStage={snapshot.heroStage}
               onPatchCase={(caseId, patch) =>
                 updateLocalSnapshot((prev) => {
                   if (prev.flagshipReel.id === caseId) {
@@ -701,6 +833,16 @@ export function AdminWorkspace({
                   portfolioCases: nextCases,
                 }))
               }
+              onAssignCaseToHero={(item) =>
+                updateLocalSnapshot((prev) => ({
+                  ...prev,
+                  heroStage: assignPortfolioCaseToHeroStage(prev.heroStage, item),
+                }))
+              }
+              onOpenHeroStageTab={() => {
+                setActiveTab('hero_stage');
+                setSaveBanner(null);
+              }}
               onUploadAudio={uploadAudioFile}
               onUploadImage={uploadImageFile}
               onNavigateToGallery={handleNavigateToGallery}
@@ -718,6 +860,23 @@ export function AdminWorkspace({
                 updateLocalSnapshot((prev) => ({ ...prev, duel: nextDuel }))
               }
               onUploadAudio={uploadAudioFile}
+            />
+          )}
+
+          {activeTab === 'testimonials' && (
+            <AdminTestimonialsPanel
+              testimonials={snapshot.testimonials}
+              portfolioCases={snapshot.portfolioCases}
+              flagshipReel={snapshot.flagshipReel}
+              onChangeTestimonials={(nextTestimonials) =>
+                updateLocalSnapshot((prev) => ({
+                  ...prev,
+                  testimonials: nextTestimonials,
+                }))
+              }
+              onNavigateToTestimonialsOnSite={() =>
+                handleNavigateToAnchor('#testimonials')
+              }
             />
           )}
 

@@ -13,6 +13,9 @@ export interface ClientAccountPublicProfile {
   displayName: string;
   defaultCompanyOrInn: string;
   linkedOrderCount: number;
+  sessionEpoch?: number;
+  avatarUrl?: string | null;
+  avatarPresetId?: string | null;
 }
 
 /**

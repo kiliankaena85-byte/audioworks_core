@@ -280,3 +280,16 @@ export function countLocalPortfolioChanges(
 
   return count;
 }
+
+/**
+ * Проверяет, изменена ли конфигурация Hero-блока относительно опубликованного серверного снимка.
+ */
+export function hasLocalHeroStageChanges(
+  current: StudioCmsSnapshot,
+  baseline: StudioCmsSnapshot
+): boolean {
+  return (
+    JSON.stringify(current.heroStage) !== JSON.stringify(baseline.heroStage)
+  );
+}
+

@@ -8,6 +8,10 @@ import {
 } from './clientAuthShared.ts';
 import type { CrmOrderRecord } from './orderCrmTypes.ts';
 import { anonymizeCrmOrderPdnRecord } from './orderCrmTypes.ts';
+import {
+  sanitizeClientAvatarPresetId,
+  sanitizeClientAvatarUrl,
+} from './clientAvatarLogic.ts';
 
 export {
   DEMO_CLIENT_CABINET_EMAIL,
@@ -34,6 +38,9 @@ export interface ClientAccountRecord {
   displayName: string;
   defaultCompanyOrInn: string;
   linkedOrderNumbers: string[];
+  sessionEpoch?: number;
+  avatarUrl?: string | null;
+  avatarPresetId?: string | null;
 }
 
 export interface VerifiedClientSessionPayload {
@@ -41,6 +48,7 @@ export interface VerifiedClientSessionPayload {
   email: string;
   exp: number;
   nonce: string;
+  epoch?: number;
 }
 
 export interface VerifiedMagicLinkPayload {
@@ -48,6 +56,7 @@ export interface VerifiedMagicLinkPayload {
   email: string;
   exp: number;
   nonce: string;
+  revokeSessions?: boolean;
 }
 
 function safeCompareDigest(a: string, b: string): boolean {
@@ -94,8 +103,8 @@ export function resolveOrderSubmissionClientEmail(params: {
 export function issueClientSessionToken(
   rawEmail: string,
   secret: string,
-  options: { nowMs?: number; ttlMs?: number } = {}
-): { token: string; email: string; expiresAt: number; nonce: string } {
+  options: { nowMs?: number; ttlMs?: number; epoch?: number } = {}
+): { token: string; email: string; expiresAt: number; nonce: string; epoch: number } {
   const email = normalizeClientEmail(rawEmail);
   if (!email) {
     throw new Error('Invalid client email for session token');
@@ -104,6 +113,10 @@ export function issueClientSessionToken(
   const ttlMs = options.ttlMs ?? CLIENT_SESSION_TTL_MS;
   const expiresAt = nowMs + ttlMs;
   const nonce = crypto.randomBytes(16).toString('hex');
+  const epoch =
+    typeof options.epoch === 'number' && Number.isFinite(options.epoch) && options.epoch >= 1
+      ? Math.floor(options.epoch)
+      : 1;
 
   const payloadB64 = Buffer.from(
     JSON.stringify({
@@ -111,6 +124,7 @@ export function issueClientSessionToken(
       email,
       exp: expiresAt,
       nonce,
+      epoch,
     } satisfies VerifiedClientSessionPayload),
     'utf8'
   ).toString('base64url');
@@ -125,6 +139,7 @@ export function issueClientSessionToken(
     email,
     expiresAt,
     nonce,
+    epoch,
   };
 }
 
@@ -134,6 +149,7 @@ export function verifyClientSessionToken(
   options: {
     nowMs?: number;
     isNonceRevoked?: (nonce: string) => boolean;
+    minValidEpoch?: number | ((email: string) => number);
   } = {}
 ): VerifiedClientSessionPayload | null {
   if (!rawToken || typeof rawToken !== 'string') return null;
@@ -167,11 +183,25 @@ export function verifyClientSessionToken(
     if (options.isNonceRevoked?.(nonce)) {
       return null;
     }
+    const tokenEpoch =
+      typeof parsed.epoch === 'number' && Number.isFinite(parsed.epoch) && parsed.epoch >= 1
+        ? Math.floor(parsed.epoch)
+        : 1;
+    if (options.minValidEpoch !== undefined) {
+      const requiredEpoch =
+        typeof options.minValidEpoch === 'function'
+          ? options.minValidEpoch(email)
+          : options.minValidEpoch;
+      if (tokenEpoch < requiredEpoch) {
+        return null;
+      }
+    }
     return {
       role: 'client_cabinet',
       email,
       exp: parsed.exp,
       nonce,
+      epoch: tokenEpoch,
     };
   } catch {
     return null;
@@ -179,13 +209,19 @@ export function verifyClientSessionToken(
 }
 
 /**
- * Выпускает одноразовый короткоживущий токен для входа по magic-ссылке (`client-magic-v1:`).
+ * Выпускает одноразовый короткоживущий токен для входа или сброса доступа по magic-ссылке (`client-magic-v1:`).
  */
 export function issueClientMagicLinkToken(
   rawEmail: string,
   secret: string,
-  options: { nowMs?: number; ttlMs?: number } = {}
-): { token: string; email: string; expiresAt: number; nonce: string } {
+  options: { nowMs?: number; ttlMs?: number; revokeSessions?: boolean } = {}
+): {
+  token: string;
+  email: string;
+  expiresAt: number;
+  nonce: string;
+  revokeSessions: boolean;
+} {
   const email = normalizeClientEmail(rawEmail);
   if (!email) {
     throw new Error('Invalid client email for magic link');
@@ -194,16 +230,17 @@ export function issueClientMagicLinkToken(
   const ttlMs = options.ttlMs ?? CLIENT_MAGIC_LINK_TTL_MS;
   const expiresAt = nowMs + ttlMs;
   const nonce = crypto.randomBytes(18).toString('hex');
+  const revokeSessions = Boolean(options.revokeSessions);
 
-  const payloadB64 = Buffer.from(
-    JSON.stringify({
-      purpose: 'client_magic_login',
-      email,
-      exp: expiresAt,
-      nonce,
-    } satisfies VerifiedMagicLinkPayload),
-    'utf8'
-  ).toString('base64url');
+  const payloadObj: VerifiedMagicLinkPayload = {
+    purpose: 'client_magic_login',
+    email,
+    exp: expiresAt,
+    nonce,
+    ...(revokeSessions ? { revokeSessions: true } : {}),
+  };
+
+  const payloadB64 = Buffer.from(JSON.stringify(payloadObj), 'utf8').toString('base64url');
 
   const sig = crypto
     .createHmac('sha256', secret)
@@ -215,6 +252,7 @@ export function issueClientMagicLinkToken(
     email,
     expiresAt,
     nonce,
+    revokeSessions,
   };
 }
 
@@ -275,6 +313,7 @@ export function verifyClientMagicLinkToken(
         email,
         exp: parsed.exp,
         nonce,
+        ...(parsed.revokeSessions ? { revokeSessions: true } : {}),
       },
     };
   } catch {
@@ -329,6 +368,12 @@ export function sanitizeClientAccountRecord(raw: unknown): ClientAccountRecord |
         )
       ).slice(0, 200)
     : [];
+  const sessionEpoch =
+    typeof obj.sessionEpoch === 'number' &&
+    Number.isFinite(obj.sessionEpoch) &&
+    obj.sessionEpoch >= 1
+      ? Math.floor(obj.sessionEpoch)
+      : 1;
   return {
     email,
     createdAt: typeof obj.createdAt === 'string' && obj.createdAt ? obj.createdAt : nowIso,
@@ -341,11 +386,16 @@ export function sanitizeClientAccountRecord(raw: unknown): ClientAccountRecord |
         ? obj.defaultCompanyOrInn.slice(0, 200)
         : '',
     linkedOrderNumbers: linked,
+    sessionEpoch,
+    avatarUrl: sanitizeClientAvatarUrl(obj.avatarUrl),
+    avatarPresetId: sanitizeClientAvatarPresetId(obj.avatarPresetId),
   };
 }
 
 /**
  * Создаёт или обновляет беспарольный аккаунт клиента по e-mail, привязывая номера заказов.
+ * При `rotateSessionEpoch: true` увеличивает эпоху сессии (`sessionEpoch`), мгновенно отзывая
+ * все старые сессионные cookie на других устройствах при сбросе доступа по magic-ссылке.
  */
 export function upsertClientAccountRecord(
   accounts: readonly ClientAccountRecord[],
@@ -355,6 +405,9 @@ export function upsertClientAccountRecord(
     contactLine?: string;
     companyOrInn?: string;
     markLoggedIn?: boolean;
+    rotateSessionEpoch?: boolean;
+    avatarUrl?: string | null;
+    avatarPresetId?: string | null;
     nowIso?: string;
   }
 ): { accounts: ClientAccountRecord[]; account: ClientAccountRecord } {
@@ -378,6 +431,22 @@ export function upsertClientAccountRecord(
     new Set([...incomingOrders, ...(existing?.linkedOrderNumbers ?? [])])
   ).slice(0, 200);
 
+  const currentEpoch =
+    typeof existing?.sessionEpoch === 'number' && existing.sessionEpoch >= 1
+      ? Math.floor(existing.sessionEpoch)
+      : 1;
+  const nextEpoch = input.rotateSessionEpoch ? currentEpoch + 1 : currentEpoch;
+
+  const nextAvatarUrl =
+    input.avatarUrl !== undefined
+      ? sanitizeClientAvatarUrl(input.avatarUrl)
+      : sanitizeClientAvatarUrl(existing?.avatarUrl);
+
+  const nextAvatarPresetId =
+    input.avatarPresetId !== undefined
+      ? sanitizeClientAvatarPresetId(input.avatarPresetId)
+      : sanitizeClientAvatarPresetId(existing?.avatarPresetId);
+
   const updated: ClientAccountRecord = {
     email,
     createdAt: existing?.createdAt ?? nowIso,
@@ -386,6 +455,9 @@ export function upsertClientAccountRecord(
     displayName: extractedName || existing?.displayName || '',
     defaultCompanyOrInn: cleanCompany || existing?.defaultCompanyOrInn || '',
     linkedOrderNumbers: mergedOrders,
+    sessionEpoch: nextEpoch,
+    avatarUrl: nextAvatarUrl,
+    avatarPresetId: nextAvatarPresetId,
   };
 
   const nextAccounts =
@@ -481,6 +553,9 @@ export function toClientAccountPublicProfile(
     displayName: account.displayName,
     defaultCompanyOrInn: account.defaultCompanyOrInn,
     linkedOrderCount: Math.max(matchedOrderCount, account.linkedOrderNumbers.length),
+    sessionEpoch: account.sessionEpoch ?? 1,
+    avatarUrl: sanitizeClientAvatarUrl(account.avatarUrl),
+    avatarPresetId: sanitizeClientAvatarPresetId(account.avatarPresetId),
   };
 }
 
@@ -498,7 +573,13 @@ export function createSeedClientAccounts(nowMs = Date.now()): ClientAccountRecor
       lastLoginAt: createdIso,
       displayName: 'Дмитрий (отдел лизинга)',
       defaultCompanyOrInn: 'АО «ТрансФлот Лизинг» · ИНН 7702070139',
-      linkedOrderNumbers: ['FM-HOLD-2854'],
+      linkedOrderNumbers: [
+        'FM-2948',
+        'FM-2926',
+        'FM-HOLD-2854',
+        'FM-2418',
+        'FM-2309',
+      ],
     },
   ];
 }

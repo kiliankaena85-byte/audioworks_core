@@ -138,6 +138,49 @@ import type {
   OrderDeliverableKind,
 } from './src/data/clientCabinetHelpers.ts';
 import {
+  mergeSeedOrderDeliverablesWithVersions,
+  resolveUploadedDeliverableVersionMeta,
+} from './src/data/deliverableVersioning.ts';
+import {
+  buildApprovalWorkflowNotification,
+  buildDeliverableUploadedNotification,
+  buildStageChangedNotification,
+  buildTestCabinetPushNotification,
+  countUnreadNotifications,
+  createDefaultClientNotificationPreferences,
+  createSeedCabinetNotifications,
+  filterNotificationsForAccessibleOrders,
+  hydrateCabinetNotifications,
+  isCabinetNotificationRead,
+  isNotificationEnabledByPreferences,
+  markNotificationsReadInPreferences,
+  mergeNotificationEventIdempotently,
+  sanitizeClientNotificationPreferences,
+  type CabinetNotificationItem,
+  type ClientNotificationPreferences,
+} from './src/data/cabinetPushNotifications.ts';
+import {
+  applyClientScriptDecision,
+  applyClientSpotDecision,
+  applyProducerEscalationResolution,
+  applyPublishEngineerTakeToClient,
+  applyPublishScriptDraft,
+  applyRecordEngineerTake,
+  createDefaultSoundEngineerRoster,
+  ensureOrderApprovalWorkflow,
+  formatSoundEngineerProductionSheet,
+  issueSoundDropTokenWithSigner,
+  parseWavExactDurationSec,
+  type PublishScriptConceptInput,
+  sanitizeSoundEngineerRoster,
+  type SoundEngineerContact,
+  type SpotRevisionKind,
+  toClientApprovalWorkflowView,
+  toSoundDropTaskPublicView,
+  verifySoundDropTokenWithSigner,
+} from './src/data/productionApprovalWorkflow.ts';
+import { sanitizeClientAvatarPresetId } from './src/data/clientAvatarLogic.ts';
+import {
   buildClientSessionClearCookieHeader,
   buildClientSessionSetCookieHeader,
   CLIENT_SESSION_COOKIE_NAME,
@@ -429,8 +472,14 @@ function extractClientSessionCookieToken(req: Request): string | undefined {
 
 function getVerifiedClientSession(req: Request) {
   const rawToken = extractClientSessionCookieToken(req);
+  if (!rawToken) return null;
   return verifyClientSessionToken(rawToken, getSessionSecret(), {
     isNonceRevoked: (nonce) => clientSessionRevocationRegistry.isRevoked(nonce),
+    minValidEpoch: (email) => {
+      const store = readOrdersCrmStore();
+      const found = store.clientAccounts.find((a) => a.email === email);
+      return found?.sessionEpoch ?? 1;
+    },
   });
 }
 
@@ -798,9 +847,12 @@ function recordSecurityAudit(
 interface PersistedOrdersCrmStore {
   orders: CrmOrderRecord[];
   clientAccounts: ClientAccountRecord[];
+  soundEngineers: SoundEngineerContact[];
   settings: OrderDispatchSettings;
   dispatchLogs: DispatchAttemptLog[];
   legalProfiles: StudioLegalProfilesConfig;
+  clientNotifications: CabinetNotificationItem[];
+  clientNotificationPrefs: Record<string, ClientNotificationPreferences>;
 }
 
 let cachedOrdersCrmStore: PersistedOrdersCrmStore | null = null;
@@ -836,9 +888,20 @@ function hydratePersistedClientAccounts(rawAccounts: unknown): ClientAccountReco
   if (!Array.isArray(rawAccounts) || rawAccounts.length === 0) {
     return seeds;
   }
+  const seedByEmail = new Map(seeds.map((s) => [s.email, s]));
   const sanitized = rawAccounts
     .map((item) => sanitizeClientAccountRecord(item))
-    .filter((item): item is ClientAccountRecord => item !== null);
+    .filter((item): item is ClientAccountRecord => item !== null)
+    .map((acc) => {
+      const matchingSeed = seedByEmail.get(acc.email);
+      if (!matchingSeed) return acc;
+      return {
+        ...acc,
+        linkedOrderNumbers: Array.from(
+          new Set([...acc.linkedOrderNumbers, ...matchingSeed.linkedOrderNumbers])
+        ).slice(0, 200),
+      };
+    });
   const existingEmails = new Set(sanitized.map((a) => a.email));
   for (const seed of seeds) {
     if (!existingEmails.has(seed.email)) {
@@ -856,9 +919,12 @@ function readOrdersCrmStore(): PersistedOrdersCrmStore {
       cachedOrdersCrmStore = {
         orders: createSeedCrmOrders(),
         clientAccounts: createSeedClientAccounts(),
+        soundEngineers: createDefaultSoundEngineerRoster(),
         settings: defaults,
         dispatchLogs: [],
         legalProfiles: createDefaultStudioLegalProfiles(),
+        clientNotifications: createSeedCabinetNotifications(),
+        clientNotificationPrefs: {},
       };
       return cachedOrdersCrmStore;
     }
@@ -869,11 +935,17 @@ function readOrdersCrmStore(): PersistedOrdersCrmStore {
     const workSchedule = sanitizeWorkScheduleConfig(
       raw.settings?.workSchedule ?? defaults.workSchedule
     );
-    const seedById = new Map(createSeedCrmOrders().map((s) => [s.id, s]));
+    const seedOrders = createSeedCrmOrders();
+    const seedById = new Map(seedOrders.map((s) => [s.id, s]));
+    const persistedList =
+      Array.isArray(raw.orders) && raw.orders.length > 0 ? raw.orders : [];
+    const existingIds = new Set(persistedList.map((o) => o?.id));
+    const existingNums = new Set(persistedList.map((o) => o?.orderNumber));
+    const missingSeeds = seedOrders.filter(
+      (s) => !existingIds.has(s.id) && !existingNums.has(s.orderNumber)
+    );
     const rawOrders =
-      Array.isArray(raw.orders) && raw.orders.length > 0
-        ? raw.orders
-        : createSeedCrmOrders();
+      persistedList.length > 0 ? [...persistedList, ...missingSeeds] : seedOrders;
     cachedOrdersCrmStore = {
       orders: rawOrders.map((ord) => {
         const withSla = ensureCrmOrderSlaFields(ord, workSchedule);
@@ -889,8 +961,8 @@ function readOrdersCrmStore(): PersistedOrdersCrmStore {
             : withSla.clientEmail !== undefined
               ? normalizeClientEmail(withSla.clientEmail)
               : normalizeClientEmail(seedMatch?.clientEmail);
-        if (seedMatch && withSla.deliverables === undefined) {
-          return {
+        if (seedMatch) {
+          return ensureOrderApprovalWorkflow({
             ...withSla,
             clientEmail: resolvedSeedEmail,
             preferredDeliveryChannel: normPref.channel,
@@ -899,19 +971,23 @@ function readOrdersCrmStore(): PersistedOrdersCrmStore {
               withSla.cloudDiskUrl !== undefined
                 ? withSla.cloudDiskUrl
                 : seedMatch.cloudDiskUrl,
-            deliverables: seedMatch.deliverables ?? [],
+            deliverables: mergeSeedOrderDeliverablesWithVersions(
+              withSla.deliverables,
+              seedMatch.deliverables
+            ),
             clientUploads:
               withSla.clientUploads ?? seedMatch.clientUploads ?? [],
-          };
+          });
         }
-        return {
+        return ensureOrderApprovalWorkflow({
           ...withSla,
           clientEmail: resolvedSeedEmail,
           preferredDeliveryChannel: normPref.channel,
           preferredDeliveryDetail: normPref.detail,
-        };
+        });
       }),
       clientAccounts: hydratePersistedClientAccounts(raw.clientAccounts),
+      soundEngineers: sanitizeSoundEngineerRoster(raw.soundEngineers),
       settings: {
         telegram: {
           ...defaults.telegram,
@@ -925,15 +1001,33 @@ function readOrdersCrmStore(): PersistedOrdersCrmStore {
       },
       dispatchLogs: Array.isArray(raw.dispatchLogs) ? raw.dispatchLogs : [],
       legalProfiles: sanitizeStudioLegalProfilesConfig(raw.legalProfiles),
+      clientNotifications: hydrateCabinetNotifications(raw.clientNotifications),
+      clientNotificationPrefs: (() => {
+        const out: Record<string, ClientNotificationPreferences> = {};
+        if (
+          raw.clientNotificationPrefs &&
+          typeof raw.clientNotificationPrefs === 'object'
+        ) {
+          for (const [key, val] of Object.entries(raw.clientNotificationPrefs)) {
+            if (!key.trim()) continue;
+            const clean = sanitizeClientNotificationPreferences(val, key.trim());
+            out[clean.subjectKey] = clean;
+          }
+        }
+        return out;
+      })(),
     };
     return cachedOrdersCrmStore;
   } catch {
     cachedOrdersCrmStore = {
       orders: createSeedCrmOrders(),
       clientAccounts: createSeedClientAccounts(),
+      soundEngineers: createDefaultSoundEngineerRoster(),
       settings: createDefaultDispatchSettings(),
       dispatchLogs: [],
       legalProfiles: createDefaultStudioLegalProfiles(),
+      clientNotifications: createSeedCabinetNotifications(),
+      clientNotificationPrefs: {},
     };
     return cachedOrdersCrmStore;
   }
@@ -1008,6 +1102,210 @@ const clientMagicLinkEmailLimiter = new RateLimiter({
   windowMs: 10 * 60 * 1000,
   minIntervalMs: 350,
 });
+
+const clientTestPushLimiter = new RateLimiter({
+  maxAttempts: 12,
+  windowMs: 5 * 60 * 1000,
+  minIntervalMs: 400,
+});
+
+const soundDropUploadLimiter = new RateLimiter({
+  maxAttempts: 24,
+  windowMs: 10 * 60 * 1000,
+  minIntervalMs: 250,
+});
+
+function signSoundDropHmac(signingInput: string): string {
+  return crypto
+    .createHmac('sha256', getSessionSecret())
+    .update(signingInput)
+    .digest('base64url')
+    .slice(0, 32);
+}
+
+interface ActiveCabinetSseClient {
+  id: string;
+  res: Response;
+  sessionEmail: string | null;
+  verifiedRescueOrderNumbers: Set<string>;
+  heartbeatTimer: ReturnType<typeof setInterval>;
+}
+
+const cabinetNotificationSseClients = new Map<string, ActiveCabinetSseClient>();
+
+function parseInlineOrderRescueTokensParam(
+  rawParam: unknown
+): Array<{ orderNumber: string; rescueToken: string }> {
+  if (typeof rawParam !== 'string' || !rawParam.trim()) return [];
+  const pairs: Array<{ orderNumber: string; rescueToken: string }> = [];
+  for (const part of rawParam.split(',').slice(0, 30)) {
+    const colonIdx = part.indexOf(':');
+    if (colonIdx <= 0) continue;
+    const orderNumber = part.slice(0, colonIdx).trim();
+    const rescueToken = part.slice(colonIdx + 1).trim();
+    if (orderNumber && rescueToken) {
+      pairs.push({ orderNumber, rescueToken });
+    }
+  }
+  return pairs;
+}
+
+function computeCabinetNotificationSubjectKey(
+  sessionEmail: string | null,
+  accessibleOrderNumbers: readonly string[]
+): string | null {
+  if (sessionEmail) {
+    return `email:${sessionEmail}`;
+  }
+  if (accessibleOrderNumbers.length === 0) {
+    return null;
+  }
+  const canonical = [...accessibleOrderNumbers]
+    .map((n) => n.trim().toUpperCase())
+    .filter(Boolean)
+    .sort()
+    .join(',');
+  if (!canonical) return null;
+  const digest = crypto
+    .createHmac('sha256', getSessionSecret())
+    .update(`cabinet-notif-subject-v1:${canonical}`)
+    .digest('base64url')
+    .slice(0, 24);
+  return `orders:${digest}`;
+}
+
+function resolveClientAccessibleNotificationScope(
+  req: Request,
+  rawItems: unknown,
+  crmStore: PersistedOrdersCrmStore
+): {
+  sessionEmail: string | null;
+  verifiedRescueOrderNumbers: Set<string>;
+  accessibleOrderNumbers: string[];
+  subjectKey: string | null;
+  preferences: ClientNotificationPreferences;
+} {
+  const session = getVerifiedClientSession(req);
+  const sessionEmail = session?.email ?? null;
+  const accessibleSet = new Set<string>();
+  const verifiedRescueSet = new Set<string>();
+
+  if (sessionEmail) {
+    const account = crmStore.clientAccounts.find((a) => a.email === sessionEmail);
+    const matched = collectOrdersForClientEmail(
+      crmStore.orders,
+      sessionEmail,
+      account
+    );
+    for (const ord of matched) {
+      accessibleSet.add(ord.orderNumber.toUpperCase());
+    }
+  }
+
+  const itemsList = Array.isArray(rawItems) ? rawItems.slice(0, 30) : [];
+  for (const entry of itemsList) {
+    if (!entry || typeof entry !== 'object') continue;
+    const rec = entry as { orderNumber?: unknown; rescueToken?: unknown };
+    const ordNum =
+      typeof rec.orderNumber === 'string' ? rec.orderNumber.trim() : '';
+    const token =
+      typeof rec.rescueToken === 'string' ? rec.rescueToken.trim() : '';
+    if (!ordNum || !token || !verifyOrderRescueToken(ordNum, token)) {
+      continue;
+    }
+    const found = crmStore.orders.find(
+      (o) =>
+        o.orderNumber.toUpperCase() === ordNum.toUpperCase() &&
+        !o.pdnAnonymizedAt
+    );
+    if (found) {
+      const upper = found.orderNumber.toUpperCase();
+      accessibleSet.add(upper);
+      verifiedRescueSet.add(upper);
+    }
+  }
+
+  const accessibleOrderNumbers = Array.from(accessibleSet);
+  const subjectKey = computeCabinetNotificationSubjectKey(
+    sessionEmail,
+    accessibleOrderNumbers
+  );
+  const preferences = subjectKey
+    ? sanitizeClientNotificationPreferences(
+        crmStore.clientNotificationPrefs[subjectKey],
+        subjectKey
+      )
+    : createDefaultClientNotificationPreferences('anonymous');
+
+  return {
+    sessionEmail,
+    verifiedRescueOrderNumbers: verifiedRescueSet,
+    accessibleOrderNumbers,
+    subjectKey,
+    preferences,
+  };
+}
+
+function recordAndBroadcastCabinetNotification(
+  notification: CabinetNotificationItem,
+  crmStore: PersistedOrdersCrmStore
+): void {
+  crmStore.clientNotifications = mergeNotificationEventIdempotently(
+    crmStore.clientNotifications ?? [],
+    notification,
+    300
+  );
+  writeOrdersCrmStore(crmStore);
+
+  const upperOrderNum = notification.orderNumber.trim().toUpperCase();
+  const targetOrder = crmStore.orders.find(
+    (o) => o.orderNumber.toUpperCase() === upperOrderNum && !o.pdnAnonymizedAt
+  );
+
+  for (const client of cabinetNotificationSseClients.values()) {
+    let hasAccess = client.verifiedRescueOrderNumbers.has(upperOrderNum);
+    if (!hasAccess && client.sessionEmail && targetOrder) {
+      const acc = crmStore.clientAccounts.find(
+        (a) => a.email === client.sessionEmail
+      );
+      hasAccess = doesOrderBelongToClientEmail(
+        targetOrder,
+        client.sessionEmail,
+        acc?.linkedOrderNumbers ?? []
+      );
+    }
+    if (!hasAccess) continue;
+
+    const clientOrderNums = Array.from(client.verifiedRescueOrderNumbers);
+    const subjKey = computeCabinetNotificationSubjectKey(
+      client.sessionEmail,
+      clientOrderNums
+    );
+    const prefs = subjKey
+      ? sanitizeClientNotificationPreferences(
+          crmStore.clientNotificationPrefs[subjKey],
+          subjKey
+        )
+      : createDefaultClientNotificationPreferences('anonymous');
+
+    if (!isNotificationEnabledByPreferences(notification, prefs)) {
+      continue;
+    }
+
+    const viewItem = {
+      ...notification,
+      isRead: isCabinetNotificationRead(notification, prefs),
+    };
+    try {
+      client.res.write(
+        `event: notification\ndata: ${JSON.stringify({ notification: viewItem })}\n\n`
+      );
+    } catch {
+      clearInterval(client.heartbeatTimer);
+      cabinetNotificationSseClients.delete(client.id);
+    }
+  }
+}
 
 const DELIVERABLE_ALLOWED_EXTS = new Set([
   '.wav',
@@ -1221,6 +1519,9 @@ function toClientCabinetOrderSummary(
     clientUploads: Array.isArray(order.clientUploads) ? order.clientUploads : [],
     documentMeta: order.documentMeta ?? null,
     legalProfiles: legalProfiles ?? null,
+    approvalWorkflow: toClientApprovalWorkflowView(
+      ensureOrderApprovalWorkflow(order).approvalWorkflow
+    ),
   };
 }
 
@@ -2115,8 +2416,16 @@ async function startServer() {
         return;
       }
 
+      const normalizedIncoming = validateAndNormalizeCmsSnapshot(incoming);
+      if (!normalizedIncoming.ok) {
+        res.status(400).json({
+          error: normalizedIncoming.error,
+        });
+        return;
+      }
+
       const stamped: StudioCmsSnapshot = {
-        ...(incoming as StudioCmsSnapshot),
+        ...normalizedIncoming.data,
         schemaVersion: 1,
         updatedAt: new Date().toISOString(),
       };
@@ -2921,7 +3230,10 @@ async function startServer() {
       const issuedClientSession = issueClientSessionToken(
         resolvedClientEmail,
         getSessionSecret(),
-        { nowMs: now }
+        {
+          nowMs: now,
+          epoch: upserted.account.sessionEpoch ?? 1,
+        }
       );
       res.setHeader(
         'Set-Cookie',
@@ -2934,7 +3246,8 @@ async function startServer() {
       autoSignedInEmail = resolvedClientEmail;
     }
 
-    crmStore.orders = [newCrmOrder, ...crmStore.orders].slice(0, 200);
+    const hydratedNewOrder = ensureOrderApprovalWorkflow(newCrmOrder);
+    crmStore.orders = [hydratedNewOrder, ...crmStore.orders].slice(0, 200);
     writeOrdersCrmStore(crmStore);
 
     // Неблокирующий запуск внешней доставки (Telegram + Webhook)
@@ -3272,7 +3585,11 @@ async function startServer() {
         return;
       }
 
-      const body = (req.body ?? {}) as { email?: string };
+      const body = (req.body ?? {}) as {
+        email?: string;
+        mode?: 'login' | 'reset';
+        revokeOtherSessions?: boolean;
+      };
       const email = normalizeClientEmail(body.email);
       if (!email) {
         res.status(400).json({
@@ -3292,12 +3609,20 @@ async function startServer() {
         return;
       }
 
+      const isResetMode = body.mode === 'reset';
+      const revokeOtherSessions =
+        typeof body.revokeOtherSessions === 'boolean'
+          ? body.revokeOtherSessions
+          : isResetMode;
+
       // Автоматически создаём профиль клиента по почте, если он входит впервые
       const crmStore = readOrdersCrmStore();
+      const existingAccount = crmStore.clientAccounts.find((a) => a.email === email);
+      const isNewRegistration = !existingAccount;
       const matchedOrders = collectOrdersForClientEmail(
         crmStore.orders,
         email,
-        crmStore.clientAccounts.find((a) => a.email === email)
+        existingAccount
       );
       const upserted = upsertClientAccountRecord(crmStore.clientAccounts, {
         email,
@@ -3309,7 +3634,9 @@ async function startServer() {
       crmStore.clientAccounts = upserted.accounts;
       writeOrdersCrmStore(crmStore);
 
-      const magic = issueClientMagicLinkToken(email, getSessionSecret());
+      const magic = issueClientMagicLinkToken(email, getSessionSecret(), {
+        revokeSessions: revokeOtherSessions,
+      });
       const publicOrigin = resolveSafePublicOrigin({
         configuredOrigin: process.env.APP_URL,
         hostHeader: req.headers.host,
@@ -3319,7 +3646,8 @@ async function startServer() {
         trustProxy: process.env.TRUST_PROXY === 'true',
         fallbackOrigin: `http://localhost:${PORT}`,
       });
-      const magicLinkPath = `/cabinet?magic=${encodeURIComponent(magic.token)}`;
+      const baseRoutePath = isResetMode ? '/cabinet/reset' : '/cabinet';
+      const magicLinkPath = `${baseRoutePath}?magic=${encodeURIComponent(magic.token)}`;
       const magicLinkUrl = `${publicOrigin}${magicLinkPath}`;
 
       const configuredGatewayUrl = process.env.MAGIC_LINK_WEBHOOK_URL?.trim() || '';
@@ -3339,10 +3667,13 @@ async function startServer() {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                event: 'client.magic_link',
+                event: isResetMode ? 'client.magic_reset' : 'client.magic_link',
                 to: email,
-                subject: 'Вход в личный кабинет заказов FMWorks (без пароля)',
+                subject: isResetMode
+                  ? 'Сброс и восстановление доступа в личный кабинет FMWorks'
+                  : 'Вход в личный кабинет заказов FMWorks (без пароля)',
                 magicLinkUrl,
+                revokeOtherSessions,
                 expiresInMinutes: 30,
               }),
               signal: AbortSignal.timeout(5000),
@@ -3351,6 +3682,9 @@ async function startServer() {
               res.json({
                 ok: true,
                 email,
+                intent: isResetMode ? 'reset' : 'login',
+                revokeOtherSessions,
+                isNewRegistration,
                 deliveryMode: 'email_gateway',
                 expiresAt: new Date(magic.expiresAt).toISOString(),
               });
@@ -3365,6 +3699,9 @@ async function startServer() {
       res.json({
         ok: true,
         email,
+        intent: isResetMode ? 'reset' : 'login',
+        revokeOtherSessions,
+        isNewRegistration,
         deliveryMode: 'local_preview',
         magicLinkPath,
         magicLinkUrl,
@@ -3387,6 +3724,7 @@ async function startServer() {
 
       const body = (req.body ?? {}) as {
         token?: string;
+        revokeOtherSessions?: boolean;
         localItems?: Array<{ orderNumber?: string; rescueToken?: string }>;
       };
 
@@ -3414,6 +3752,9 @@ async function startServer() {
       persistClientAuthNonces();
 
       const email = check.payload.email;
+      const shouldRotateSessions = Boolean(
+        check.payload.revokeSessions || body.revokeOtherSessions
+      );
       const crmStore = readOrdersCrmStore();
       const legalProfiles = sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles);
       const nowIso = new Date().toISOString();
@@ -3459,6 +3800,7 @@ async function startServer() {
         contactLine: preMatched[0]?.contact ?? '',
         companyOrInn: preMatched[0]?.companyOrInn ?? '',
         markLoggedIn: true,
+        rotateSessionEpoch: shouldRotateSessions,
         nowIso,
       });
       crmStore.clientAccounts = upserted.accounts;
@@ -3470,7 +3812,9 @@ async function startServer() {
         upserted.account
       );
 
-      const sessionToken = issueClientSessionToken(email, getSessionSecret());
+      const sessionToken = issueClientSessionToken(email, getSessionSecret(), {
+        epoch: upserted.account.sessionEpoch ?? 1,
+      });
       res.setHeader(
         'Set-Cookie',
         buildClientSessionSetCookieHeader(
@@ -3491,6 +3835,7 @@ async function startServer() {
       res.json({
         ok: true,
         authenticated: true,
+        sessionsReset: shouldRotateSessions,
         account: toClientAccountPublicProfile(upserted.account, summaries.length),
         orders: summaries,
         legalProfiles,
@@ -3590,7 +3935,9 @@ async function startServer() {
         upserted.account
       );
 
-      const sessionToken = issueClientSessionToken(email, getSessionSecret());
+      const sessionToken = issueClientSessionToken(email, getSessionSecret(), {
+        epoch: upserted.account.sessionEpoch ?? 1,
+      });
       res.setHeader(
         'Set-Cookie',
         buildClientSessionSetCookieHeader(
@@ -3630,6 +3977,232 @@ async function startServer() {
     }
     res.setHeader('Set-Cookie', buildClientSessionClearCookieHeader(isHttpsRequest(req)));
     res.json({ ok: true });
+  });
+
+  const removePreviousClientAvatarFile = (previousAvatarUrl: string | null | undefined) => {
+    if (!previousAvatarUrl || !previousAvatarUrl.startsWith('/assets/cms/client-avatar-')) {
+      return;
+    }
+    const baseName = path.basename(decodeURIComponent(previousAvatarUrl));
+    if (!baseName.startsWith('client-avatar-') || baseName.includes('..')) {
+      return;
+    }
+    const candidates = [
+      path.join(PUBLIC_CMS_MEDIA_DIR, baseName),
+      path.join(PUBLIC_CMS_MEDIA_DIR, baseName.replace(/\.(jpe?g|png|avif)$/i, '.webp')),
+      path.join(DIST_CMS_MEDIA_DIR, baseName),
+      path.join(DIST_CMS_MEDIA_DIR, baseName.replace(/\.(jpe?g|png|avif)$/i, '.webp')),
+    ];
+    for (const candidate of candidates) {
+      try {
+        if (fs.existsSync(candidate)) {
+          fs.unlinkSync(candidate);
+        }
+      } catch {
+        // Non-fatal cleanup
+      }
+    }
+  };
+
+  app.put(
+    '/api/client-auth/avatar',
+    express.json({ limit: '6mb' }),
+    (req, res) => {
+      if (isBlockedCrossOriginMutation(req)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Кросс-доменный запрос изменения профиля отклонён',
+        });
+        return;
+      }
+
+      const session = getVerifiedClientSession(req);
+      if (!session) {
+        res.status(401).json({
+          ok: false,
+          error: 'Войдите в личный кабинет по почте, чтобы сохранить фото в профиле',
+        });
+        return;
+      }
+
+      const body = (req.body ?? {}) as {
+        dataBase64?: unknown;
+        avatarPresetId?: unknown;
+        clearPhoto?: unknown;
+      };
+
+      const crmStore = readOrdersCrmStore();
+      const existingAccount = crmStore.clientAccounts.find(
+        (a) => a.email === session.email
+      );
+
+      let nextAvatarUrl: string | null | undefined = undefined;
+      let nextAvatarPresetId: string | null | undefined = undefined;
+
+      if (body.avatarPresetId !== undefined) {
+        if (body.avatarPresetId === null || body.avatarPresetId === '') {
+          nextAvatarPresetId = null;
+        } else {
+          const validPreset = sanitizeClientAvatarPresetId(body.avatarPresetId);
+          if (!validPreset) {
+            res.status(400).json({
+              ok: false,
+              error: 'Неизвестный стиль абстрактного аватара',
+            });
+            return;
+          }
+          nextAvatarPresetId = validPreset;
+        }
+      }
+
+      if (body.clearPhoto === true) {
+        removePreviousClientAvatarFile(existingAccount?.avatarUrl);
+        nextAvatarUrl = null;
+      } else if (typeof body.dataBase64 === 'string' && body.dataBase64.trim()) {
+        const rawB64 = body.dataBase64.trim();
+        const commaIdx = rawB64.indexOf(',');
+        const cleanB64 = commaIdx >= 0 ? rawB64.slice(commaIdx + 1) : rawB64;
+        const imgBuffer = Buffer.from(cleanB64, 'base64');
+
+        if (imgBuffer.length < 64 || imgBuffer.length > 4 * 1024 * 1024) {
+          res.status(400).json({
+            ok: false,
+            error: 'Выберите изображение размером до 4 МБ (JPEG, PNG или WebP)',
+          });
+          return;
+        }
+
+        const verifiedImage = detectVerifiedImageType(imgBuffer);
+        if (!verifiedImage) {
+          recordSecurityAudit(
+            'upload_rejected_magic_bytes',
+            req,
+            'Отклонено фото профиля клиента без валидной сигнатуры JPEG/PNG/WebP/AVIF'
+          );
+          res.status(400).json({
+            ok: false,
+            error: 'Поддерживаются только изображения JPEG, PNG, WebP или AVIF',
+          });
+          return;
+        }
+
+        const emailHash = crypto
+          .createHash('sha256')
+          .update(session.email, 'utf8')
+          .digest('hex')
+          .slice(0, 10);
+        const finalFileName = `client-avatar-${emailHash}-${Date.now()}${verifiedImage.ext}`;
+
+        try {
+          fs.mkdirSync(PUBLIC_CMS_MEDIA_DIR, { recursive: true });
+          const targetAbs = path.join(PUBLIC_CMS_MEDIA_DIR, finalFileName);
+          fs.writeFileSync(targetAbs, imgBuffer);
+
+          try {
+            const webpRes = convertRasterFileToWebp(targetAbs);
+            if (
+              webpRes.webpPath &&
+              fs.existsSync(webpRes.webpPath) &&
+              fs.existsSync(path.join(__dirname, 'dist'))
+            ) {
+              fs.mkdirSync(DIST_CMS_MEDIA_DIR, { recursive: true });
+              fs.copyFileSync(
+                webpRes.webpPath,
+                path.join(DIST_CMS_MEDIA_DIR, path.basename(webpRes.webpPath))
+              );
+            }
+          } catch {
+            // Non-fatal WebP optimization
+          }
+
+          if (fs.existsSync(path.join(__dirname, 'dist'))) {
+            fs.mkdirSync(DIST_CMS_MEDIA_DIR, { recursive: true });
+            fs.copyFileSync(targetAbs, path.join(DIST_CMS_MEDIA_DIR, finalFileName));
+          }
+
+          removePreviousClientAvatarFile(existingAccount?.avatarUrl);
+          nextAvatarUrl = `/assets/cms/${encodeURIComponent(finalFileName)}`;
+        } catch (err) {
+          res.status(500).json({
+            ok: false,
+            error:
+              err instanceof Error
+                ? err.message
+                : 'Не удалось сохранить фото профиля',
+          });
+          return;
+        }
+      }
+
+      const matchedOrders = collectOrdersForClientEmail(
+        crmStore.orders,
+        session.email,
+        existingAccount
+      );
+      const upserted = upsertClientAccountRecord(crmStore.clientAccounts, {
+        email: session.email,
+        orderNumbersToLink: matchedOrders.map((o) => o.orderNumber),
+        contactLine: existingAccount ? undefined : matchedOrders[0]?.contact ?? '',
+        companyOrInn: existingAccount
+          ? undefined
+          : matchedOrders[0]?.companyOrInn ?? '',
+        ...(nextAvatarUrl !== undefined ? { avatarUrl: nextAvatarUrl } : {}),
+        ...(nextAvatarPresetId !== undefined
+          ? { avatarPresetId: nextAvatarPresetId }
+          : {}),
+      });
+
+      crmStore.clientAccounts = upserted.accounts;
+      writeOrdersCrmStore(crmStore);
+
+      res.json({
+        ok: true,
+        account: toClientAccountPublicProfile(upserted.account, matchedOrders.length),
+      });
+    }
+  );
+
+  app.delete('/api/client-auth/avatar', (req, res) => {
+    if (isBlockedCrossOriginMutation(req)) {
+      res.status(403).json({
+        ok: false,
+        error: 'Кросс-доменный запрос удаления фото отклонён',
+      });
+      return;
+    }
+
+    const session = getVerifiedClientSession(req);
+    if (!session) {
+      res.status(401).json({
+        ok: false,
+        error: 'Сессия клиента не активна',
+      });
+      return;
+    }
+
+    const crmStore = readOrdersCrmStore();
+    const existingAccount = crmStore.clientAccounts.find(
+      (a) => a.email === session.email
+    );
+    removePreviousClientAvatarFile(existingAccount?.avatarUrl);
+
+    const matchedOrders = collectOrdersForClientEmail(
+      crmStore.orders,
+      session.email,
+      existingAccount
+    );
+    const upserted = upsertClientAccountRecord(crmStore.clientAccounts, {
+      email: session.email,
+      avatarUrl: null,
+    });
+
+    crmStore.clientAccounts = upserted.accounts;
+    writeOrdersCrmStore(crmStore);
+
+    res.json({
+      ok: true,
+      account: toClientAccountPublicProfile(upserted.account, matchedOrders.length),
+    });
   });
 
   // =========================================================================
@@ -3739,6 +4312,332 @@ async function startServer() {
         ok: true,
         orders,
         legalProfiles,
+      });
+    }
+  );
+
+  // =========================================================================
+  // Client Cabinet Real-Time Push Notifications & SSE Stream
+  // =========================================================================
+
+  app.get('/api/client-cabinet/notifications/stream', (req, res) => {
+    const crmStore = readOrdersCrmStore();
+    const inlineTokens = parseInlineOrderRescueTokensParam(req.query.tokens);
+    const scope = resolveClientAccessibleNotificationScope(
+      req,
+      inlineTokens,
+      crmStore
+    );
+
+    if (!scope.subjectKey) {
+      res.status(401).json({
+        ok: false,
+        error: 'Требуется вход в личный кабинет или ключ доступа к заказу',
+      });
+      return;
+    }
+
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    if (typeof res.flushHeaders === 'function') {
+      res.flushHeaders();
+    }
+
+    const initialItems = filterNotificationsForAccessibleOrders({
+      allNotifications: crmStore.clientNotifications,
+      accessibleOrderNumbers: scope.accessibleOrderNumbers,
+      preferences: scope.preferences,
+    });
+
+    const clientId = `cab-sse-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    const heartbeatTimer = setInterval(() => {
+      try {
+        res.write(`: heartbeat ${Date.now()}\n\n`);
+      } catch {
+        clearInterval(heartbeatTimer);
+        cabinetNotificationSseClients.delete(clientId);
+      }
+    }, 20_000);
+    if (typeof heartbeatTimer.unref === 'function') {
+      heartbeatTimer.unref();
+    }
+
+    cabinetNotificationSseClients.set(clientId, {
+      id: clientId,
+      res,
+      sessionEmail: scope.sessionEmail,
+      verifiedRescueOrderNumbers: scope.verifiedRescueOrderNumbers,
+      heartbeatTimer,
+    });
+
+    res.write(
+      `event: connected\ndata: ${JSON.stringify({
+        ok: true,
+        unreadCount: countUnreadNotifications(initialItems),
+        serverTime: new Date().toISOString(),
+      })}\n\n`
+    );
+
+    req.on('close', () => {
+      clearInterval(heartbeatTimer);
+      cabinetNotificationSseClients.delete(clientId);
+    });
+  });
+
+  app.post(
+    '/api/client-cabinet/notifications/query',
+    express.json({ limit: '64kb' }),
+    (req, res) => {
+      const body = (req.body ?? {}) as {
+        items?: Array<{ orderNumber?: string; rescueToken?: string }>;
+      };
+      const crmStore = readOrdersCrmStore();
+      const scope = resolveClientAccessibleNotificationScope(
+        req,
+        body.items,
+        crmStore
+      );
+
+      if (!scope.subjectKey || scope.accessibleOrderNumbers.length === 0) {
+        res.json({
+          ok: true,
+          notifications: [],
+          preferences: scope.preferences,
+          unreadCount: 0,
+        });
+        return;
+      }
+
+      const notifications = filterNotificationsForAccessibleOrders({
+        allNotifications: crmStore.clientNotifications,
+        accessibleOrderNumbers: scope.accessibleOrderNumbers,
+        preferences: scope.preferences,
+      });
+
+      res.json({
+        ok: true,
+        notifications,
+        preferences: scope.preferences,
+        unreadCount: countUnreadNotifications(notifications),
+      });
+    }
+  );
+
+  app.put(
+    '/api/client-cabinet/notifications/preferences',
+    express.json({ limit: '32kb' }),
+    (req, res) => {
+      if (isBlockedCrossOriginMutation(req)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Кросс-доменный запрос отклонён политикой безопасности',
+        });
+        return;
+      }
+
+      const body = (req.body ?? {}) as {
+        items?: Array<{ orderNumber?: string; rescueToken?: string }>;
+        browserPushEnabled?: boolean;
+        notifyOnStageChange?: boolean;
+        notifyOnNewVersion?: boolean;
+        pushEndpoint?: string | null;
+      };
+
+      const crmStore = readOrdersCrmStore();
+      const scope = resolveClientAccessibleNotificationScope(
+        req,
+        body.items,
+        crmStore
+      );
+
+      if (!scope.subjectKey) {
+        res.status(401).json({
+          ok: false,
+          error: 'Требуется активный заказ или вход в кабинет для сохранения настроек',
+        });
+        return;
+      }
+
+      const nextPrefs = sanitizeClientNotificationPreferences(
+        {
+          ...scope.preferences,
+          subjectKey: scope.subjectKey,
+          browserPushEnabled:
+            typeof body.browserPushEnabled === 'boolean'
+              ? body.browserPushEnabled
+              : scope.preferences.browserPushEnabled,
+          notifyOnStageChange:
+            typeof body.notifyOnStageChange === 'boolean'
+              ? body.notifyOnStageChange
+              : scope.preferences.notifyOnStageChange,
+          notifyOnNewVersion:
+            typeof body.notifyOnNewVersion === 'boolean'
+              ? body.notifyOnNewVersion
+              : scope.preferences.notifyOnNewVersion,
+          pushEndpoint:
+            body.pushEndpoint !== undefined
+              ? body.pushEndpoint
+              : scope.preferences.pushEndpoint,
+          updatedAt: new Date().toISOString(),
+        },
+        scope.subjectKey
+      );
+
+      crmStore.clientNotificationPrefs[scope.subjectKey] = nextPrefs;
+      writeOrdersCrmStore(crmStore);
+
+      const notifications = filterNotificationsForAccessibleOrders({
+        allNotifications: crmStore.clientNotifications,
+        accessibleOrderNumbers: scope.accessibleOrderNumbers,
+        preferences: nextPrefs,
+      });
+
+      res.json({
+        ok: true,
+        preferences: nextPrefs,
+        notifications,
+        unreadCount: countUnreadNotifications(notifications),
+      });
+    }
+  );
+
+  app.post(
+    '/api/client-cabinet/notifications/mark-read',
+    express.json({ limit: '32kb' }),
+    (req, res) => {
+      if (isBlockedCrossOriginMutation(req)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Кросс-доменный запрос отклонён политикой безопасности',
+        });
+        return;
+      }
+
+      const body = (req.body ?? {}) as {
+        items?: Array<{ orderNumber?: string; rescueToken?: string }>;
+        notificationIds?: string[];
+        markAll?: boolean;
+      };
+
+      const crmStore = readOrdersCrmStore();
+      const scope = resolveClientAccessibleNotificationScope(
+        req,
+        body.items,
+        crmStore
+      );
+
+      if (!scope.subjectKey) {
+        res.status(401).json({
+          ok: false,
+          error: 'Требуется активный заказ или вход в кабинет',
+        });
+        return;
+      }
+
+      const nextPrefs = markNotificationsReadInPreferences(scope.preferences, {
+        notificationIds: Array.isArray(body.notificationIds)
+          ? body.notificationIds.slice(0, 100)
+          : [],
+        markAll: Boolean(body.markAll),
+      });
+
+      crmStore.clientNotificationPrefs[scope.subjectKey] = nextPrefs;
+      writeOrdersCrmStore(crmStore);
+
+      const notifications = filterNotificationsForAccessibleOrders({
+        allNotifications: crmStore.clientNotifications,
+        accessibleOrderNumbers: scope.accessibleOrderNumbers,
+        preferences: nextPrefs,
+      });
+
+      res.json({
+        ok: true,
+        preferences: nextPrefs,
+        notifications,
+        unreadCount: countUnreadNotifications(notifications),
+      });
+    }
+  );
+
+  app.post(
+    '/api/client-cabinet/notifications/test-push',
+    express.json({ limit: '32kb' }),
+    (req, res) => {
+      if (isBlockedCrossOriginMutation(req)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Кросс-доменный запрос отклонён политикой безопасности',
+        });
+        return;
+      }
+
+      const clientIp = resolveClientIp(req);
+      const rate = clientTestPushLimiter.consume(clientIp);
+      if (!rate.allowed) {
+        res.setHeader('Retry-After', String(rate.retryAfterSec));
+        res.status(429).json({
+          ok: false,
+          error: `Слишком частая отправка тестовых оповещений. Подождите ${rate.retryAfterSec} сек.`,
+        });
+        return;
+      }
+
+      const body = (req.body ?? {}) as {
+        items?: Array<{ orderNumber?: string; rescueToken?: string }>;
+        orderNumber?: string;
+      };
+
+      const crmStore = readOrdersCrmStore();
+      const scope = resolveClientAccessibleNotificationScope(
+        req,
+        body.items,
+        crmStore
+      );
+
+      if (!scope.subjectKey || scope.accessibleOrderNumbers.length === 0) {
+        res.status(401).json({
+          ok: false,
+          error: 'Нет доступных заказов для отправки тестового push-уведомления',
+        });
+        return;
+      }
+
+      const requestedUpper =
+        typeof body.orderNumber === 'string'
+          ? body.orderNumber.trim().toUpperCase()
+          : '';
+      const targetUpper = scope.accessibleOrderNumbers.includes(requestedUpper)
+        ? requestedUpper
+        : scope.accessibleOrderNumbers[0];
+      const matchedOrder = crmStore.orders.find(
+        (o) => o.orderNumber.toUpperCase() === targetUpper
+      );
+      const canonicalOrderNumber = matchedOrder?.orderNumber ?? targetUpper;
+
+      const testNotif = buildTestCabinetPushNotification({
+        id: `notif-test-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+        orderNumber: canonicalOrderNumber,
+      });
+
+      recordAndBroadcastCabinetNotification(testNotif, crmStore);
+
+      const notifications = filterNotificationsForAccessibleOrders({
+        allNotifications: crmStore.clientNotifications,
+        accessibleOrderNumbers: scope.accessibleOrderNumbers,
+        preferences: scope.preferences,
+      });
+
+      res.json({
+        ok: true,
+        notification: {
+          ...testNotif,
+          isRead: false,
+        },
+        notifications,
+        unreadCount: countUnreadNotifications(notifications),
       });
     }
   );
@@ -4113,7 +5012,8 @@ async function startServer() {
 
     res.json({
       ok: true,
-      orders: crmStore.orders,
+      orders: crmStore.orders.map((ord) => ensureOrderApprovalWorkflow(ord)),
+      soundEngineers: sanitizeSoundEngineerRoster(crmStore.soundEngineers),
       dispatchLogs: crmStore.dispatchLogs.slice(0, 25),
       operatingRegime: resolveStudioOperatingRegime(Date.now(), workSchedule),
       legalProfiles: sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles),
@@ -4343,6 +5243,15 @@ async function startServer() {
       writeOrdersCrmStore(crmStore);
 
       if (stageChanged) {
+        const stageNotif = buildStageChangedNotification({
+          id: `notif-stage-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+          orderNumber: updatedOrder.orderNumber,
+          previousStage: existing.stage,
+          nextStage: updatedOrder.stage,
+          formatLabel: updatedOrder.formatLabel,
+          createdAt: nowIso,
+        });
+        recordAndBroadcastCabinetNotification(stageNotif, crmStore);
         void dispatchOrderToExternalChannels(updatedOrder.id, 'order.stage_changed');
       }
 
@@ -4529,6 +5438,9 @@ async function startServer() {
         kind?: OrderDeliverableKind;
         fileName?: string;
         dataBase64?: string;
+        versionCode?: string;
+        versionStage?: string;
+        versionNote?: string;
       };
 
       const crmStore = readOrdersCrmStore();
@@ -4569,6 +5481,15 @@ async function startServer() {
           ? 'audio_master'
           : 'archive';
 
+      const versionMeta = resolveUploadedDeliverableVersionMeta({
+        kind,
+        mimeType: saved.mimeType,
+        requestedVersionCode: body.versionCode,
+        requestedVersionStage: body.versionStage,
+        requestedVersionNote: body.versionNote,
+        existingDeliverables: existing.deliverables ?? [],
+      });
+
       const deliverable: OrderDeliverableFile = {
         id: `deliv-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
         title:
@@ -4580,6 +5501,7 @@ async function startServer() {
         mimeType: saved.mimeType,
         sizeBytes: saved.sizeBytes,
         uploadedAt: new Date().toISOString(),
+        ...versionMeta,
         storageKey: saved.storageKey,
       };
 
@@ -4589,7 +5511,13 @@ async function startServer() {
         deliverables: [deliverable, ...(existing.deliverables ?? [])].slice(0, 20),
       };
       crmStore.orders[idx] = updated;
-      writeOrdersCrmStore(crmStore);
+      const deliverableNotif = buildDeliverableUploadedNotification({
+        id: `notif-deliv-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+        orderNumber: updated.orderNumber,
+        deliverable,
+        createdAt: deliverable.uploadedAt,
+      });
+      recordAndBroadcastCabinetNotification(deliverableNotif, crmStore);
 
       res.json({
         ok: true,
@@ -4663,6 +5591,1059 @@ async function startServer() {
       order: anonymized,
     });
   });
+
+  // =========================================================================
+  // Пошаговый конвейер согласования сценариев и роликов + Шлюз звукорежиссёра
+  // =========================================================================
+
+  async function buildAndDispatchSoundEngineerSheet(params: {
+    req: Request;
+    order: CrmOrderRecord;
+    engineer: SoundEngineerContact;
+    crmStore: PersistedOrdersCrmStore;
+    autoSendExternal?: boolean;
+  }): Promise<{
+    dropToken: string;
+    dropPath: string;
+    dropUrl: string;
+    sheet: ReturnType<typeof formatSoundEngineerProductionSheet>;
+    channelSummary: string;
+  }> {
+    const { req, order, engineer, crmStore, autoSendExternal = true } = params;
+    const wf = ensureOrderApprovalWorkflow(order).approvalWorkflow;
+    const expMs = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    const dropToken = issueSoundDropTokenWithSigner(
+      {
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        engineerId: engineer.id,
+        engineerName: engineer.name,
+        gen: wf.dropTokenGeneration,
+        expMs,
+      },
+      signSoundDropHmac
+    );
+
+    const dropPath = `/sound-drop?token=${encodeURIComponent(dropToken)}`;
+    const origin = resolveSafePublicOrigin({
+      configuredOrigin: process.env.PUBLIC_ORIGIN,
+      hostHeader: req.headers.host,
+      forwardedHost: req.headers['x-forwarded-host'],
+      protocol: req.protocol,
+      forwardedProto: req.headers['x-forwarded-proto'],
+      trustProxy: process.env.TRUST_PROXY === 'true',
+      fallbackOrigin: `http://localhost:${PORT}`,
+    });
+    const dropUrl = `${origin}${dropPath}`;
+
+    const sheet = formatSoundEngineerProductionSheet({
+      orderNumber: order.orderNumber,
+      engineer,
+      workflow: wf,
+      briefFallbackText: order.briefText,
+      directDropUrl: dropUrl,
+    });
+
+    const deliveredVia: string[] = [];
+
+    if (
+      autoSendExternal &&
+      crmStore.settings.telegram.botToken.trim() &&
+      engineer.telegramChatId.trim()
+    ) {
+      try {
+        const tgRes = await fetch(
+          `https://api.telegram.org/bot${crmStore.settings.telegram.botToken.trim()}/sendMessage`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: engineer.telegramChatId.trim(),
+              text: sheet.telegramMessage.slice(0, 3900),
+              disable_web_page_preview: true,
+            }),
+            signal: AbortSignal.timeout(4500),
+          }
+        );
+        if (tgRes.ok) {
+          deliveredVia.push('Telegram');
+        }
+      } catch {
+        // Неблокирующий внешний канал
+      }
+    }
+
+    const emailGatewayUrl = (
+      process.env.SOUND_ENGINEER_EMAIL_WEBHOOK_URL ?? ''
+    ).trim();
+    if (autoSendExternal && emailGatewayUrl && engineer.email) {
+      try {
+        const check = validateOutboundWebhookTarget(emailGatewayUrl, {
+          allowInternalLoopbackSink: true,
+          localPort: PORT,
+        });
+        if (check.ok) {
+          const mailRes = await fetch(emailGatewayUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: engineer.email,
+              engineerName: engineer.name,
+              orderNumber: order.orderNumber,
+              subject: sheet.subject,
+              text: sheet.plainBody,
+              dropUrl,
+            }),
+            signal: AbortSignal.timeout(4500),
+          });
+          if (mailRes.ok) {
+            deliveredVia.push(`Почта (${engineer.email})`);
+          }
+        }
+      } catch {
+        // Неблокирующий внешний почтовый шлюз
+      }
+    }
+
+    const channelSummary =
+      deliveredVia.length > 0
+        ? `Техлист отправлен (${deliveredVia.join(' + ')})`
+        : engineer.email
+          ? `Техлист сформирован для ${engineer.name} (${engineer.email})`
+          : `Техлист и прямая ссылка сформированы (${engineer.name})`;
+
+    return {
+      dropToken,
+      dropPath,
+      dropUrl,
+      sheet,
+      channelSummary,
+    };
+  }
+
+  app.put(
+    '/api/cms/sound-engineers',
+    requireStudioAuth,
+    express.json({ limit: '32kb' }),
+    (req, res) => {
+      const body = (req.body ?? {}) as { soundEngineers?: unknown };
+      const sanitized = sanitizeSoundEngineerRoster(body.soundEngineers);
+      const serializedLower = JSON.stringify(sanitized).toLowerCase();
+      const hitBanned = SERVER_BANNED_TERMS.find((term) =>
+        serializedLower.includes(term)
+      );
+      if (hitBanned) {
+        res.status(400).json({
+          ok: false,
+          error: `Список звукорежиссёров содержит запрещённый фрагмент («${hitBanned}»).`,
+        });
+        return;
+      }
+
+      const crmStore = readOrdersCrmStore();
+      crmStore.soundEngineers = sanitized;
+      writeOrdersCrmStore(crmStore);
+
+      res.json({
+        ok: true,
+        soundEngineers: crmStore.soundEngineers,
+      });
+    }
+  );
+
+  app.post(
+    '/api/cms/orders/:orderId/approval/publish-script',
+    requireStudioAuth,
+    express.json({ limit: '64kb' }),
+    (req, res) => {
+      const { orderId } = req.params;
+      const body = (req.body ?? {}) as {
+        targetSlotSec?: number;
+        concepts?: PublishScriptConceptInput[];
+      };
+
+      const serializedLower = JSON.stringify(body.concepts ?? []).toLowerCase();
+      const hitBanned = SERVER_BANNED_TERMS.find((term) =>
+        serializedLower.includes(term)
+      );
+      if (hitBanned) {
+        res.status(400).json({
+          ok: false,
+          error: `Текст сценария содержит стоп-фрагмент редакционной политики («${hitBanned}»).`,
+        });
+        return;
+      }
+
+      const crmStore = readOrdersCrmStore();
+      const idx = crmStore.orders.findIndex((o) => o.id === orderId);
+      if (idx === -1) {
+        res.status(404).json({ ok: false, error: 'Заказ не найден в реестре CRM' });
+        return;
+      }
+
+      const existing = ensureOrderApprovalWorkflow(crmStore.orders[idx]);
+      const nowIso = new Date().toISOString();
+
+      try {
+        const nextWorkflow = applyPublishScriptDraft(
+          existing.approvalWorkflow,
+          {
+            targetSlotSec: body.targetSlotSec,
+            concepts: Array.isArray(body.concepts) ? body.concepts : [],
+          },
+          nowIso
+        );
+
+        const nextStage: CrmOrderStage =
+          existing.stage === 'new_hold' ||
+          existing.stage === 'quota_locked' ||
+          existing.stage === 'edo_invoice'
+            ? 'in_production'
+            : existing.stage;
+
+        const updatedOrder: CrmOrderRecord = {
+          ...existing,
+          stage: nextStage,
+          updatedAt: nowIso,
+          approvalWorkflow: nextWorkflow,
+        };
+
+        crmStore.orders[idx] = updatedOrder;
+        const latestVer = nextWorkflow.scriptVersions[0]?.versionNumber ?? 1;
+        const notif = buildApprovalWorkflowNotification({
+          id: `notif-script-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+          orderNumber: updatedOrder.orderNumber,
+          title: `Заказ #${updatedOrder.orderNumber}: готов режиссёрский сценарий (v${latestVer})`,
+          body: `Продюсер опубликовал режиссёрский сценарий (${nextWorkflow.targetSlotSec} сек). Утвердите текст в 1 клик в личном кабинете, чтобы запустить запись.`,
+          createdAt: nowIso,
+        });
+        recordAndBroadcastCabinetNotification(notif, crmStore);
+
+        res.json({
+          ok: true,
+          order: updatedOrder,
+        });
+      } catch (err) {
+        res.status(400).json({
+          ok: false,
+          error:
+            err instanceof Error
+              ? err.message
+              : 'Не удалось опубликовать режиссёрский сценарий',
+        });
+      }
+    }
+  );
+
+  app.post(
+    '/api/cms/orders/:orderId/approval/dispatch-engineer',
+    requireStudioAuth,
+    express.json({ limit: '32kb' }),
+    async (req, res) => {
+      const { orderId } = req.params;
+      const body = (req.body ?? {}) as {
+        engineerId?: string;
+        rotateToken?: boolean;
+      };
+
+      const crmStore = readOrdersCrmStore();
+      const idx = crmStore.orders.findIndex((o) => o.id === orderId);
+      if (idx === -1) {
+        res.status(404).json({ ok: false, error: 'Заказ не найден в реестре CRM' });
+        return;
+      }
+
+      const roster = sanitizeSoundEngineerRoster(crmStore.soundEngineers);
+      const existing = ensureOrderApprovalWorkflow(crmStore.orders[idx]);
+      const wf = existing.approvalWorkflow;
+      const requestedId = String(body.engineerId || wf.assignedEngineerId || '').trim();
+      const engineer =
+        roster.find((e) => e.id === requestedId) ??
+        roster.find((e) => e.isDefault) ??
+        roster[0];
+
+      if (!engineer) {
+        res.status(400).json({
+          ok: false,
+          error: 'В справочнике не настроен ни один звукорежиссёр',
+        });
+        return;
+      }
+
+      const engineerSwitched =
+        Boolean(wf.assignedEngineerId) && wf.assignedEngineerId !== engineer.id;
+      const nextGen =
+        engineerSwitched || body.rotateToken === true
+          ? wf.dropTokenGeneration + 1
+          : wf.dropTokenGeneration;
+
+      const nowIso = new Date().toISOString();
+      const preUpdatedOrder: CrmOrderRecord = {
+        ...existing,
+        updatedAt: nowIso,
+        approvalWorkflow: {
+          ...wf,
+          assignedEngineerId: engineer.id,
+          dropTokenGeneration: nextGen,
+        },
+      };
+
+      const dispatched = await buildAndDispatchSoundEngineerSheet({
+        req,
+        order: preUpdatedOrder,
+        engineer,
+        crmStore,
+        autoSendExternal: true,
+      });
+
+      const finalOrder: CrmOrderRecord = {
+        ...preUpdatedOrder,
+        approvalWorkflow: {
+          ...preUpdatedOrder.approvalWorkflow!,
+          lastDispatchedToEngineerAt: nowIso,
+          lastDispatchChannelSummary: dispatched.channelSummary,
+        },
+      };
+
+      crmStore.orders[idx] = finalOrder;
+      writeOrdersCrmStore(crmStore);
+
+      res.json({
+        ok: true,
+        order: finalOrder,
+        engineer,
+        dropPath: dispatched.dropPath,
+        dropUrl: dispatched.dropUrl,
+        sheet: dispatched.sheet,
+        channelSummary: dispatched.channelSummary,
+      });
+    }
+  );
+
+  app.post(
+    '/api/cms/orders/:orderId/approval/resolve-escalation',
+    requireStudioAuth,
+    express.json({ limit: '32kb' }),
+    (req, res) => {
+      const { orderId } = req.params;
+      const body = (req.body ?? {}) as {
+        revisionId?: string;
+        mode?: 'loyal_included' | 'unified_invoice_adjusted';
+        note?: string;
+        newTotalBudgetRub?: number;
+      };
+
+      const crmStore = readOrdersCrmStore();
+      const idx = crmStore.orders.findIndex((o) => o.id === orderId);
+      if (idx === -1) {
+        res.status(404).json({ ok: false, error: 'Заказ не найден в реестре CRM' });
+        return;
+      }
+
+      const existing = ensureOrderApprovalWorkflow(crmStore.orders[idx]);
+      const mode =
+        body.mode === 'unified_invoice_adjusted'
+          ? 'unified_invoice_adjusted'
+          : 'loyal_included';
+      const nowIso = new Date().toISOString();
+
+      const nextWorkflow = applyProducerEscalationResolution(
+        existing.approvalWorkflow,
+        {
+          revisionId: body.revisionId,
+          mode,
+          note: body.note,
+        },
+        nowIso
+      );
+
+      let nextBudget = existing.totalBudgetRub;
+      let nextDocMeta = existing.documentMeta;
+      if (
+        mode === 'unified_invoice_adjusted' &&
+        typeof body.newTotalBudgetRub === 'number' &&
+        Number.isFinite(body.newTotalBudgetRub) &&
+        body.newTotalBudgetRub > 0
+      ) {
+        nextBudget = Math.round(body.newTotalBudgetRub);
+        nextDocMeta = sanitizeOrderDocumentMeta({
+          ...(existing.documentMeta ?? {}),
+          customPriceRub: nextBudget,
+        });
+      }
+
+      const updatedOrder: CrmOrderRecord = {
+        ...existing,
+        updatedAt: nowIso,
+        totalBudgetRub: nextBudget,
+        ...(nextDocMeta ? { documentMeta: nextDocMeta } : {}),
+        approvalWorkflow: nextWorkflow,
+      };
+
+      crmStore.orders[idx] = updatedOrder;
+      const notif = buildApprovalWorkflowNotification({
+        id: `notif-esc-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+        orderNumber: updatedOrder.orderNumber,
+        title: `Заказ #${updatedOrder.orderNumber}: запрос согласован продюсером`,
+        body:
+          mode === 'loyal_included'
+            ? 'Продюсер подтвердил выполнение доработки без изменения стоимости заказа. Задача передана в студию.'
+            : 'Продюсер подтвердил выполнение доработки с обновлением единого счёта без дополнительных мелких счетов. Задача в работе.',
+        createdAt: nowIso,
+      });
+      recordAndBroadcastCabinetNotification(notif, crmStore);
+
+      res.json({
+        ok: true,
+        order: updatedOrder,
+      });
+    }
+  );
+
+  app.get(
+    '/api/cms/orders/:orderId/approval/takes/:takeId/audio',
+    requireStudioAuth,
+    (req, res) => {
+      const { orderId, takeId } = req.params;
+      const crmStore = readOrdersCrmStore();
+      const found = crmStore.orders.find((o) => o.id === orderId);
+      if (!found) {
+        res.status(404).json({ ok: false, error: 'Заказ не найден' });
+        return;
+      }
+      const wf = ensureOrderApprovalWorkflow(found).approvalWorkflow;
+      const take = wf.pendingEngineerTakes.find((t) => t.id === takeId);
+      if (!take) {
+        res.status(404).json({ ok: false, error: 'Дубль звукорежиссёра не найден' });
+        return;
+      }
+      const absPath = resolveContainedStoragePath(
+        ORDER_DELIVERABLES_DIR,
+        take.storageKey
+      );
+      if (!absPath || !fs.existsSync(absPath)) {
+        res.status(404).json({ ok: false, error: 'Аудиофайл отсутствует на диске' });
+        return;
+      }
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Type', take.mimeType || 'audio/wav');
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename="${encodeURIComponent(path.basename(take.fileName))}"`
+      );
+      res.sendFile(absPath);
+    }
+  );
+
+  app.post(
+    '/api/cms/orders/:orderId/approval/publish-take',
+    requireStudioAuth,
+    express.json({ limit: '32kb' }),
+    (req, res) => {
+      const { orderId } = req.params;
+      const body = (req.body ?? {}) as {
+        takeId?: string;
+        versionCode?: string;
+        versionStage?: string;
+        title?: string;
+        versionNote?: string;
+        markAccepted?: boolean;
+      };
+
+      const crmStore = readOrdersCrmStore();
+      const idx = crmStore.orders.findIndex((o) => o.id === orderId);
+      if (idx === -1) {
+        res.status(404).json({ ok: false, error: 'Заказ не найден в реестре CRM' });
+        return;
+      }
+
+      const existing = ensureOrderApprovalWorkflow(crmStore.orders[idx]);
+      const wf = existing.approvalWorkflow;
+      const take = wf.pendingEngineerTakes.find((t) => t.id === body.takeId);
+      if (!take) {
+        res.status(404).json({
+          ok: false,
+          error: 'Дубль звукорежиссёра не найден в буфере ОТК',
+        });
+        return;
+      }
+
+      const versionMeta = resolveUploadedDeliverableVersionMeta({
+        kind: 'audio_master',
+        mimeType: take.mimeType,
+        requestedVersionCode: body.versionCode,
+        requestedVersionStage: body.versionStage,
+        requestedVersionNote:
+          body.versionNote ||
+          take.engineerNote ||
+          `Проверено продюсером (${
+            take.measuredDurationSec
+              ? `${take.measuredDurationSec.toFixed(2)} с`
+              : `${wf.targetSlotSec} с`
+          })`,
+        existingDeliverables: existing.deliverables ?? [],
+      });
+
+      const nowIso = new Date().toISOString();
+      const deliverable: OrderDeliverableFile = {
+        id: `deliv-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+        title:
+          typeof body.title === 'string' && body.title.trim()
+            ? body.title.trim().slice(0, 140)
+            : versionMeta.versionStage === 'master'
+              ? `Финальный эфирный мастер (${wf.targetSlotSec} сек · −14 LUFS)`
+              : `Готовый ролик ${versionMeta.versionCode ?? 'v1'} на приёмку (${wf.targetSlotSec} сек)`,
+        kind: 'audio_master',
+        fileName: take.fileName,
+        mimeType: take.mimeType,
+        sizeBytes: take.sizeBytes,
+        uploadedAt: nowIso,
+        ...versionMeta,
+        storageKey: take.storageKey,
+      };
+
+      const nextWorkflow = applyPublishEngineerTakeToClient(
+        wf,
+        {
+          takeId: take.id,
+          deliverableId: deliverable.id,
+          versionCode: versionMeta.versionCode ?? 'v1',
+          markAccepted: Boolean(body.markAccepted),
+        },
+        nowIso
+      );
+
+      const nextStage: CrmOrderStage =
+        body.markAccepted || versionMeta.versionStage === 'master'
+          ? existing.stage === 'completed_ltv'
+            ? 'completed_ltv'
+            : 'on_air'
+          : existing.stage === 'new_hold' ||
+              existing.stage === 'quota_locked' ||
+              existing.stage === 'edo_invoice'
+            ? 'in_production'
+            : existing.stage;
+
+      const updatedOrder: CrmOrderRecord = {
+        ...existing,
+        stage: nextStage,
+        updatedAt: nowIso,
+        deliverables: [deliverable, ...(existing.deliverables ?? [])].slice(0, 20),
+        approvalWorkflow: nextWorkflow,
+      };
+
+      crmStore.orders[idx] = updatedOrder;
+      const deliverableNotif = buildDeliverableUploadedNotification({
+        id: `notif-deliv-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+        orderNumber: updatedOrder.orderNumber,
+        deliverable,
+        createdAt: nowIso,
+      });
+      recordAndBroadcastCabinetNotification(deliverableNotif, crmStore);
+
+      res.json({
+        ok: true,
+        order: updatedOrder,
+        deliverable,
+      });
+    }
+  );
+
+  // Решения клиента в Личном кабинете (Утверждение сценария / Сервисный раунд доводки / Приёмка ролика)
+  app.post(
+    '/api/orders/:orderNumber/approval/script-decision',
+    express.json({ limit: '32kb' }),
+    async (req, res) => {
+      if (isBlockedCrossOriginMutation(req)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Кросс-доменный запрос отклонён политикой безопасности',
+        });
+        return;
+      }
+
+      const orderNumber = String(req.params.orderNumber || '').trim();
+      const body = (req.body ?? {}) as {
+        rescueToken?: string;
+        action?: 'approve' | 'request_changes';
+        conceptId?: string;
+        comment?: string;
+      };
+
+      const crmStore = readOrdersCrmStore();
+      const idx = crmStore.orders.findIndex((o) => o.orderNumber === orderNumber);
+      if (idx === -1) {
+        res.status(404).json({ ok: false, error: 'Заказ не найден' });
+        return;
+      }
+
+      const existing = ensureOrderApprovalWorkflow(crmStore.orders[idx]);
+      if (!canClientAccessOrder(req, existing, body.rescueToken, crmStore)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Недействительный ключ доступа к заказу',
+        });
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      try {
+        const nextWorkflow =
+          body.action === 'approve'
+            ? applyClientScriptDecision(
+                existing.approvalWorkflow,
+                { action: 'approve', conceptId: body.conceptId },
+                nowIso
+              )
+            : applyClientScriptDecision(
+                existing.approvalWorkflow,
+                {
+                  action: 'request_changes',
+                  comment: String(body.comment || ''),
+                },
+                nowIso
+              );
+
+        let finalWorkflow = nextWorkflow;
+        const nextStage: CrmOrderStage =
+          body.action === 'approve' &&
+          (existing.stage === 'new_hold' ||
+            existing.stage === 'quota_locked' ||
+            existing.stage === 'edo_invoice')
+            ? 'in_production'
+            : existing.stage;
+
+        // При утверждении сценария автоматически отправляем техлист назначенному звукорежиссёру, если шлюз настроен
+        if (body.action === 'approve') {
+          const roster = sanitizeSoundEngineerRoster(crmStore.soundEngineers);
+          const assignedEng =
+            roster.find((e) => e.id === nextWorkflow.assignedEngineerId) ??
+            roster.find((e) => e.isDefault) ??
+            roster[0];
+          const hasAutoChannel =
+            Boolean(
+              crmStore.settings.telegram.botToken.trim() &&
+                assignedEng?.telegramChatId.trim()
+            ) ||
+            Boolean(
+              (process.env.SOUND_ENGINEER_EMAIL_WEBHOOK_URL ?? '').trim() &&
+                assignedEng?.email
+            );
+
+          if (assignedEng && hasAutoChannel) {
+            const tempOrder: CrmOrderRecord = {
+              ...existing,
+              stage: nextStage,
+              updatedAt: nowIso,
+              approvalWorkflow: {
+                ...nextWorkflow,
+                assignedEngineerId: assignedEng.id,
+              },
+            };
+            const autoSent = await buildAndDispatchSoundEngineerSheet({
+              req,
+              order: tempOrder,
+              engineer: assignedEng,
+              crmStore,
+              autoSendExternal: true,
+            });
+            finalWorkflow = {
+              ...nextWorkflow,
+              assignedEngineerId: assignedEng.id,
+              lastDispatchedToEngineerAt: nowIso,
+              lastDispatchChannelSummary: autoSent.channelSummary,
+            };
+          }
+        }
+
+        const updatedOrder: CrmOrderRecord = {
+          ...existing,
+          stage: nextStage,
+          updatedAt: nowIso,
+          approvalWorkflow: finalWorkflow,
+        };
+
+        crmStore.orders[idx] = updatedOrder;
+        writeOrdersCrmStore(crmStore);
+        void dispatchOrderToExternalChannels(updatedOrder.id, 'order.stage_changed');
+
+        const effectiveRescueToken = issueOrderRescueToken(updatedOrder.orderNumber);
+        res.json({
+          ok: true,
+          order: toClientCabinetOrderSummary(
+            updatedOrder,
+            effectiveRescueToken,
+            sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles)
+          ),
+        });
+      } catch (err) {
+        res.status(400).json({
+          ok: false,
+          error:
+            err instanceof Error
+              ? err.message
+              : 'Не удалось сохранить решение по сценарию',
+        });
+      }
+    }
+  );
+
+  app.post(
+    '/api/orders/:orderNumber/approval/spot-decision',
+    express.json({ limit: '32kb' }),
+    async (req, res) => {
+      if (isBlockedCrossOriginMutation(req)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Кросс-доменный запрос отклонён политикой безопасности',
+        });
+        return;
+      }
+
+      const orderNumber = String(req.params.orderNumber || '').trim();
+      const body = (req.body ?? {}) as {
+        rescueToken?: string;
+        action?: 'accept' | 'request_revision';
+        deliverableId?: string;
+        kind?: SpotRevisionKind;
+        timecodeSec?: number | null;
+        comment?: string;
+      };
+
+      const crmStore = readOrdersCrmStore();
+      const idx = crmStore.orders.findIndex((o) => o.orderNumber === orderNumber);
+      if (idx === -1) {
+        res.status(404).json({ ok: false, error: 'Заказ не найден' });
+        return;
+      }
+
+      const existing = ensureOrderApprovalWorkflow(crmStore.orders[idx]);
+      if (!canClientAccessOrder(req, existing, body.rescueToken, crmStore)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Недействительный ключ доступа к заказу',
+        });
+        return;
+      }
+
+      const validKinds: readonly SpotRevisionKind[] = [
+        'balance_timecode',
+        'music_replacement',
+        'text_change_escalation',
+      ];
+      const kind: SpotRevisionKind = validKinds.includes(
+        body.kind as SpotRevisionKind
+      )
+        ? (body.kind as SpotRevisionKind)
+        : 'balance_timecode';
+
+      const nowIso = new Date().toISOString();
+      try {
+        const result =
+          body.action === 'accept'
+            ? applyClientSpotDecision(
+                existing.approvalWorkflow,
+                {
+                  action: 'accept',
+                  deliverableId:
+                    body.deliverableId ?? existing.deliverables?.[0]?.id ?? null,
+                },
+                nowIso
+              )
+            : applyClientSpotDecision(
+                existing.approvalWorkflow,
+                {
+                  action: 'request_revision',
+                  revisionId: `rev-${Date.now()}-${crypto
+                    .randomBytes(3)
+                    .toString('hex')}`,
+                  kind,
+                  timecodeSec:
+                    typeof body.timecodeSec === 'number' ? body.timecodeSec : null,
+                  comment: String(body.comment || ''),
+                },
+                nowIso
+              );
+
+        const nextStage: CrmOrderStage =
+          result.routedTo === 'accepted'
+            ? existing.stage === 'completed_ltv'
+              ? 'completed_ltv'
+              : 'on_air'
+            : existing.stage;
+
+        const updatedOrder: CrmOrderRecord = {
+          ...existing,
+          stage: nextStage,
+          updatedAt: nowIso,
+          compliance:
+            result.routedTo === 'accepted'
+              ? { ...existing.compliance, rightsPassportIssued: true }
+              : existing.compliance,
+          approvalWorkflow: result.workflow,
+        };
+
+        crmStore.orders[idx] = updatedOrder;
+        writeOrdersCrmStore(crmStore);
+        void dispatchOrderToExternalChannels(updatedOrder.id, 'order.stage_changed');
+
+        const effectiveRescueToken = issueOrderRescueToken(updatedOrder.orderNumber);
+        res.json({
+          ok: true,
+          routedTo: result.routedTo,
+          order: toClientCabinetOrderSummary(
+            updatedOrder,
+            effectiveRescueToken,
+            sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles)
+          ),
+        });
+      } catch (err) {
+        res.status(400).json({
+          ok: false,
+          error:
+            err instanceof Error
+              ? err.message
+              : 'Не удалось обработать решение по ролику',
+        });
+      }
+    }
+  );
+
+  // Однокнопочный шлюз прямой сдачи файла для звукорежиссёра (/api/sound-drop/* — без админки и без ПДн клиента)
+  app.get('/api/sound-drop/session', (req, res) => {
+    const rawToken =
+      typeof req.query.token === 'string' ? req.query.token.trim() : '';
+    const verified = verifySoundDropTokenWithSigner(
+      rawToken,
+      signSoundDropHmac,
+      Date.now()
+    );
+    if (!verified.ok) {
+      res.status(403).json({
+        ok: false,
+        reason: verified.reason,
+        error:
+          verified.reason === 'expired'
+            ? 'Срок действия ссылки сдачи файла истёк — запросите актуальную ссылку у продюсера.'
+            : 'Ссылка прямой сдачи недействительна или была обновлена продюсером.',
+      });
+      return;
+    }
+
+    const crmStore = readOrdersCrmStore();
+    const found = crmStore.orders.find((o) => o.id === verified.payload.orderId);
+    if (!found) {
+      res.status(404).json({ ok: false, error: 'Заказ не найден в студии' });
+      return;
+    }
+
+    const hydrated = ensureOrderApprovalWorkflow(found);
+    if (hydrated.approvalWorkflow.dropTokenGeneration !== verified.payload.gen) {
+      res.status(403).json({
+        ok: false,
+        reason: 'revoked',
+        error:
+          'Эта ссылка сдачи была отозвана при смене исполнителя — используйте актуальное письмо от продюсера.',
+      });
+      return;
+    }
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      ok: true,
+      task: toSoundDropTaskPublicView({
+        orderNumber: hydrated.orderNumber,
+        engineerId: verified.payload.engineerId,
+        engineerName: verified.payload.engineerName,
+        workflow: hydrated.approvalWorkflow,
+      }),
+    });
+  });
+
+  app.post(
+    '/api/sound-drop/upload',
+    express.raw({ type: () => true, limit: '60mb' }),
+    (req, res) => {
+      if (isBlockedCrossOriginMutation(req)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Кросс-доменная загрузка отклонена политикой безопасности',
+        });
+        return;
+      }
+
+      const rate = soundDropUploadLimiter.consume(resolveClientIp(req));
+      if (!rate.allowed) {
+        res.setHeader('Retry-After', String(rate.retryAfterSec));
+        res.status(429).json({
+          ok: false,
+          error: 'Слишком частая отправка файлов. Подождите несколько секунд.',
+        });
+        return;
+      }
+
+      const rawToken = String(req.headers['x-drop-token'] || '').trim();
+      const verified = verifySoundDropTokenWithSigner(
+        rawToken,
+        signSoundDropHmac,
+        Date.now()
+      );
+      if (!verified.ok) {
+        res.status(403).json({
+          ok: false,
+          error: 'Ссылка сдачи файла недействительна или просрочена.',
+        });
+        return;
+      }
+
+      const crmStore = readOrdersCrmStore();
+      const idx = crmStore.orders.findIndex(
+        (o) => o.id === verified.payload.orderId
+      );
+      if (idx === -1) {
+        res.status(404).json({ ok: false, error: 'Заказ не найден' });
+        return;
+      }
+
+      const existing = ensureOrderApprovalWorkflow(crmStore.orders[idx]);
+      if (existing.approvalWorkflow.dropTokenGeneration !== verified.payload.gen) {
+        res.status(403).json({
+          ok: false,
+          error: 'Ссылка сдачи была отозвана при смене звукорежиссёра.',
+        });
+        return;
+      }
+
+      const bodyBuf = Buffer.isBuffer(req.body) ? req.body : null;
+      if (!bodyBuf || bodyBuf.length < 44) {
+        res.status(400).json({
+          ok: false,
+          error: 'Передан пустой или повреждённый аудиофайл.',
+        });
+        return;
+      }
+      if (bodyBuf.length > 60 * 1024 * 1024) {
+        res.status(413).json({
+          ok: false,
+          error: 'Размер файла превышает 60 МБ.',
+        });
+        return;
+      }
+
+      if (!verifyAudioMagicBytes(bodyBuf)) {
+        res.status(400).json({
+          ok: false,
+          error:
+            'Файл не прошёл проверку сигнатуры аудиоформата. Загрузите оригинальный WAV, MP3, OGG или M4A.',
+        });
+        return;
+      }
+
+      let rawFileName = 'master_take.wav';
+      try {
+        const hdrName = String(req.headers['x-file-name'] || '').trim();
+        if (hdrName) {
+          rawFileName = decodeURIComponent(hdrName);
+        }
+      } catch {
+        rawFileName = 'master_take.wav';
+      }
+
+      let engineerNote = '';
+      try {
+        const hdrNote = String(req.headers['x-engineer-note'] || '').trim();
+        if (hdrNote) {
+          engineerNote = decodeURIComponent(hdrNote).slice(0, 500);
+        }
+      } catch {
+        engineerNote = '';
+      }
+
+      const rawExt = path.extname(rawFileName).toLowerCase();
+      const allowedAudioExts = new Set(['.wav', '.mp3', '.ogg', '.m4a']);
+      const ext = allowedAudioExts.has(rawExt) ? rawExt : '.wav';
+      const cleanStem =
+        path
+          .basename(rawFileName, rawExt)
+          .replace(/[^a-zA-Z0-9А-Яа-яЁё_-]+/g, '_')
+          .slice(0, 64) || 'spot_take';
+      const safeFileName = `${cleanStem}${ext}`;
+      const storageKey = `${existing.orderNumber.replace(/[^A-Za-z0-9_-]/g, '')}_take_${Date.now()}_${crypto
+        .randomBytes(3)
+        .toString('hex')}${ext}`;
+
+      fs.mkdirSync(ORDER_DELIVERABLES_DIR, { recursive: true });
+      const targetPath = resolveContainedStoragePath(
+        ORDER_DELIVERABLES_DIR,
+        storageKey
+      );
+      if (!targetPath) {
+        res.status(400).json({ ok: false, error: 'Недопустимое имя файла' });
+        return;
+      }
+      fs.writeFileSync(targetPath, bodyBuf);
+
+      const serverWavSec = parseWavExactDurationSec(bodyBuf);
+      const clientMeasuredRaw = Number.parseFloat(
+        String(req.headers['x-measured-duration'] || '')
+      );
+      const measuredDurationSec =
+        serverWavSec !== null
+          ? serverWavSec
+          : Number.isFinite(clientMeasuredRaw) &&
+              clientMeasuredRaw > 0 &&
+              clientMeasuredRaw <= 600
+            ? Math.round(clientMeasuredRaw * 100) / 100
+            : null;
+
+      const nowIso = new Date().toISOString();
+      const takeId = `take-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+      const nextWorkflow = applyRecordEngineerTake(
+        existing.approvalWorkflow,
+        {
+          id: takeId,
+          engineerId: verified.payload.engineerId,
+          engineerName: verified.payload.engineerName,
+          fileName: safeFileName,
+          mimeType: inferMimeTypeByExt(ext),
+          sizeBytes: bodyBuf.length,
+          storageKey,
+          measuredDurationSec,
+          engineerNote,
+        },
+        nowIso
+      );
+
+      const updatedOrder: CrmOrderRecord = {
+        ...existing,
+        updatedAt: nowIso,
+        approvalWorkflow: nextWorkflow,
+      };
+      crmStore.orders[idx] = updatedOrder;
+      writeOrdersCrmStore(crmStore);
+      void dispatchOrderToExternalChannels(updatedOrder.id, 'order.stage_changed');
+
+      const uploadedTake = nextWorkflow.pendingEngineerTakes[0]!;
+      res.json({
+        ok: true,
+        take: {
+          id: uploadedTake.id,
+          fileName: uploadedTake.fileName,
+          sizeBytes: uploadedTake.sizeBytes,
+          measuredDurationSec: uploadedTake.measuredDurationSec,
+          targetSlotSec: uploadedTake.targetSlotSec,
+          slotMatchStatus: uploadedTake.slotMatchStatus,
+          uploadedAt: uploadedTake.uploadedAt,
+        },
+        task: toSoundDropTaskPublicView({
+          orderNumber: updatedOrder.orderNumber,
+          engineerId: verified.payload.engineerId,
+          engineerName: verified.payload.engineerName,
+          workflow: nextWorkflow,
+        }),
+      });
+    }
+  );
 
   app.put(
     '/api/cms/orders-dispatch/settings',
@@ -5417,6 +7398,20 @@ async function startServer() {
       }),
       'public, max-age=3600'
     );
+  });
+
+  app.get('/cabinet-push-sw.js', (_req, res) => {
+    const distSwPath = path.join(__dirname, 'dist', 'cabinet-push-sw.js');
+    const publicSwPath = path.join(__dirname, 'public', 'cabinet-push-sw.js');
+    const resolvedSwPath = fs.existsSync(distSwPath) ? distSwPath : publicSwPath;
+    if (!fs.existsSync(resolvedSwPath)) {
+      res.status(404).type('text/plain').send('Not Found');
+      return;
+    }
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Service-Worker-Allowed', '/');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.sendFile(resolvedSwPath);
   });
 
   // OWASP WSTG-ERRH-01: все неизвестные /api/* маршруты возвращают 404 JSON, не доходя до SPA fallback

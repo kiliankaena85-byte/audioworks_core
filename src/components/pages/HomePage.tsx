@@ -165,6 +165,8 @@ export function HomePage({
       {/* 5. Отзывы заказчиков и линейка тарифов с переходом к регламенту и FAQ */}
       <Suspense fallback={<SectionPlaceholder />}>
         <TestimonialsSection
+          playerSnap={playerSnap}
+          onToggleCase={onToggleCase}
           onOpenQuickOrder={() => onStartStudioOrder(null)}
           onNavigateRelated={handleRelatedTestimonialNavigate}
         />

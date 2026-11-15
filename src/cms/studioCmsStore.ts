@@ -1,21 +1,27 @@
+import { sanitizeHeroStageForSessionStorage } from '../data/heroStageCms';
 import {
   countLocalPortfolioChanges,
+  hasLocalHeroStageChanges,
   parseWavDurationFromBuffer,
   validatePortfolioAudioFileMeta,
 } from '../data/portfolioWave1Helpers';
 import {
   auditEditorialCopyGuardrails,
   createDefaultStudioCmsSnapshot,
+  DuelCmsConfig,
   PortfolioCaseRecord,
   StudioCmsSnapshot,
   validateAndNormalizeCmsSnapshot,
 } from '../data/studioCmsTypes';
+import { countLocalTestimonialsChanges } from '../data/testimonialsCms';
 
 export interface StudioCmsState {
   snapshot: StudioCmsSnapshot;
   baselineSnapshot: StudioCmsSnapshot;
   hasLocalChanges: boolean;
+  hasLocalHeroChanges: boolean;
   localPortfolioChangeCount: number;
+  localTestimonialsChangeCount: number;
   isCustomizedOnServer: boolean;
   isHydrated: boolean;
   isAuthenticated: boolean;
@@ -73,6 +79,27 @@ function sanitizeCaseForSessionStorage(
   return item;
 }
 
+function sanitizeDuelForSessionStorage(
+  duel: DuelCmsConfig,
+  baseline: DuelCmsConfig
+): DuelCmsConfig {
+  return {
+    ...duel,
+    radioSpot: {
+      ...duel.radioSpot,
+      audioUrl: duel.radioSpot.audioUrl?.startsWith('blob:')
+        ? baseline.radioSpot.audioUrl
+        : duel.radioSpot.audioUrl,
+    },
+    audioworksSpot: {
+      ...duel.audioworksSpot,
+      audioUrl: duel.audioworksSpot.audioUrl?.startsWith('blob:')
+        ? baseline.audioworksSpot.audioUrl
+        : duel.audioworksSpot.audioUrl,
+    },
+  };
+}
+
 function readLocalDraftSnapshot(
   baseline: StudioCmsSnapshot
 ): StudioCmsSnapshot | null {
@@ -87,6 +114,10 @@ function readLocalDraftSnapshot(
     const baseById = new Map(baseline.portfolioCases.map((c) => [c.id, c]));
     return {
       ...validated.data,
+      heroStage: sanitizeHeroStageForSessionStorage(
+        validated.data.heroStage,
+        baseline.heroStage
+      ),
       flagshipReel: sanitizeCaseForSessionStorage(
         validated.data.flagshipReel,
         baseline.flagshipReel.audioUrl
@@ -94,6 +125,7 @@ function readLocalDraftSnapshot(
       portfolioCases: validated.data.portfolioCases.map((c) =>
         sanitizeCaseForSessionStorage(c, baseById.get(c.id)?.audioUrl)
       ),
+      duel: sanitizeDuelForSessionStorage(validated.data.duel, baseline.duel),
     };
   } catch {
     return null;
@@ -114,6 +146,10 @@ function writeLocalDraftSnapshot(
     const baseById = new Map(baseline.portfolioCases.map((c) => [c.id, c]));
     const safeToStore: StudioCmsSnapshot = {
       ...snapshot,
+      heroStage: sanitizeHeroStageForSessionStorage(
+        snapshot.heroStage,
+        baseline.heroStage
+      ),
       flagshipReel: sanitizeCaseForSessionStorage(
         snapshot.flagshipReel,
         baseline.flagshipReel.audioUrl
@@ -121,6 +157,7 @@ function writeLocalDraftSnapshot(
       portfolioCases: snapshot.portfolioCases.map((c) =>
         sanitizeCaseForSessionStorage(c, baseById.get(c.id)?.audioUrl)
       ),
+      duel: sanitizeDuelForSessionStorage(snapshot.duel, baseline.duel),
     };
     window.sessionStorage.setItem(LOCAL_CMS_DRAFT_KEY, JSON.stringify(safeToStore));
   } catch {
@@ -183,7 +220,12 @@ class StudioCmsStore {
       snapshot: activeSnap,
       baselineSnapshot: initialBaseline,
       hasLocalChanges: !areSnapshotsEqual(activeSnap, initialBaseline),
+      hasLocalHeroChanges: hasLocalHeroStageChanges(activeSnap, initialBaseline),
       localPortfolioChangeCount: countLocalPortfolioChanges(
+        activeSnap,
+        initialBaseline
+      ),
+      localTestimonialsChangeCount: countLocalTestimonialsChanges(
         activeSnap,
         initialBaseline
       ),
@@ -224,7 +266,12 @@ class StudioCmsStore {
       snapshot: nextSnapshot,
       baselineSnapshot: nextBaseline,
       hasLocalChanges: !areSnapshotsEqual(nextSnapshot, nextBaseline),
+      hasLocalHeroChanges: hasLocalHeroStageChanges(nextSnapshot, nextBaseline),
       localPortfolioChangeCount: countLocalPortfolioChanges(
+        nextSnapshot,
+        nextBaseline
+      ),
+      localTestimonialsChangeCount: countLocalTestimonialsChanges(
         nextSnapshot,
         nextBaseline
       ),

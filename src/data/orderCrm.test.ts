@@ -238,7 +238,7 @@ test('Cloud Run prod startup: серверные модули orderCrmTypes.ts �
     layers: number;
   };
   assert.equal(parsed.stages, 6);
-  assert.equal(parsed.seeds, 3);
+  assert.equal(parsed.seeds, 7);
   assert.ok(parsed.layers >= 4);
 });
 

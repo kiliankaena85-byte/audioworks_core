@@ -1,0 +1,1357 @@
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type ClientAccountPublicProfile,
+  normalizeClientEmail,
+} from '../../data/clientAuthShared';
+import {
+  buildCabinetRouteForAccessTab,
+  buildCabinetRouteForWorkspaceFilter,
+  type CabinetAccessTabId,
+  type CabinetHistoryStatusFilter,
+  type CabinetWorkspaceSectionFilter,
+  deriveCabinetLifecycleState,
+  extractMagicTokenFromCabinetHref,
+  filterCabinetHistoryOrders,
+  mergeAuthenticatedAndDeviceOrders,
+  partitionCabinetOrders,
+  pickUnboundDeviceOrderTokens,
+  resolveWorkspaceFilterFromRoute,
+  summarizeCabinetHistoryStatuses,
+} from '../../data/clientCabinetArchitecture';
+import {
+  type ClientCabinetOrderSummary,
+  type ClientDeliveryChannel,
+  parseDeliveryDetailSelection,
+  readClientCabinetEntries,
+  removeClientCabinetEntry,
+  upsertClientCabinetEntry,
+  validateDeliveryEmail,
+} from '../../data/clientCabinetHelpers';
+import { orderDraftStore } from '../../data/orderDraftStore';
+import type { CabinetSubrouteMode, PlatformRoute } from '../../data/platformRouter';
+import type { StudioLegalProfilesConfig } from '../../data/studioDocumentsCore';
+import {
+  inspectInnDigits,
+  parseCompanyNameAndInn,
+} from '../order/companyDetailsHelpers';
+import {
+  type ClientAvatarPresetId,
+  resolveClientAvatarModel,
+  sanitizeClientAvatarPresetId,
+} from '../../data/clientAvatarLogic';
+import type { SpotRevisionKind } from '../../data/productionApprovalWorkflow';
+import {
+  bindClientEmailApi,
+  deleteClientAvatarPhotoApi,
+  fetchCabinetBatchStatusApi,
+  fetchClientAuthSessionApi,
+  lookupSingleCabinetOrderApi,
+  logoutClientSessionApi,
+  requestClientMagicLinkApi,
+  submitClientScriptDecisionApi,
+  submitClientSpotDecisionApi,
+  updateCabinetOrderPreferencesApi,
+  updateClientAvatarApi,
+  uploadClientOrderAttachmentApi,
+  verifyClientMagicLinkApi,
+} from './clientCabinetApi';
+
+export type CabinetNavigateFn = (
+  route: PlatformRoute,
+  options?: { replace?: boolean }
+) => void;
+
+export interface MagicLinkDispatchPreview {
+  email: string;
+  intent: 'login' | 'reset';
+  revokeOtherSessions: boolean;
+  isNewRegistration: boolean;
+  deliveryMode: 'email_gateway' | 'local_preview';
+  magicLinkPath?: string;
+  magicLinkUrl?: string;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const res = typeof reader.result === 'string' ? reader.result : '';
+      resolve(res);
+    };
+    reader.onerror = () => reject(new Error('Не удалось прочитать выбранный файл'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function readFileAsBase64Payload(file: File): Promise<string> {
+  return readFileAsDataUrl(file).then((res) => {
+    const commaIdx = res.indexOf(',');
+    return commaIdx >= 0 ? res.slice(commaIdx + 1) : res;
+  });
+}
+
+const DEVICE_AVATAR_STORAGE_KEY = 'fmworks_cabinet_device_avatar_v1';
+
+interface DeviceAvatarPreferences {
+  presetId: ClientAvatarPresetId | null;
+  photoDataUrl: string | null;
+}
+
+function readDeviceAvatarPreferences(): DeviceAvatarPreferences {
+  if (typeof window === 'undefined') {
+    return { presetId: null, photoDataUrl: null };
+  }
+  try {
+    const raw = window.localStorage.getItem(DEVICE_AVATAR_STORAGE_KEY);
+    if (!raw) return { presetId: null, photoDataUrl: null };
+    const parsed = JSON.parse(raw) as {
+      presetId?: unknown;
+      photoDataUrl?: unknown;
+    };
+    return {
+      presetId: sanitizeClientAvatarPresetId(parsed.presetId),
+      photoDataUrl:
+        typeof parsed.photoDataUrl === 'string' &&
+        parsed.photoDataUrl.startsWith('data:image/')
+          ? parsed.photoDataUrl
+          : null,
+    };
+  } catch {
+    return { presetId: null, photoDataUrl: null };
+  }
+}
+
+function writeDeviceAvatarPreferences(prefs: DeviceAvatarPreferences): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (!prefs.presetId && !prefs.photoDataUrl) {
+      window.localStorage.removeItem(DEVICE_AVATAR_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(DEVICE_AVATAR_STORAGE_KEY, JSON.stringify(prefs));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+export interface UseClientCabinetControllerParams {
+  subroute?: CabinetSubrouteMode;
+  magicToken?: string;
+  onNavigate: CabinetNavigateFn;
+}
+
+export function useClientCabinetController({
+  subroute,
+  magicToken,
+  onNavigate,
+}: UseClientCabinetControllerParams) {
+  const [orders, setOrders] = useState<ClientCabinetOrderSummary[]>([]);
+  const [clientAccount, setClientAccount] =
+    useState<ClientAccountPublicProfile | null>(null);
+  const [legalProfiles, setLegalProfiles] =
+    useState<StudioLegalProfilesConfig | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [authBanner, setAuthBanner] = useState<string | null>(null);
+
+  // Панель доступа: авто-регистрация по почте / сброс доступа по magic-ссылке / поиск заказа по номеру
+  const [showLookupForm, setShowLookupForm] = useState<boolean>(
+    subroute === 'reset'
+  );
+  const [accessTab, setAccessTab] = useState<CabinetAccessTabId>(
+    subroute === 'reset' ? 'access_reset' : 'magic_email'
+  );
+  const [magicEmailInput, setMagicEmailInput] = useState<string>('');
+  const [revokeOtherSessionsOnReset, setRevokeOtherSessionsOnReset] =
+    useState<boolean>(true);
+  const [isRequestingMagic, setIsRequestingMagic] = useState<boolean>(false);
+  const [magicRequestError, setMagicRequestError] = useState<string | null>(null);
+  const [magicDispatchResult, setMagicDispatchResult] =
+    useState<MagicLinkDispatchPreview | null>(null);
+  const [isVerifyingMagic, setIsVerifyingMagic] = useState<boolean>(false);
+  const consumedMagicTokenRef = useRef<string | null>(null);
+  const loadSeqRef = useRef<number>(0);
+
+  // Одноразовая ссылка для переноса сессии на другое устройство
+  const [crossDeviceLink, setCrossDeviceLink] = useState<{
+    magicLinkUrl: string;
+    magicLinkPath: string;
+    copied: boolean;
+  } | null>(null);
+  const [isIssuingCrossDeviceLink, setIsIssuingCrossDeviceLink] =
+    useState<boolean>(false);
+
+  // Привязка анонимных заказов устройства к почте в 1 клик (авто-регистрация)
+  const [bindEmailInput, setBindEmailInput] = useState<string>('');
+  const [isBindingEmail, setIsBindingEmail] = useState<boolean>(false);
+  const [bindEmailError, setBindEmailError] = useState<string | null>(null);
+
+  // Поиск заказа по номеру + телефону / ИНН / @Telegram
+  const [orderNumberInput, setOrderNumberInput] = useState<string>('');
+  const [verifierInput, setVerifierInput] = useState<string>('');
+  const [lookupError, setLookupError] = useState<string | null>(null);
+  const [isLookingUp, setIsLookingUp] = useState<boolean>(false);
+
+  // Редактирование параметров выдачи и ИНН по заказам
+  const [deliveryDraftByOrder, setDeliveryDraftByOrder] = useState<
+    Record<string, string>
+  >({});
+  const [editingInnOrderNum, setEditingInnOrderNum] = useState<string | null>(null);
+  const [innCompanyNameDraft, setInnCompanyNameDraft] = useState<string>('');
+  const [innDigitsDraft, setInnDigitsDraft] = useState<string>('');
+  const [innSaveError, setInnSaveError] = useState<string | null>(null);
+  const [isSavingPrefsFor, setIsSavingPrefsFor] = useState<string | null>(null);
+
+  // Загрузка клиентского файла
+  const [uploadNoteByOrder, setUploadNoteByOrder] = useState<Record<string, string>>({});
+  const [uploadingOrderNum, setUploadingOrderNum] = useState<string | null>(null);
+  const [uploadFeedbackByOrder, setUploadFeedbackByOrder] = useState<
+    Record<string, { kind: 'ok' | 'error'; text: string }>
+  >({});
+
+  // Модальное окно счёта A4
+  const [invoiceModalOrder, setInvoiceModalOrder] =
+    useState<ClientCabinetOrderSummary | null>(null);
+
+  // Отправка решений по конвейеру согласования сценария и готового ролика
+  const [submittingApprovalOrderNum, setSubmittingApprovalOrderNum] =
+    useState<string | null>(null);
+
+  // Аватар профиля клиента (фото профиля или сгенерированный абстрактный аватар по инициалам)
+  const [isAvatarEditorOpen, setIsAvatarEditorOpen] = useState<boolean>(false);
+  const [isSavingAvatar, setIsSavingAvatar] = useState<boolean>(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [deviceAvatarPrefs, setDeviceAvatarPrefs] =
+    useState<DeviceAvatarPreferences>(() => readDeviceAvatarPreferences());
+
+  // Фильтрация рабочего пространства и поиск по разделу «История заказов»
+  const [workspaceFilter, setWorkspaceFilter] =
+    useState<CabinetWorkspaceSectionFilter>(() =>
+      resolveWorkspaceFilterFromRoute(subroute)
+    );
+  const [historyStatusFilter, setHistoryStatusFilter] =
+    useState<CabinetHistoryStatusFilter>('all');
+  const [historySearchQuery, setHistorySearchQuery] = useState<string>('');
+  const [historyOnlyWithMasters, setHistoryOnlyWithMasters] =
+    useState<boolean>(false);
+
+  // Синхронизация подмаршрутов `/cabinet/reset` и `/cabinet/history` из `platformRouter.ts` / `App.tsx`
+  useEffect(() => {
+    if (subroute === 'reset') {
+      setAccessTab('access_reset');
+      setShowLookupForm(true);
+      if (clientAccount?.email && !magicEmailInput) {
+        setMagicEmailInput(clientAccount.email);
+      }
+      return;
+    }
+    if (subroute === 'history') {
+      setWorkspaceFilter('history');
+    } else {
+      setWorkspaceFilter((prev) => (prev === 'history' ? 'all' : prev));
+    }
+  }, [subroute, clientAccount?.email, magicEmailInput]);
+
+  const selectWorkspaceFilter = useCallback(
+    (nextFilter: CabinetWorkspaceSectionFilter) => {
+      setWorkspaceFilter(nextFilter);
+      const targetRoute = buildCabinetRouteForWorkspaceFilter(nextFilter);
+      const currentSubroute = subroute;
+      const nextSubroute = targetRoute.subroute;
+      if (currentSubroute !== nextSubroute) {
+        onNavigate(targetRoute, { replace: true });
+      }
+    },
+    [onNavigate, subroute]
+  );
+
+  const resetHistoryFilters = useCallback(() => {
+    setHistoryStatusFilter('all');
+    setHistorySearchQuery('');
+    setHistoryOnlyWithMasters(false);
+  }, []);
+
+  const selectAccessTab = useCallback(
+    (nextTab: CabinetAccessTabId) => {
+      setAccessTab(nextTab);
+      setMagicRequestError(null);
+      setLookupError(null);
+      if (nextTab === 'access_reset' && clientAccount?.email && !magicEmailInput) {
+        setMagicEmailInput(clientAccount.email);
+      }
+      const targetRoute = buildCabinetRouteForAccessTab(nextTab);
+      const currentIsReset = subroute === 'reset';
+      const nextIsReset = targetRoute.subroute === 'reset';
+      if (currentIsReset !== nextIsReset) {
+        onNavigate(targetRoute, { replace: true });
+      }
+    },
+    [clientAccount?.email, magicEmailInput, onNavigate, subroute]
+  );
+
+  const openAccessResetFlow = useCallback(() => {
+    setShowLookupForm(true);
+    setAccessTab('access_reset');
+    setMagicRequestError(null);
+    setMagicDispatchResult(null);
+    if (clientAccount?.email) {
+      setMagicEmailInput(clientAccount.email);
+    }
+    onNavigate({ kind: 'cabinet', subroute: 'reset' });
+  }, [clientAccount?.email, onNavigate]);
+
+  const verifyAndConsumeMagicToken = useCallback(
+    async (rawToken: string, options?: { revokeOtherSessions?: boolean }) => {
+      const cleanToken = rawToken.trim();
+      if (!cleanToken) return { ok: false as const, error: null };
+      setIsVerifyingMagic(true);
+      setStatusError(null);
+      setMagicRequestError(null);
+      try {
+        const stored = readClientCabinetEntries();
+        const json = await verifyClientMagicLinkApi({
+          token: cleanToken,
+          revokeOtherSessions: options?.revokeOtherSessions,
+          localItems: stored.map((entry) => ({
+            orderNumber: entry.orderNumber,
+            rescueToken: entry.rescueToken,
+          })),
+        });
+
+        const verifiedOrders = Array.isArray(json.orders) ? json.orders : [];
+        for (const ord of verifiedOrders) {
+          upsertClientCabinetEntry({
+            orderNumber: ord.orderNumber,
+            rescueToken: ord.rescueToken,
+            contactLine: ord.contact,
+            companyLine: ord.companyOrInn,
+          });
+        }
+        if (json.legalProfiles) {
+          setLegalProfiles(json.legalProfiles);
+        }
+        setClientAccount(json.account ?? null);
+        setOrders(verifiedOrders);
+        setMagicDispatchResult(null);
+        setMagicEmailInput('');
+        setCrossDeviceLink(null);
+        setAuthBanner(
+          json.sessionsReset
+            ? `Доступ восстановлен для ${json.account?.email ?? 'профиля'} · Старые сессии на других устройствах отозваны`
+            : `Вход по одноразовой magic-ссылке выполнен (${json.account?.email ?? ''})`
+        );
+        setAccessTab('magic_email');
+        setShowLookupForm(verifiedOrders.length === 0);
+        return { ok: true as const, error: null };
+      } catch (err) {
+        const errMsg =
+          err instanceof Error
+            ? err.message
+            : 'Не удалось выполнить вход по одноразовой ссылке';
+        setStatusError(errMsg);
+        setAccessTab(subroute === 'reset' ? 'access_reset' : 'magic_email');
+        setShowLookupForm(true);
+        return { ok: false as const, error: errMsg };
+      } finally {
+        setIsVerifyingMagic(false);
+      }
+    },
+    [subroute]
+  );
+
+  const loadStoredOrders = useCallback(
+    async (incomingMagicToken?: string) => {
+      const requestSeq = ++loadSeqRef.current;
+      let magicFailedError: string | null = null;
+      const candidateMagic = (incomingMagicToken ?? '').trim();
+
+      if (candidateMagic && consumedMagicTokenRef.current !== candidateMagic) {
+        consumedMagicTokenRef.current = candidateMagic;
+        setIsLoading(true);
+        const magicResult = await verifyAndConsumeMagicToken(candidateMagic);
+        // Очищаем одноразовый ?magic= из адресной строки после установки cookie сессии и сохранения токенов
+        onNavigate({ kind: 'cabinet' }, { replace: true });
+        if (magicResult.ok) {
+          if (requestSeq === loadSeqRef.current) {
+            setIsLoading(false);
+          }
+          return;
+        }
+        magicFailedError = magicResult.error;
+      }
+
+      setIsLoading(true);
+      if (!magicFailedError) {
+        setStatusError(null);
+      }
+      const stored = readClientCabinetEntries();
+
+      try {
+        const [sessionJson, batchJson] = await Promise.all([
+          fetchClientAuthSessionApi(),
+          fetchCabinetBatchStatusApi(
+            stored.map((entry) => ({
+              orderNumber: entry.orderNumber,
+              rescueToken: entry.rescueToken,
+            }))
+          ),
+        ]);
+
+        if (requestSeq !== loadSeqRef.current) {
+          return;
+        }
+
+        if (sessionJson?.legalProfiles) {
+          setLegalProfiles(sessionJson.legalProfiles);
+        } else if (batchJson?.legalProfiles) {
+          setLegalProfiles(batchJson.legalProfiles);
+        }
+
+        const sessionOrders =
+          sessionJson?.authenticated && Array.isArray(sessionJson.orders)
+            ? sessionJson.orders
+            : [];
+        const deviceOrders = Array.isArray(batchJson?.orders)
+          ? batchJson.orders
+          : [];
+
+        if (stored.length > 0 && batchJson?.ok) {
+          const validDeviceNums = new Set(deviceOrders.map((o) => o.orderNumber));
+          for (const entry of stored) {
+            if (!validDeviceNums.has(entry.orderNumber)) {
+              removeClientCabinetEntry(entry.orderNumber);
+            }
+          }
+        }
+
+        if (sessionJson?.authenticated && sessionJson.account) {
+          const unboundDeviceItems = pickUnboundDeviceOrderTokens(
+            deviceOrders,
+            sessionJson.account.email
+          );
+
+          if (unboundDeviceItems.length > 0) {
+            try {
+              const bindJson = await bindClientEmailApi({
+                email: sessionJson.account.email,
+                items: unboundDeviceItems,
+              });
+              if (requestSeq !== loadSeqRef.current) {
+                return;
+              }
+              if (bindJson.ok && Array.isArray(bindJson.orders)) {
+                for (const ord of bindJson.orders) {
+                  upsertClientCabinetEntry({
+                    orderNumber: ord.orderNumber,
+                    rescueToken: ord.rescueToken,
+                    contactLine: ord.contact,
+                    companyLine: ord.companyOrInn,
+                  });
+                }
+                setClientAccount(bindJson.account ?? sessionJson.account);
+                setOrders(bindJson.orders);
+                if (bindJson.orders.length === 0) {
+                  setShowLookupForm(true);
+                }
+                return;
+              }
+            } catch {
+              // Продолжаем со стандартным объединением заказов сессии
+            }
+          }
+
+          setClientAccount(sessionJson.account);
+        } else {
+          setClientAccount(null);
+        }
+
+        for (const ord of sessionOrders) {
+          upsertClientCabinetEntry({
+            orderNumber: ord.orderNumber,
+            rescueToken: ord.rescueToken,
+            contactLine: ord.contact,
+            companyLine: ord.companyOrInn,
+          });
+        }
+
+        const mergedOrders = mergeAuthenticatedAndDeviceOrders(
+          sessionOrders,
+          deviceOrders
+        );
+        setOrders(mergedOrders);
+        if (mergedOrders.length === 0) {
+          setShowLookupForm(true);
+        }
+      } catch (err) {
+        if (requestSeq !== loadSeqRef.current) {
+          return;
+        }
+        setStatusError(
+          err instanceof Error
+            ? err.message
+            : 'Ошибка загрузки данных личного кабинета'
+        );
+      } finally {
+        if (requestSeq === loadSeqRef.current) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [onNavigate, verifyAndConsumeMagicToken]
+  );
+
+  useEffect(() => {
+    void loadStoredOrders(magicToken);
+  }, [loadStoredOrders, magicToken]);
+
+  const executeRequestMagicLink = useCallback(
+    async (
+      rawEmail: string,
+      options?: { mode?: 'login' | 'reset'; revokeOtherSessions?: boolean }
+    ) => {
+      const cleanEmail = normalizeClientEmail(rawEmail);
+      if (!cleanEmail) {
+        setMagicRequestError(
+          'Укажите корректную почту (например, name@company.ru)'
+        );
+        return;
+      }
+
+      const effectiveMode =
+        options?.mode ?? (accessTab === 'access_reset' ? 'reset' : 'login');
+      const effectiveRevoke =
+        typeof options?.revokeOtherSessions === 'boolean'
+          ? options.revokeOtherSessions
+          : effectiveMode === 'reset'
+            ? revokeOtherSessionsOnReset
+            : false;
+
+      setIsRequestingMagic(true);
+      setMagicRequestError(null);
+      setStatusError(null);
+      setMagicDispatchResult(null);
+      try {
+        const result = await requestClientMagicLinkApi({
+          email: cleanEmail,
+          mode: effectiveMode,
+          revokeOtherSessions: effectiveRevoke,
+        });
+        setMagicDispatchResult({
+          email: result.email,
+          intent: result.intent,
+          revokeOtherSessions: result.revokeOtherSessions,
+          isNewRegistration: result.isNewRegistration,
+          deliveryMode: result.deliveryMode,
+          magicLinkPath: result.magicLinkPath,
+          magicLinkUrl: result.magicLinkUrl,
+        });
+      } catch (err) {
+        setMagicRequestError(
+          err instanceof Error
+            ? err.message
+            : 'Не удалось сформировать одноразовую magic-ссылку'
+        );
+      } finally {
+        setIsRequestingMagic(false);
+      }
+    },
+    [accessTab, revokeOtherSessionsOnReset]
+  );
+
+  const handleMagicLinkSubmit = useCallback(
+    (e: FormEvent) => {
+      e.preventDefault();
+      void executeRequestMagicLink(magicEmailInput);
+    },
+    [executeRequestMagicLink, magicEmailInput]
+  );
+
+  const handleOpenPreviewMagicLink = useCallback(() => {
+    const extracted = extractMagicTokenFromCabinetHref(
+      magicDispatchResult?.magicLinkPath
+    );
+    if (!extracted.token) return;
+    // Переходим по типизированному маршруту `PlatformRoute` — `App.tsx` передаст `magicToken` в контроллер
+    onNavigate(
+      {
+        kind: 'cabinet',
+        ...(extracted.isResetPath ? { subroute: 'reset' as const } : {}),
+        magicToken: extracted.token,
+      },
+      { replace: true }
+    );
+  }, [magicDispatchResult?.magicLinkPath, onNavigate]);
+
+  const handleIssueCrossDeviceMagicLink = useCallback(async () => {
+    if (!clientAccount?.email || isIssuingCrossDeviceLink) return;
+    setIsIssuingCrossDeviceLink(true);
+    setStatusError(null);
+    try {
+      const json = await requestClientMagicLinkApi({
+        email: clientAccount.email,
+        mode: 'login',
+        revokeOtherSessions: false,
+      });
+      if (json.magicLinkUrl && json.magicLinkPath) {
+        let copied = false;
+        try {
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(json.magicLinkUrl);
+            copied = true;
+          }
+        } catch {
+          copied = false;
+        }
+        setCrossDeviceLink({
+          magicLinkUrl: json.magicLinkUrl,
+          magicLinkPath: json.magicLinkPath,
+          copied,
+        });
+      } else {
+        setAuthBanner(
+          `Одноразовая ссылка для входа отправлена на ${clientAccount.email}`
+        );
+      }
+    } catch (err) {
+      setStatusError(
+        err instanceof Error ? err.message : 'Ошибка выпуска ссылки входа'
+      );
+    } finally {
+      setIsIssuingCrossDeviceLink(false);
+    }
+  }, [clientAccount?.email, isIssuingCrossDeviceLink]);
+
+  const handleBindAnonymousOrdersToEmail = useCallback(
+    async (e: FormEvent) => {
+      e.preventDefault();
+      if (isBindingEmail || orders.length === 0) return;
+      const cleanEmail = normalizeClientEmail(bindEmailInput);
+      if (!cleanEmail) {
+        setBindEmailError('Укажите корректную почту (например, name@company.ru)');
+        return;
+      }
+
+      setIsBindingEmail(true);
+      setBindEmailError(null);
+      try {
+        const json = await bindClientEmailApi({
+          email: cleanEmail,
+          items: orders.map((o) => ({
+            orderNumber: o.orderNumber,
+            rescueToken: o.rescueToken,
+          })),
+        });
+        const nextOrders = Array.isArray(json.orders) ? json.orders : orders;
+        for (const ord of nextOrders) {
+          upsertClientCabinetEntry({
+            orderNumber: ord.orderNumber,
+            rescueToken: ord.rescueToken,
+            contactLine: ord.contact,
+            companyLine: ord.companyOrInn,
+          });
+        }
+        if (json.legalProfiles) {
+          setLegalProfiles(json.legalProfiles);
+        }
+        let boundAccount = json.account ?? null;
+        if (
+          boundAccount &&
+          (deviceAvatarPrefs.photoDataUrl || deviceAvatarPrefs.presetId)
+        ) {
+          try {
+            boundAccount = await updateClientAvatarApi({
+              ...(deviceAvatarPrefs.photoDataUrl
+                ? { dataBase64: deviceAvatarPrefs.photoDataUrl }
+                : {}),
+              ...(deviceAvatarPrefs.presetId
+                ? { avatarPresetId: deviceAvatarPrefs.presetId }
+                : {}),
+            });
+            const cleared = { presetId: null, photoDataUrl: null };
+            setDeviceAvatarPrefs(cleared);
+            writeDeviceAvatarPreferences(cleared);
+          } catch {
+            // Non-fatal sync
+          }
+        }
+        setClientAccount(boundAccount);
+        setOrders(nextOrders);
+        setBindEmailInput('');
+        setAuthBanner(
+          `Автоматическая регистрация завершена: заказы привязаны к ${cleanEmail}`
+        );
+      } catch (err) {
+        setBindEmailError(
+          err instanceof Error ? err.message : 'Ошибка привязки почты'
+        );
+      } finally {
+        setIsBindingEmail(false);
+      }
+    },
+    [bindEmailInput, deviceAvatarPrefs, isBindingEmail, orders]
+  );
+
+  const handleLogoutClientSession = useCallback(async () => {
+    try {
+      await logoutClientSessionApi();
+    } catch {
+      // Локальная очистка выполняется в любом случае
+    }
+    const existingLocal = readClientCabinetEntries();
+    for (const entry of existingLocal) {
+      removeClientCabinetEntry(entry.orderNumber);
+    }
+    for (const ord of orders) {
+      removeClientCabinetEntry(ord.orderNumber);
+    }
+    setClientAccount(null);
+    setOrders([]);
+    setCrossDeviceLink(null);
+    setAuthBanner(null);
+    setMagicDispatchResult(null);
+    setAccessTab('magic_email');
+    setShowLookupForm(true);
+    if (subroute === 'reset') {
+      onNavigate({ kind: 'cabinet' }, { replace: true });
+    }
+  }, [onNavigate, orders, subroute]);
+
+  const executeOrderLookup = useCallback(
+    async (rawOrderNum: string, rawVerifier: string) => {
+      const cleanOrder = rawOrderNum.trim().toUpperCase();
+      const cleanVerifier = rawVerifier.trim();
+      if (!cleanOrder || !cleanVerifier) {
+        setLookupError(
+          'Укажите номер заказа (например, FM-2510) и телефон или ИНН'
+        );
+        return;
+      }
+
+      setIsLookingUp(true);
+      setLookupError(null);
+      try {
+        const foundOrder = await lookupSingleCabinetOrderApi({
+          orderNumber: cleanOrder,
+          verifier: cleanVerifier,
+        });
+        upsertClientCabinetEntry({
+          orderNumber: foundOrder.orderNumber,
+          rescueToken: foundOrder.rescueToken,
+          contactLine: foundOrder.contact,
+          companyLine: foundOrder.companyOrInn,
+        });
+
+        setOrders((prev) => [
+          foundOrder,
+          ...prev.filter((o) => o.orderNumber !== foundOrder.orderNumber),
+        ]);
+        if (foundOrder.legalProfiles) {
+          setLegalProfiles(foundOrder.legalProfiles);
+        }
+        setOrderNumberInput('');
+        setVerifierInput('');
+        setShowLookupForm(false);
+        if (subroute === 'reset') {
+          onNavigate({ kind: 'cabinet' }, { replace: true });
+        }
+      } catch (err) {
+        setLookupError(
+          err instanceof Error ? err.message : 'Не удалось подключить заказ'
+        );
+      } finally {
+        setIsLookingUp(false);
+      }
+    },
+    [onNavigate, subroute]
+  );
+
+  const handleLookupSubmit = useCallback(
+    (e: FormEvent) => {
+      e.preventDefault();
+      void executeOrderLookup(orderNumberInput, verifierInput);
+    },
+    [executeOrderLookup, orderNumberInput, verifierInput]
+  );
+
+  const handleDeliveryPreferencesUpdate = useCallback(
+    async (
+      order: ClientCabinetOrderSummary,
+      nextChannel: ClientDeliveryChannel,
+      nextDetail?: string
+    ) => {
+      const isSameChannel = order.preferredDeliveryChannel === nextChannel;
+      const isSameDetail =
+        nextDetail === undefined ||
+        (order.preferredDeliveryDetail ?? '') === nextDetail;
+      if (isSameChannel && isSameDetail) return;
+
+      if (nextChannel === 'email' && nextDetail !== undefined) {
+        if (!validateDeliveryEmail(nextDetail)) {
+          setStatusError('Укажите корректный e-mail для отправки готового ролика');
+          return;
+        }
+      }
+
+      setIsSavingPrefsFor(order.orderNumber);
+      setStatusError(null);
+      try {
+        const updated = await updateCabinetOrderPreferencesApi({
+          orderNumber: order.orderNumber,
+          rescueToken: order.rescueToken,
+          preferredDeliveryChannel: nextChannel,
+          ...(nextDetail !== undefined
+            ? { preferredDeliveryDetail: nextDetail }
+            : {}),
+        });
+        setOrders((prev) =>
+          prev.map((o) => (o.orderNumber === updated.orderNumber ? updated : o))
+        );
+      } catch (err) {
+        setStatusError(
+          err instanceof Error ? err.message : 'Не удалось обновить канал выдачи'
+        );
+      } finally {
+        setIsSavingPrefsFor(null);
+      }
+    },
+    []
+  );
+
+  const openInnEditorForOrder = useCallback((order: ClientCabinetOrderSummary) => {
+    const parsed = parseCompanyNameAndInn(order.companyOrInn || '');
+    setEditingInnOrderNum(order.orderNumber);
+    setInnCompanyNameDraft(parsed.companyName);
+    setInnDigitsDraft(parsed.companyInn);
+    setInnSaveError(null);
+  }, []);
+
+  const handleSaveCompanyInnForOrder = useCallback(
+    async (order: ClientCabinetOrderSummary) => {
+      const cleanName = innCompanyNameDraft.trim();
+      const innInfo = inspectInnDigits(innDigitsDraft);
+      if (cleanName.length < 2) {
+        setInnSaveError('Укажите название компании или ИП (от 2 символов)');
+        return;
+      }
+      if (!innInfo.isCompleteLength || !innInfo.checksumValid) {
+        setInnSaveError(
+          innInfo.statusMessage ??
+            'Проверьте ИНН (10 цифр для организации или 12 цифр для ИП)'
+        );
+        return;
+      }
+
+      setIsSavingPrefsFor(order.orderNumber);
+      setInnSaveError(null);
+      try {
+        const updated = await updateCabinetOrderPreferencesApi({
+          orderNumber: order.orderNumber,
+          rescueToken: order.rescueToken,
+          companyName: cleanName,
+          companyInn: innInfo.digits,
+        });
+        upsertClientCabinetEntry({
+          orderNumber: updated.orderNumber,
+          rescueToken: updated.rescueToken,
+          contactLine: updated.contact,
+          companyLine: updated.companyOrInn,
+        });
+        setOrders((prev) =>
+          prev.map((o) => (o.orderNumber === updated.orderNumber ? updated : o))
+        );
+        setEditingInnOrderNum(null);
+      } catch (err) {
+        setInnSaveError(
+          err instanceof Error ? err.message : 'Ошибка сохранения реквизитов'
+        );
+      } finally {
+        setIsSavingPrefsFor(null);
+      }
+    },
+    [innCompanyNameDraft, innDigitsDraft]
+  );
+
+  const handleClientFileSelected = useCallback(
+    async (order: ClientCabinetOrderSummary, file: File | null) => {
+      if (!file) return;
+      if (file.size > 7 * 1024 * 1024) {
+        setUploadFeedbackByOrder((prev) => ({
+          ...prev,
+          [order.orderNumber]: {
+            kind: 'error',
+            text: 'Файл слишком большой — выберите документ или аудио до 7 МБ',
+          },
+        }));
+        return;
+      }
+
+      setUploadingOrderNum(order.orderNumber);
+      setUploadFeedbackByOrder((prev) => {
+        const next = { ...prev };
+        delete next[order.orderNumber];
+        return next;
+      });
+
+      try {
+        const dataBase64 = await readFileAsBase64Payload(file);
+        const note = (uploadNoteByOrder[order.orderNumber] ?? '').trim();
+        const updated = await uploadClientOrderAttachmentApi({
+          orderNumber: order.orderNumber,
+          rescueToken: order.rescueToken,
+          fileName: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          dataBase64,
+          note,
+        });
+        setOrders((prev) =>
+          prev.map((o) => (o.orderNumber === updated.orderNumber ? updated : o))
+        );
+        setUploadNoteByOrder((prev) => ({ ...prev, [order.orderNumber]: '' }));
+        setUploadFeedbackByOrder((prev) => ({
+          ...prev,
+          [order.orderNumber]: {
+            kind: 'ok',
+            text: `Файл «${file.name}» добавлен к заказу и виден продюсеру.`,
+          },
+        }));
+      } catch (err) {
+        setUploadFeedbackByOrder((prev) => ({
+          ...prev,
+          [order.orderNumber]: {
+            kind: 'error',
+            text:
+              err instanceof Error ? err.message : 'Ошибка загрузки файла к заказу',
+          },
+        }));
+      } finally {
+        setUploadingOrderNum(null);
+      }
+    },
+    [uploadNoteByOrder]
+  );
+
+  const handleRepeatOrder = useCallback(
+    (order: ClientCabinetOrderSummary) => {
+      orderDraftStore.prepareProductionOrder({
+        briefHint: order.briefText,
+        returnPath: '/cabinet',
+      });
+      const parsedCompany = parseCompanyNameAndInn(order.companyOrInn || '');
+      const parsedDelivery = parseDeliveryDetailSelection(
+        order.preferredDeliveryChannel,
+        order.preferredDeliveryDetail
+      );
+      orderDraftStore.updateDraft({
+        contactLine: order.contact,
+        companyLine: order.companyOrInn,
+        companyName: parsedCompany.companyName,
+        companyInn: parsedCompany.companyInn,
+        preferredDeliveryChannel: order.preferredDeliveryChannel,
+        deliveryMessenger: parsedDelivery.messenger,
+        deliveryMessengerOther: parsedDelivery.messengerOther,
+        deliveryCloud: parsedDelivery.cloud,
+        deliveryCloudOther: parsedDelivery.cloudOther,
+        deliveryEmail: parsedDelivery.email,
+        cabinetEmail: clientAccount?.email || order.clientEmail || '',
+        wantsInvoiceNow: Boolean(parsedCompany.companyInn),
+      });
+      onNavigate({ kind: 'order' });
+    },
+    [clientAccount?.email, onNavigate]
+  );
+
+  const handleForgetOrderFromDevice = useCallback((orderNumber: string) => {
+    removeClientCabinetEntry(orderNumber);
+    setOrders((prev) => {
+      const next = prev.filter((o) => o.orderNumber !== orderNumber);
+      if (next.length === 0) {
+        setShowLookupForm(true);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleClientApproveScript = useCallback(
+    async (order: ClientCabinetOrderSummary, conceptId?: string) => {
+      setSubmittingApprovalOrderNum(order.orderNumber);
+      setStatusError(null);
+      try {
+        const updated = await submitClientScriptDecisionApi({
+          orderNumber: order.orderNumber,
+          rescueToken: order.rescueToken,
+          action: 'approve',
+          conceptId,
+        });
+        setOrders((prev) =>
+          prev.map((o) => (o.orderNumber === updated.orderNumber ? updated : o))
+        );
+        setAuthBanner(
+          `Сценарий по заказу #${updated.orderNumber} утверждён — ролик передан в студийное производство.`
+        );
+      } catch (err) {
+        setStatusError(
+          err instanceof Error
+            ? err.message
+            : 'Не удалось утвердить сценарий в производство'
+        );
+      } finally {
+        setSubmittingApprovalOrderNum(null);
+      }
+    },
+    []
+  );
+
+  const handleClientRequestScriptChanges = useCallback(
+    async (order: ClientCabinetOrderSummary, comment: string) => {
+      setSubmittingApprovalOrderNum(order.orderNumber);
+      setStatusError(null);
+      try {
+        const updated = await submitClientScriptDecisionApi({
+          orderNumber: order.orderNumber,
+          rescueToken: order.rescueToken,
+          action: 'request_changes',
+          comment,
+        });
+        setOrders((prev) =>
+          prev.map((o) => (o.orderNumber === updated.orderNumber ? updated : o))
+        );
+        setAuthBanner(
+          `Замечание к сценарию #${updated.orderNumber} отправлено продюсеру — готовим обновлённую версию.`
+        );
+      } catch (err) {
+        setStatusError(
+          err instanceof Error
+            ? err.message
+            : 'Не удалось отправить замечание к сценарию'
+        );
+      } finally {
+        setSubmittingApprovalOrderNum(null);
+      }
+    },
+    []
+  );
+
+  const handleClientAcceptSpot = useCallback(
+    async (
+      order: ClientCabinetOrderSummary,
+      deliverableId?: string | null
+    ) => {
+      setSubmittingApprovalOrderNum(order.orderNumber);
+      setStatusError(null);
+      try {
+        const { order: updated } = await submitClientSpotDecisionApi({
+          orderNumber: order.orderNumber,
+          rescueToken: order.rescueToken,
+          action: 'accept',
+          deliverableId: deliverableId ?? undefined,
+        });
+        setOrders((prev) =>
+          prev.map((o) => (o.orderNumber === updated.orderNumber ? updated : o))
+        );
+        setAuthBanner(
+          `Готовый ролик по заказу #${updated.orderNumber} официально принят. Эфирный мастер WAV и паспорт прав доступны в карточке.`
+        );
+      } catch (err) {
+        setStatusError(
+          err instanceof Error ? err.message : 'Не удалось зафиксировать приёмку ролика'
+        );
+      } finally {
+        setSubmittingApprovalOrderNum(null);
+      }
+    },
+    []
+  );
+
+  const handleClientRequestSpotRevision = useCallback(
+    async (
+      order: ClientCabinetOrderSummary,
+      params: {
+        kind: SpotRevisionKind;
+        timecodeSec: number | null;
+        comment: string;
+      }
+    ) => {
+      setSubmittingApprovalOrderNum(order.orderNumber);
+      setStatusError(null);
+      try {
+        const { order: updated, routedTo } = await submitClientSpotDecisionApi({
+          orderNumber: order.orderNumber,
+          rescueToken: order.rescueToken,
+          action: 'request_revision',
+          kind: params.kind,
+          timecodeSec: params.timecodeSec,
+          comment: params.comment,
+        });
+        setOrders((prev) =>
+          prev.map((o) => (o.orderNumber === updated.orderNumber ? updated : o))
+        );
+        setAuthBanner(
+          routedTo === 'service_round'
+            ? `Поправка по заказу #${updated.orderNumber} принята в работу в рамках включённого сервисного раунда (без доплат и новых счетов).`
+            : `Запрос по заказу #${updated.orderNumber} передан продюсеру для быстрого согласования.`
+        );
+      } catch (err) {
+        setStatusError(
+          err instanceof Error
+            ? err.message
+            : 'Не удалось отправить запрос на доводку ролика'
+        );
+      } finally {
+        setSubmittingApprovalOrderNum(null);
+      }
+    },
+    []
+  );
+
+  const handleSelectAvatarPreset = useCallback(
+    async (presetId: ClientAvatarPresetId) => {
+      setAvatarError(null);
+      if (clientAccount) {
+        setIsSavingAvatar(true);
+        try {
+          const updatedAccount = await updateClientAvatarApi({
+            avatarPresetId: presetId,
+            ...(clientAccount.avatarUrl ? { clearPhoto: true } : {}),
+          });
+          setClientAccount(updatedAccount);
+        } catch (err) {
+          setAvatarError(
+            err instanceof Error
+              ? err.message
+              : 'Не удалось сменить стиль абстрактного аватара'
+          );
+        } finally {
+          setIsSavingAvatar(false);
+        }
+        return;
+      }
+
+      const nextPrefs: DeviceAvatarPreferences = {
+        presetId,
+        photoDataUrl: null,
+      };
+      setDeviceAvatarPrefs(nextPrefs);
+      writeDeviceAvatarPreferences(nextPrefs);
+    },
+    [clientAccount]
+  );
+
+  const handleUploadAvatarPhoto = useCallback(
+    async (file: File) => {
+      setAvatarError(null);
+      if (!/^image\/(?:jpeg|png|webp|avif)$/i.test(file.type)) {
+        setAvatarError('Выберите изображение в формате JPEG, PNG, WebP или AVIF');
+        return;
+      }
+      if (file.size > 4 * 1024 * 1024) {
+        setAvatarError('Размер фотографии не должен превышать 4 МБ');
+        return;
+      }
+
+      setIsSavingAvatar(true);
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        if (clientAccount) {
+          const updatedAccount = await updateClientAvatarApi({
+            dataBase64: dataUrl,
+          });
+          setClientAccount(updatedAccount);
+        } else {
+          const nextPrefs: DeviceAvatarPreferences = {
+            presetId: deviceAvatarPrefs.presetId,
+            photoDataUrl: dataUrl,
+          };
+          setDeviceAvatarPrefs(nextPrefs);
+          writeDeviceAvatarPreferences(nextPrefs);
+        }
+      } catch (err) {
+        setAvatarError(
+          err instanceof Error ? err.message : 'Не удалось загрузить фото профиля'
+        );
+      } finally {
+        setIsSavingAvatar(false);
+      }
+    },
+    [clientAccount, deviceAvatarPrefs.presetId]
+  );
+
+  const handleRemoveAvatarPhoto = useCallback(async () => {
+    setAvatarError(null);
+    if (clientAccount) {
+      setIsSavingAvatar(true);
+      try {
+        const updatedAccount = await deleteClientAvatarPhotoApi();
+        setClientAccount(updatedAccount);
+      } catch (err) {
+        setAvatarError(
+          err instanceof Error ? err.message : 'Не удалось удалить фото профиля'
+        );
+      } finally {
+        setIsSavingAvatar(false);
+      }
+      return;
+    }
+
+    const nextPrefs: DeviceAvatarPreferences = {
+      presetId: deviceAvatarPrefs.presetId,
+      photoDataUrl: null,
+    };
+    setDeviceAvatarPrefs(nextPrefs);
+    writeDeviceAvatarPreferences(nextPrefs);
+  }, [clientAccount, deviceAvatarPrefs.presetId]);
+
+  const profileAvatar = useMemo(() => {
+    const primaryOrder = orders[0];
+    return resolveClientAvatarModel({
+      displayName: clientAccount?.displayName || null,
+      contactLine: primaryOrder?.contact || null,
+      companyOrInn:
+        clientAccount?.defaultCompanyOrInn || primaryOrder?.companyOrInn || null,
+      email:
+        clientAccount?.email ||
+        bindEmailInput.trim() ||
+        primaryOrder?.clientEmail ||
+        null,
+      avatarUrl: clientAccount?.avatarUrl ?? null,
+      localPreviewDataUrl: clientAccount ? null : deviceAvatarPrefs.photoDataUrl,
+      avatarPresetId: clientAccount
+        ? clientAccount.avatarPresetId
+        : deviceAvatarPrefs.presetId,
+    });
+  }, [bindEmailInput, clientAccount, deviceAvatarPrefs, orders]);
+
+  const innDraftInspection = useMemo(
+    () => inspectInnDigits(innDigitsDraft),
+    [innDigitsDraft]
+  );
+
+  const lifecycleState = useMemo(
+    () =>
+      deriveCabinetLifecycleState({
+        isLoading,
+        isVerifyingMagic,
+        hasAuthenticatedAccount: Boolean(clientAccount),
+        ordersCount: orders.length,
+      }),
+    [clientAccount, isLoading, isVerifyingMagic, orders.length]
+  );
+
+  const partitionedOrders = useMemo(
+    () => partitionCabinetOrders(orders),
+    [orders]
+  );
+
+  const historyStatusSummary = useMemo(
+    () => summarizeCabinetHistoryStatuses(orders),
+    [orders]
+  );
+
+  const filteredHistoryOrders = useMemo(
+    () =>
+      filterCabinetHistoryOrders(orders, {
+        searchQuery: historySearchQuery,
+        onlyWithMasters: historyOnlyWithMasters,
+        statusFilter: historyStatusFilter,
+      }),
+    [historyOnlyWithMasters, historySearchQuery, historyStatusFilter, orders]
+  );
+
+  return {
+    lifecycleState,
+    orders,
+    activeOrders: partitionedOrders.activeOrders,
+    historyOrders: partitionedOrders.historyOrders,
+    historyStatusSummary,
+    totalHistoryMastersCount: historyStatusSummary.totalMasterFilesCount,
+    filteredHistoryOrders,
+    workspaceFilter,
+    selectWorkspaceFilter,
+    historyStatusFilter,
+    setHistoryStatusFilter,
+    historySearchQuery,
+    setHistorySearchQuery,
+    historyOnlyWithMasters,
+    setHistoryOnlyWithMasters,
+    resetHistoryFilters,
+    clientAccount,
+    profileAvatar,
+    isAvatarEditorOpen,
+    setIsAvatarEditorOpen,
+    isSavingAvatar,
+    avatarError,
+    handleSelectAvatarPreset,
+    handleUploadAvatarPhoto,
+    handleRemoveAvatarPhoto,
+    legalProfiles,
+    isLoading,
+    statusError,
+    setStatusError,
+    authBanner,
+    setAuthBanner,
+    showLookupForm,
+    setShowLookupForm,
+    accessTab,
+    selectAccessTab,
+    openAccessResetFlow,
+    magicEmailInput,
+    setMagicEmailInput,
+    revokeOtherSessionsOnReset,
+    setRevokeOtherSessionsOnReset,
+    isRequestingMagic,
+    magicRequestError,
+    setMagicRequestError,
+    magicDispatchResult,
+    isVerifyingMagic,
+    crossDeviceLink,
+    setCrossDeviceLink,
+    isIssuingCrossDeviceLink,
+    bindEmailInput,
+    setBindEmailInput,
+    isBindingEmail,
+    bindEmailError,
+    setBindEmailError,
+    orderNumberInput,
+    setOrderNumberInput,
+    verifierInput,
+    setVerifierInput,
+    lookupError,
+    isLookingUp,
+    deliveryDraftByOrder,
+    setDeliveryDraftByOrder,
+    editingInnOrderNum,
+    setEditingInnOrderNum,
+    innCompanyNameDraft,
+    setInnCompanyNameDraft,
+    innDigitsDraft,
+    setInnDigitsDraft,
+    innDraftInspection,
+    innSaveError,
+    isSavingPrefsFor,
+    uploadNoteByOrder,
+    setUploadNoteByOrder,
+    uploadingOrderNum,
+    uploadFeedbackByOrder,
+    invoiceModalOrder,
+    setInvoiceModalOrder,
+    reloadCabinet: () => loadStoredOrders(),
+    executeRequestMagicLink,
+    handleMagicLinkSubmit,
+    handleOpenPreviewMagicLink,
+    handleIssueCrossDeviceMagicLink,
+    handleBindAnonymousOrdersToEmail,
+    handleLogoutClientSession,
+    executeOrderLookup,
+    handleLookupSubmit,
+    handleDeliveryPreferencesUpdate,
+    openInnEditorForOrder,
+    handleSaveCompanyInnForOrder,
+    handleClientFileSelected,
+    handleRepeatOrder,
+    handleForgetOrderFromDevice,
+    submittingApprovalOrderNum,
+    handleClientApproveScript,
+    handleClientRequestScriptChanges,
+    handleClientAcceptSpot,
+    handleClientRequestSpotRevision,
+  };
+}

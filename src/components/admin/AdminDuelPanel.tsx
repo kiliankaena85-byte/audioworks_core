@@ -206,12 +206,15 @@ export function AdminDuelPanel({
     <div className="space-y-6">
       {/* Shared Brief & Section Header Card */}
       <section className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-6 sm:p-8 space-y-5">
-        <div>
+        <div className="space-y-1">
+          <p className="text-xs font-semibold text-[#FF4820]">
+            Экран 4 главной страницы · Секция «Один бриф на 15 секунд» (#duel)
+          </p>
           <h2 className="text-base font-bold text-[#111111] dark:text-[#F4F3EF]">
             Общий бриф и заголовок секции «Дуэль 15 секунд»
           </h2>
           <p className="text-xs text-[#111111]/60 dark:text-[#F4F3EF]/60">
-            Настройте вводную задачу клиента, на которой посетитель сравнивает типовой ролик и режиссуру FMWorks.
+            Аудиофайлы, загруженные ниже для Стороны А и Стороны Б, звучат исключительно в блоке слепого сравнения на 4-м экране (для первого экрана используйте вкладку «Первый экран (Hero)»).
           </p>
         </div>
 

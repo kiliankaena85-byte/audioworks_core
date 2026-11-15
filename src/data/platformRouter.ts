@@ -38,6 +38,8 @@ export type TopNavSectionKey =
   | 'approach'
   | 'faq';
 
+export type CabinetSubrouteMode = 'orders' | 'history' | 'reset';
+
 export type PlatformRoute =
   | { kind: 'home'; scrollAnchor?: string }
   | { kind: 'hot-air' }
@@ -50,7 +52,15 @@ export type PlatformRoute =
   | { kind: 'mistake-detail'; articleSlug: string }
   | { kind: 'faq' }
   | { kind: 'order' }
-  | { kind: 'cabinet' }
+  | {
+      kind: 'cabinet';
+      subroute?: CabinetSubrouteMode;
+      magicToken?: string;
+    }
+  | {
+      kind: 'sound-drop';
+      dropToken?: string;
+    }
   | { kind: 'admin' };
 
 export interface MainPlatformNavItem {
@@ -89,6 +99,25 @@ function sanitizeSlugSegment(raw: string): string {
 }
 
 /**
+ * Очищает токен magic-ссылки из URL без изменения регистра символов (base64url чувствителен к регистру).
+ */
+export function sanitizeCabinetMagicToken(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.length < 12 || trimmed.length > 512) return undefined;
+  if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) return undefined;
+  return trimmed;
+}
+
+export function sanitizeSoundDropToken(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.length < 16 || trimmed.length > 1024) return undefined;
+  if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) return undefined;
+  return trimmed;
+}
+
+/**
  * Разбирает URL браузера (включая обратную совместимость со старыми хеш-якорями и query-параметрами)
  * в строго типизированный маршрут многостраничной платформы FMWorks.
  */
@@ -111,6 +140,17 @@ export function parsePlatformRoute(
   }
 
   if (
+    normalizedPath === '/sound-drop' ||
+    normalizedPath.startsWith('/sound-drop/')
+  ) {
+    const dropToken = sanitizeSoundDropToken(params.get('token'));
+    return {
+      kind: 'sound-drop',
+      ...(dropToken ? { dropToken } : {}),
+    };
+  }
+
+  if (
     normalizedPath === '/order' ||
     normalizedPath === '/booking' ||
     normalizedPath === '/checkout'
@@ -118,8 +158,39 @@ export function parsePlatformRoute(
     return { kind: 'order' };
   }
 
-  if (normalizedPath === '/cabinet' || normalizedPath === '/account') {
-    return { kind: 'cabinet' };
+  if (
+    normalizedPath === '/cabinet' ||
+    normalizedPath === '/account' ||
+    normalizedPath === '/cabinet/history' ||
+    normalizedPath === '/cabinet/archive' ||
+    normalizedPath === '/cabinet/reset' ||
+    normalizedPath === '/cabinet/recovery'
+  ) {
+    const modeParam = (params.get('mode') ?? '').trim().toLowerCase();
+    const isResetSubroute =
+      normalizedPath === '/cabinet/reset' ||
+      normalizedPath === '/cabinet/recovery' ||
+      modeParam === 'reset' ||
+      modeParam === 'recovery' ||
+      params.get('reset') === '1' ||
+      normalizedHash === 'reset';
+    const isHistorySubroute =
+      !isResetSubroute &&
+      (normalizedPath === '/cabinet/history' ||
+        normalizedPath === '/cabinet/archive' ||
+        modeParam === 'history' ||
+        normalizedHash === 'history' ||
+        normalizedHash === 'cabinet-history');
+    const magicToken = sanitizeCabinetMagicToken(params.get('magic'));
+    return {
+      kind: 'cabinet',
+      ...(isResetSubroute
+        ? { subroute: 'reset' as const }
+        : isHistorySubroute
+          ? { subroute: 'history' as const }
+          : {}),
+      ...(magicToken ? { magicToken } : {}),
+    };
   }
 
   if (normalizedPath === '/hot-air') {
@@ -208,6 +279,15 @@ export function parsePlatformRoute(
   if (normalizedHash === 'approach') {
     return { kind: 'approach' };
   }
+  if (normalizedHash === 'cabinet') {
+    return { kind: 'cabinet' };
+  }
+  if (normalizedHash === 'cabinet-history') {
+    return { kind: 'cabinet', subroute: 'history' };
+  }
+  if (normalizedHash === 'cabinet-reset') {
+    return { kind: 'cabinet', subroute: 'reset' };
+  }
   if (normalizedHash === 'duel' || normalizedHash === 'testimonials') {
     return { kind: 'home', scrollAnchor: normalizedHash };
   }
@@ -242,8 +322,24 @@ export function buildPlatformPath(route: PlatformRoute): string {
       return '/faq';
     case 'order':
       return '/order';
-    case 'cabinet':
-      return '/cabinet';
+    case 'cabinet': {
+      const basePath =
+        route.subroute === 'reset'
+          ? '/cabinet/reset'
+          : route.subroute === 'history'
+            ? '/cabinet/history'
+            : '/cabinet';
+      const cleanMagic = sanitizeCabinetMagicToken(route.magicToken);
+      return cleanMagic
+        ? `${basePath}?magic=${encodeURIComponent(cleanMagic)}`
+        : basePath;
+    }
+    case 'sound-drop': {
+      const cleanDrop = sanitizeSoundDropToken(route.dropToken);
+      return cleanDrop
+        ? `/sound-drop?token=${encodeURIComponent(cleanDrop)}`
+        : '/sound-drop';
+    }
     case 'admin':
       return '/admin';
   }
@@ -274,6 +370,7 @@ export function resolveActiveTopNavSection(
       return 'faq';
     case 'order':
     case 'cabinet':
+    case 'sound-drop':
     case 'admin':
       return null;
   }
@@ -488,9 +585,18 @@ export function resolveRouteSeoMeta(
           };
     case 'cabinet':
       return {
-        title: 'Личный кабинет заказов — FMWorks',
+        title:
+          route.subroute === 'reset'
+            ? 'Сброс и восстановление доступа в личный кабинет — FMWorks'
+            : route.subroute === 'history'
+              ? 'История заказов и мастер-файлы — Личный кабинет FMWorks'
+              : 'Личный кабинет заказов — FMWorks',
         description:
-          'Отслеживание статуса аудиороликов, загрузка материалов, скачивание готовых файлов и счетов на оплату.',
+          route.subroute === 'reset'
+            ? 'Беспарольный сброс доступа к заказам и счетам по одноразовой magic-ссылке на вашу электронную почту.'
+            : route.subroute === 'history'
+              ? 'Архив прошлых проектов студии FMWorks с мгновенным скачиванием готовых мастер-файлов WAV, сценариев и закрывающих документов.'
+              : 'Отслеживание статуса аудиороликов, загрузка материалов, скачивание готовых файлов и счетов на оплату.',
         canonicalPath: '/cabinet',
         schemaType: 'WebSite',
         noindex: true,
@@ -498,6 +604,15 @@ export function resolveRouteSeoMeta(
           { name: 'Главная', path: '/' },
           { name: 'Личный кабинет', path: '/cabinet' },
         ],
+      };
+    case 'sound-drop':
+      return {
+        title: 'Прямая сдача мастер-файла продюсеру — Студия FMWorks',
+        description:
+          'Служебный шлюз прямой сдачи готового аудиофайла WAV/MP3 на проверку продюсеру студии FMWorks.',
+        canonicalPath: '/sound-drop',
+        schemaType: 'WebSite',
+        noindex: true,
       };
     case 'admin':
       return airtimeEnabled

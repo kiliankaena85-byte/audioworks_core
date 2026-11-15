@@ -27,6 +27,10 @@ import type {
   OrderDeliverableFile,
 } from './clientCabinetHelpers.ts';
 import { maskContactChannelSummary } from '../security/rfLegalCompliance.ts';
+import {
+  ensureOrderApprovalWorkflow,
+  type OrderApprovalWorkflow,
+} from './productionApprovalWorkflow.ts';
 
 function formatRubCompact(amount: number): string {
   return `${Math.round(amount)
@@ -352,6 +356,7 @@ export interface CrmOrderRecord {
   pdnConsentAcceptedAt?: string | null;
   pdnAnonymizedAt?: string | null;
   slaState?: OrderSlaTrackingState;
+  approvalWorkflow?: OrderApprovalWorkflow;
   delivery: {
     crmRegistry: 'saved';
     telegram: ChannelDeliveryStatus;
@@ -1158,6 +1163,10 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
           mimeType: 'audio/wav',
           sizeBytes: 2_648_000,
           uploadedAt: isoAt(-60),
+          versionCode: 'master',
+          versionStage: 'master',
+          versionNote:
+            'Готовый эфирный ролик клиента (20 сек, −14 LUFS), проверен медицинский дисклеймер',
           staticAssetUrl: 'Audioworks_75c6023f.wav',
         },
       ],
@@ -1267,16 +1276,38 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
           mimeType: 'audio/wav',
           sizeBytes: 2_648_000,
           uploadedAt: isoAt(-360),
+          versionCode: 'master',
+          versionStage: 'master',
+          versionNote:
+            'Утверждённый эфирный мастер WAV 48 кГц / −14 LUFS с юридическим дисклеймером',
           staticAssetUrl: 'zerno_audioworks_15.wav',
         },
         {
-          id: 'deliv-seed-2854-backup',
-          title: 'Дубль для мессенджеров и соцсетей',
+          id: 'deliv-seed-2854-v2',
+          title: 'Итерация v2 — правка темпа и акцента концовки',
           kind: 'audio_master',
-          fileName: 'transflot_leasing_15s_promo.wav',
+          fileName: 'transflot_leasing_15s_v2.wav',
           mimeType: 'audio/wav',
-          sizeBytes: 2_890_000,
-          uploadedAt: isoAt(-355),
+          sizeBytes: 2_612_000,
+          uploadedAt: isoAt(-440),
+          versionCode: 'v2',
+          versionStage: 'revision',
+          versionNote:
+            'Уплотнён финал и выделена пауза перед условием одобрения по ИНН за 1 рабочий день',
+          staticAssetUrl: 'Audioworks_75c6023f.wav',
+        },
+        {
+          id: 'deliv-seed-2854-v1',
+          title: 'Итерация v1 — черновой дубль диктора',
+          kind: 'audio_master',
+          fileName: 'transflot_leasing_15s_v1.wav',
+          mimeType: 'audio/wav',
+          sizeBytes: 2_584_000,
+          uploadedAt: isoAt(-530),
+          versionCode: 'v1',
+          versionStage: 'draft',
+          versionNote:
+            'Первая сборка: баритон, спокойная деловая подача, акцент на авансе от 10%',
           staticAssetUrl: 'Audioworks_75c6023f.wav',
         },
       ],
@@ -1351,7 +1382,316 @@ export function createSeedCrmOrders(nowMs = Date.now()): CrmOrderRecord[] {
         },
       },
     },
+    {
+      id: 'crm-seed-completed-2418',
+      orderNumber: 'FM-2418',
+      createdAt: isoAt(-64_800),
+      updatedAt: isoAt(-60_480),
+      holdExpiresAt: isoAt(-64_560),
+      source: 'order_page',
+      checkoutMode: 'production_only',
+      stage: 'completed_ltv',
+      formatLabel: 'Игровой ролик / Мини-кино (25 сек) — 35 000 ₽',
+      totalBudgetRub: 35_000,
+      contact: '+7 925 310-88-42 · Дмитрий (отдел лизинга)',
+      clientEmail: 'director@transflot-leasing.ru',
+      detectedChannel: 'phone',
+      companyOrInn: 'АО «ТрансФлот Лизинг» · ИНН 7702070139',
+      innVerified: true,
+      briefText:
+        'Осеннее обновление автопарка тягачей и коммерческих фургонов для региональной логистики с нулевым удорожанием в первые 6 месяцев.',
+      hasVoiceRecording: false,
+      voiceDurationSec: 0,
+      attachedFileName: 'brief_autumn_fleet_2418.pdf',
+      producerNotes:
+        'Двухголосый игровой ролик сдан за 3 рабочих дня, закрывающие документы подписаны в Диадоке.',
+      preferredDeliveryChannel: 'cabinet',
+      preferredDeliveryDetail: '',
+      cloudDiskUrl: 'https://disk.yandex.ru/d/fmworks-transflot-2418',
+      deliverables: [
+        {
+          id: 'deliv-seed-2418-master',
+          title: 'Эфирный мастер-файл (WAV 48 кГц / −14 LUFS)',
+          kind: 'audio_master',
+          fileName: 'transflot_autumn_fleet_25s_master.wav',
+          mimeType: 'audio/wav',
+          sizeBytes: 2_707_838,
+          uploadedAt: isoAt(-60_500),
+          versionCode: 'master',
+          versionStage: 'master',
+          versionNote:
+            'Финальный эфирный мастер 25 сек (WAV 48 кГц / −14 LUFS), принят без замечаний',
+          staticAssetUrl: 'zerno_audioworks_15.wav',
+        },
+        {
+          id: 'deliv-seed-2418-v2',
+          title: 'Версия v2 — сведение диалога с интершумом',
+          kind: 'audio_master',
+          fileName: 'transflot_autumn_fleet_25s_v2.wav',
+          mimeType: 'audio/wav',
+          sizeBytes: 2_676_000,
+          uploadedAt: isoAt(-61_080),
+          versionCode: 'v2',
+          versionStage: 'revision',
+          versionNote:
+            'Добавлена акустика кабины тягача, выверена пауза перед условием 0% удорожания',
+          staticAssetUrl: 'Audioworks_75c6023f.wav',
+        },
+        {
+          id: 'deliv-seed-2418-v1',
+          title: 'Версия v1 — черновая читка двух голосов',
+          kind: 'audio_master',
+          fileName: 'transflot_autumn_fleet_25s_v1.wav',
+          mimeType: 'audio/wav',
+          sizeBytes: 2_640_000,
+          uploadedAt: isoAt(-61_800),
+          versionCode: 'v1',
+          versionStage: 'draft',
+          versionNote:
+            'Черновой дубль актёрского диалога для сверки интонации и хронометража 25 сек',
+          staticAssetUrl: 'Audioworks_75c6023f.wav',
+        },
+      ],
+      clientUploads: [],
+      compliance: {
+        trafficConfirmed: true,
+        fz38Checked: true,
+        rightsPassportIssued: true,
+        edoAndOrdRegistered: true,
+      },
+      mediaPlanSnapshot: null,
+      delivery: {
+        crmRegistry: 'saved',
+        telegram: {
+          state: 'delivered',
+          updatedAt: isoAt(-60_480),
+          httpStatus: 200,
+          detail: 'Проект закрыт и передан в архив клиента',
+        },
+        webhook: {
+          state: 'delivered',
+          updatedAt: isoAt(-60_480),
+          httpStatus: 200,
+          detail: 'Синхронизирован статус completed_ltv',
+        },
+      },
+    },
+    {
+      id: 'crm-seed-completed-2309',
+      orderNumber: 'FM-2309',
+      createdAt: isoAt(-132_480),
+      updatedAt: isoAt(-128_160),
+      holdExpiresAt: isoAt(-132_240),
+      source: 'order_page',
+      checkoutMode: 'production_only',
+      stage: 'completed_ltv',
+      formatLabel: 'Продакшн под ключ (20 сек) — 25 000 ₽',
+      totalBudgetRub: 25_000,
+      contact: '+7 925 310-88-42 · Дмитрий (отдел лизинга)',
+      clientEmail: 'director@transflot-leasing.ru',
+      detectedChannel: 'phone',
+      companyOrInn: 'АО «ТрансФлот Лизинг» · ИНН 7702070139',
+      innVerified: true,
+      briefText:
+        'Специальная программа лизинга дорожно-строительной спецтехники для подрядчиков по ИНН за 1 рабочий день без залога.',
+      hasVoiceRecording: false,
+      voiceDurationSec: 0,
+      attachedFileName: null,
+      producerNotes:
+        'Записан федеральный баритон, оформлен паспорт прав для региональной радиосети.',
+      preferredDeliveryChannel: 'email',
+      preferredDeliveryDetail: 'director@transflot-leasing.ru',
+      cloudDiskUrl: null,
+      deliverables: [
+        {
+          id: 'deliv-seed-2309-master',
+          title: 'Финальный мастер-ролик (WAV 48 кГц / −14 LUFS)',
+          kind: 'audio_master',
+          fileName: 'transflot_roadtech_20s_master.wav',
+          mimeType: 'audio/wav',
+          sizeBytes: 2_707_838,
+          uploadedAt: isoAt(-128_200),
+          versionCode: 'master',
+          versionStage: 'master',
+          versionNote:
+            'Финальный мастер 20 сек (WAV 48 кГц / −14 LUFS) с оформленным паспортом прав',
+          staticAssetUrl: 'Audioworks_75c6023f.wav',
+        },
+        {
+          id: 'deliv-seed-2309-v1',
+          title: 'Версия v1 — черновой дубль баритона',
+          kind: 'audio_master',
+          fileName: 'transflot_roadtech_20s_v1.wav',
+          mimeType: 'audio/wav',
+          sizeBytes: 2_618_000,
+          uploadedAt: isoAt(-128_860),
+          versionCode: 'v1',
+          versionStage: 'draft',
+          versionNote:
+            'Первая запись диктора без фоновой подложки для согласования подачи и темпа',
+          staticAssetUrl: 'zerno_audioworks_15.wav',
+        },
+      ],
+      clientUploads: [],
+      compliance: {
+        trafficConfirmed: true,
+        fz38Checked: true,
+        rightsPassportIssued: true,
+        edoAndOrdRegistered: true,
+      },
+      mediaPlanSnapshot: null,
+      delivery: {
+        crmRegistry: 'saved',
+        telegram: {
+          state: 'delivered',
+          updatedAt: isoAt(-128_160),
+          httpStatus: 200,
+          detail: 'Архивная сделка завершена',
+        },
+        webhook: {
+          state: 'delivered',
+          updatedAt: isoAt(-128_160),
+          httpStatus: 200,
+          detail: 'Синхронизирован статус completed_ltv',
+        },
+      },
+    },
+    {
+      id: 'crm-seed-review-2926',
+      orderNumber: 'FM-2926',
+      createdAt: isoAt(-780),
+      updatedAt: isoAt(-210),
+      holdExpiresAt: isoAt(-540),
+      source: 'order_page',
+      checkoutMode: 'production_only',
+      stage: 'quota_locked',
+      formatLabel: 'Игровой ролик / Мини-кино (30 сек) — 35 000 ₽',
+      totalBudgetRub: 35_000,
+      contact: '+7 925 310-88-42 · Дмитрий (отдел лизинга)',
+      clientEmail: 'director@transflot-leasing.ru',
+      detectedChannel: 'phone',
+      companyOrInn: 'АО «ТрансФлот Лизинг» · ИНН 7702070139',
+      innVerified: true,
+      briefText:
+        'Лизинг изотермических фургонов и рефрижераторов для продуктового ритейла с ускоренным решением по ИНН.',
+      hasVoiceRecording: false,
+      voiceDurationSec: 0,
+      attachedFileName: 'tz_reefer_fleet_2926.pdf',
+      producerNotes:
+        'Направлены 3 концепции диалогового сценария и смета на согласование руководителю отдела лизинга.',
+      preferredDeliveryChannel: 'cabinet',
+      preferredDeliveryDetail: '',
+      cloudDiskUrl: null,
+      deliverables: [
+        {
+          id: 'deliv-seed-2926-v2',
+          title: 'Версия v2 — обновлённый демо-дубль на согласование',
+          kind: 'audio_master',
+          fileName: 'transflot_reefer_30s_v2.wav',
+          mimeType: 'audio/wav',
+          sizeBytes: 2_890_000,
+          uploadedAt: isoAt(-215),
+          versionCode: 'v2',
+          versionStage: 'revision',
+          versionNote:
+            'Ускорен старт диалога, финал уложен ровно в 30 сек — ждём утверждения перед мастерингом',
+          staticAssetUrl: 'zerno_audioworks_15.wav',
+        },
+        {
+          id: 'deliv-seed-2926-v1',
+          title: 'Версия v1 — первая демо-читка сценария',
+          kind: 'audio_master',
+          fileName: 'transflot_reefer_30s_v1.wav',
+          mimeType: 'audio/wav',
+          sizeBytes: 2_940_000,
+          uploadedAt: isoAt(-360),
+          versionCode: 'v1',
+          versionStage: 'draft',
+          versionNote:
+            'Черновой вариант подачи с акцентом на температурный режим рефрижераторов',
+          staticAssetUrl: 'Audioworks_75c6023f.wav',
+        },
+      ],
+      clientUploads: [],
+      compliance: {
+        trafficConfirmed: true,
+        fz38Checked: true,
+        rightsPassportIssued: false,
+        edoAndOrdRegistered: false,
+      },
+      mediaPlanSnapshot: null,
+      delivery: {
+        crmRegistry: 'saved',
+        telegram: {
+          state: 'delivered',
+          updatedAt: isoAt(-210),
+          httpStatus: 200,
+          detail: 'Концепции сценария переданы на согласование заказчику',
+        },
+        webhook: {
+          state: 'delivered',
+          updatedAt: isoAt(-210),
+          httpStatus: 200,
+          detail: 'Синхронизирован статус quota_locked',
+        },
+      },
+    },
+    {
+      id: 'crm-seed-prod-2948',
+      orderNumber: 'FM-2948',
+      createdAt: isoAt(-240),
+      updatedAt: isoAt(-65),
+      holdExpiresAt: isoAt(0),
+      source: 'order_page',
+      checkoutMode: 'production_only',
+      stage: 'in_production',
+      formatLabel: 'Продакшн под ключ (20 сек) — 25 000 ₽',
+      totalBudgetRub: 25_000,
+      contact: '+7 925 310-88-42 · Дмитрий (отдел лизинга)',
+      clientEmail: 'director@transflot-leasing.ru',
+      detectedChannel: 'phone',
+      companyOrInn: 'АО «ТрансФлот Лизинг» · ИНН 7702070139',
+      innVerified: true,
+      briefText:
+        'Зимний сервисный пакет и лизинг седельных тягачей для региональных перевозчиков с отсрочкой первого платежа на 60 дней.',
+      hasVoiceRecording: true,
+      voiceDurationSec: 22,
+      attachedFileName: null,
+      producerNotes:
+        'Предоплата поступила, идёт запись основного диктора и сборка саунд-дизайна −14 LUFS.',
+      preferredDeliveryChannel: 'cabinet',
+      preferredDeliveryDetail: '',
+      cloudDiskUrl: null,
+      deliverables: [],
+      clientUploads: [],
+      compliance: {
+        trafficConfirmed: true,
+        fz38Checked: true,
+        rightsPassportIssued: false,
+        edoAndOrdRegistered: true,
+      },
+      mediaPlanSnapshot: null,
+      delivery: {
+        crmRegistry: 'saved',
+        telegram: {
+          state: 'delivered',
+          updatedAt: isoAt(-65),
+          httpStatus: 200,
+          detail: 'Заказ передан в студийное производство',
+        },
+        webhook: {
+          state: 'delivered',
+          updatedAt: isoAt(-65),
+          httpStatus: 200,
+          detail: 'Синхронизирован статус in_production',
+        },
+      },
+    },
   ];
 
-  return rawSeeds.map((ord) => ensureCrmOrderSlaFields(ord, DEFAULT_STUDIO_WORK_SCHEDULE));
+  return rawSeeds.map((ord) =>
+    ensureOrderApprovalWorkflow(
+      ensureCrmOrderSlaFields(ord, DEFAULT_STUDIO_WORK_SCHEDULE)
+    )
+  );
 }
