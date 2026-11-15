@@ -41,6 +41,13 @@ interface TooltipPayloadEntry<TRecord> {
   payload?: TRecord;
 }
 
+function formatSignedDeltaPp(delta: number | null): string | null {
+  if (delta === null || !Number.isFinite(delta)) return null;
+  if (delta > 0) return `+${delta} п.п.`;
+  if (delta < 0) return `−${Math.abs(delta)} п.п.`;
+  return '0 п.п.';
+}
+
 function ConversionChartTooltip({
   active,
   payload,
@@ -53,57 +60,92 @@ function ConversionChartTooltip({
   const row = payload?.[0]?.payload;
   if (!active || !row) return null;
 
+  const deltaLabel = formatSignedDeltaPp(row.conversionDeltaPp);
+  const deltaTone =
+    row.conversionDeltaPp === null || row.conversionDeltaPp === 0
+      ? 'text-[#111111]/58 dark:text-[#F4F3EF]/58'
+      : row.conversionDeltaPp > 0
+        ? 'text-[#16A34A] dark:text-[#4ADE80]'
+        : 'text-[#D97706] dark:text-[#FBBF24]';
+
   return (
-    <div className="rounded-xl bg-white dark:bg-[#18181D] border border-[#111111]/14 dark:border-white/14 px-3.5 py-3 shadow-sm text-xs text-[#111111] dark:text-[#F4F3EF] space-y-1.5 tabular-nums">
-      <p className="font-bold text-[#111111] dark:text-[#F4F3EF]">
-        {row.monthFullLabel} (UTC+3)
-      </p>
-      <div className="space-y-1 pt-1 border-t border-[#111111]/10 dark:border-white/10">
-        {metricMode === 'orders' ? (
-          <>
-            <div className="flex items-center justify-between gap-5">
-              <span className="text-[#111111]/68 dark:text-[#F4F3EF]/68">
-                Поступило заявок:
-              </span>
-              <span className="font-semibold">{row.totalOrders}</span>
-            </div>
-            <div className="flex items-center justify-between gap-5">
-              <span className="text-[#111111]/68 dark:text-[#F4F3EF]/68">
-                В сделке и продакшне:
-              </span>
-              <span className="font-semibold">{row.convertedOrders}</span>
-            </div>
-            <div className="flex items-center justify-between gap-5">
-              <span className="text-[#111111]/68 dark:text-[#F4F3EF]/68">
-                Сдано мастеров и актов:
-              </span>
-              <span className="font-semibold">{row.deliveredOrders}</span>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="flex items-center justify-between gap-5">
-              <span className="text-[#111111]/68 dark:text-[#F4F3EF]/68">
-                Объём сделок:
-              </span>
-              <span className="font-semibold">
-                {formatNumberSpaced(row.revenueRub)} ₽
-              </span>
-            </div>
-            <div className="flex items-center justify-between gap-5">
-              <span className="text-[#111111]/68 dark:text-[#F4F3EF]/68">
-                Подтверждено заказов:
-              </span>
-              <span className="font-semibold">
-                {row.convertedOrders} из {row.totalOrders}
-              </span>
-            </div>
-          </>
+    <div
+      data-testid="tooltip-monthly-conversion"
+      className="rounded-xl bg-white/98 dark:bg-[#17171C]/98 backdrop-blur-sm border border-[#111111]/15 dark:border-white/16 px-4 py-3.5 shadow-lg text-xs text-[#111111] dark:text-[#F4F3EF] w-[308px] sm:w-[344px] space-y-2.5 tabular-nums pointer-events-none"
+    >
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="font-bold text-[#111111] dark:text-[#F4F3EF]">
+          {row.monthFullLabel} (UTC+3)
+        </p>
+        {deltaLabel && (
+          <span className={`text-[11px] font-semibold ${deltaTone}`}>
+            {deltaLabel} к пред. мес.
+          </span>
         )}
-        <div className="flex items-center justify-between gap-5 pt-0.5">
-          <span className="text-[#FF4820] font-medium">Конверсия месяца:</span>
-          <span className="font-bold text-[#FF4820]">{row.conversionPct}%</span>
+      </div>
+
+      {/* Детализация метрики периода */}
+      <div className="space-y-1 pt-2 border-t border-[#111111]/10 dark:border-white/10">
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-[#FF4820] font-medium">Конверсия в сделку:</span>
+          <span className="font-bold text-[#FF4820] whitespace-nowrap shrink-0 text-right">
+            {row.conversionPct}% ({row.convertedOrders} из {row.totalOrders})
+          </span>
         </div>
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-[#111111]/68 dark:text-[#F4F3EF]/68">
+            {metricMode === 'revenue'
+              ? 'Подтверждённый объём:'
+              : 'Объём сделок:'}
+          </span>
+          <span className="font-semibold whitespace-nowrap shrink-0 text-right">
+            {formatNumberSpaced(row.revenueRub)} ₽
+          </span>
+        </div>
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-[#111111]/68 dark:text-[#F4F3EF]/68">
+            Средний чек · сдано:
+          </span>
+          <span className="font-semibold whitespace-nowrap shrink-0 text-right">
+            {row.avgOrderValueRub > 0
+              ? `${formatNumberSpaced(row.avgOrderValueRub)} ₽`
+              : '—'}{' '}
+            · {row.deliveredOrders} шт.
+          </span>
+        </div>
+      </div>
+
+      {/* Детализация конкретных заказов периода */}
+      <div className="space-y-1.5 pt-2 border-t border-[#111111]/10 dark:border-white/10">
+        <p className="text-[11px] font-semibold text-[#111111]/62 dark:text-[#F4F3EF]/62">
+          Ключевые заказы периода ({row.topOrders.length}):
+        </p>
+        {row.topOrders.length === 0 ? (
+          <p className="text-[11px] text-[#111111]/55 dark:text-[#F4F3EF]/55">
+            В выбранном срезе за этот месяц сделок не зарегистрировано.
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            {row.topOrders.map((ord) => (
+              <div key={ord.orderNumber} className="space-y-0.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="font-semibold text-[#111111] dark:text-[#F4F3EF] truncate">
+                    #{ord.orderNumber} · {ord.clientLabel}
+                  </span>
+                  <span className="font-bold text-[#111111] dark:text-[#F4F3EF] whitespace-nowrap shrink-0">
+                    {ord.budgetRub > 0
+                      ? formatRubCompact(ord.budgetRub)
+                      : 'Договорная'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#111111]/58 dark:text-[#F4F3EF]/58 truncate">
+                  {ord.stageShortLabel} · {ord.formatSummary} ·{' '}
+                  {ord.origin === 'live_crm' ? 'живой CRM' : 'архив ЭДО'}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -119,34 +161,98 @@ function EfficiencyChartTooltip({
   const row = payload?.[0]?.payload;
   if (!active || !row) return null;
 
+  const slaTargetLabel =
+    row.totalOrders > 0 ? formatSignedDeltaPp(row.slaDeltaVsTargetPp) : null;
+  const slaTargetTone =
+    row.slaDeltaVsTargetPp >= 0
+      ? 'text-[#16A34A] dark:text-[#4ADE80]'
+      : 'text-[#DC2626] dark:text-[#F87171]';
+  const spot = row.slaSpotlightOrder;
+
   return (
-    <div className="rounded-xl bg-white dark:bg-[#18181D] border border-[#111111]/14 dark:border-white/14 px-3.5 py-3 shadow-sm text-xs text-[#111111] dark:text-[#F4F3EF] space-y-1.5 tabular-nums">
-      <p className="font-bold text-[#111111] dark:text-[#F4F3EF]">
-        {row.monthFullLabel} (UTC+3)
-      </p>
-      <div className="space-y-1 pt-1 border-t border-[#111111]/10 dark:border-white/10">
-        <div className="flex items-center justify-between gap-5">
+    <div
+      data-testid="tooltip-studio-efficiency"
+      className="rounded-xl bg-white/98 dark:bg-[#17171C]/98 backdrop-blur-sm border border-[#111111]/15 dark:border-white/16 px-4 py-3.5 shadow-lg text-xs text-[#111111] dark:text-[#F4F3EF] w-[308px] sm:w-[344px] space-y-2.5 tabular-nums pointer-events-none"
+    >
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="font-bold text-[#111111] dark:text-[#F4F3EF]">
+          {row.monthFullLabel} (UTC+3)
+        </p>
+        {slaTargetLabel && (
+          <span className={`text-[11px] font-semibold ${slaTargetTone}`}>
+            {slaTargetLabel} к порогу 90%
+          </span>
+        )}
+      </div>
+
+      {/* Детализация операционных метрик студии */}
+      <div className="space-y-1 pt-2 border-t border-[#111111]/10 dark:border-white/10">
+        <div className="flex items-baseline justify-between gap-3">
           <span className="text-[#16A34A] dark:text-[#4ADE80] font-medium">
             Соблюдение SLA ≤ 15 мин:
           </span>
-          <span className="font-bold text-[#16A34A] dark:text-[#4ADE80]">
-            {row.slaCompliancePct}%
+          <span className="font-bold text-[#16A34A] dark:text-[#4ADE80] whitespace-nowrap shrink-0 text-right">
+            {row.slaCompliancePct}% ({row.slaMetOrders} из {row.totalOrders})
           </span>
         </div>
-        <div className="flex items-center justify-between gap-5">
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-[#111111]/68 dark:text-[#F4F3EF]/68">
+            Отклик (ср. / разброс):
+          </span>
+          <span className="font-semibold whitespace-nowrap shrink-0 text-right">
+            {row.totalOrders > 0
+              ? `${row.avgFirstResponseMin} мин (${row.minFirstResponseMin}–${row.maxFirstResponseMin} мин)`
+              : '—'}
+          </span>
+        </div>
+        <div className="flex items-baseline justify-between gap-3">
           <span className="text-[#2563EB] dark:text-[#60A5FA] font-medium">
             Сдача с 1-го дубля:
           </span>
-          <span className="font-bold text-[#2563EB] dark:text-[#60A5FA]">
-            {row.firstTakeApprovalPct}%
+          <span className="font-bold text-[#2563EB] dark:text-[#60A5FA] whitespace-nowrap shrink-0 text-right">
+            {row.firstTakeApprovalPct}% ({row.firstTakeApprovedOrders} из{' '}
+            {row.convertedOrders})
           </span>
         </div>
-        <div className="flex items-center justify-between gap-5">
-          <span className="text-[#111111]/68 dark:text-[#F4F3EF]/68">
-            Средний первый отклик:
-          </span>
-          <span className="font-semibold">{row.avgFirstResponseMin} мин</span>
-        </div>
+      </div>
+
+      {/* Детализация конкретного заказа по SLA и согласованию */}
+      <div className="space-y-1 pt-2 border-t border-[#111111]/10 dark:border-white/10">
+        <p className="text-[11px] font-semibold text-[#111111]/62 dark:text-[#F4F3EF]/62">
+          {spot && (!spot.metSla || !spot.firstTakeClean)
+            ? 'Заказ, требующий контроля регламента:'
+            : 'Показательный заказ по скорости отклика:'}
+        </p>
+        {spot ? (
+          <div className="space-y-0.5">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="font-semibold text-[#111111] dark:text-[#F4F3EF] truncate">
+                #{spot.orderNumber} · {spot.clientLabel}
+              </span>
+              <span
+                className={`font-bold whitespace-nowrap shrink-0 ${
+                  spot.metSla
+                    ? 'text-[#16A34A] dark:text-[#4ADE80]'
+                    : 'text-[#DC2626] dark:text-[#F87171]'
+                }`}
+              >
+                {spot.responseMin} мин
+              </span>
+            </div>
+            <p className="text-[11px] text-[#111111]/58 dark:text-[#F4F3EF]/58 truncate">
+              {spot.metSla ? 'SLA ≤ 15 мин соблюдён' : 'Отклик вне SLA 15 мин'}{' '}
+              ·{' '}
+              {spot.firstTakeClean
+                ? 'принят с 1-го дубля'
+                : 'переделка текста'}{' '}
+              · {spot.stageShortLabel}
+            </p>
+          </div>
+        ) : (
+          <p className="text-[11px] text-[#111111]/55 dark:text-[#F4F3EF]/55">
+            В этом месяце нет заказов для расчёта SLA.
+          </p>
+        )}
       </div>
     </div>
   );
@@ -163,37 +269,92 @@ function StageDwellChartTooltip({
   if (!active || !row) return null;
 
   return (
-    <div className="rounded-xl bg-white dark:bg-[#18181D] border border-[#111111]/14 dark:border-white/14 px-3.5 py-3 shadow-sm text-xs text-[#111111] dark:text-[#F4F3EF] space-y-1.5 tabular-nums">
-      <p className="font-bold text-[#111111] dark:text-[#F4F3EF]">
-        {row.stageLabel}
-      </p>
-      <div className="space-y-1 pt-1 border-t border-[#111111]/10 dark:border-white/10">
-        <div className="flex items-center justify-between gap-5">
+    <div
+      data-testid="tooltip-stage-dwell"
+      className="rounded-xl bg-white/98 dark:bg-[#17171C]/98 backdrop-blur-sm border border-[#111111]/15 dark:border-white/16 px-4 py-3.5 shadow-lg text-xs text-[#111111] dark:text-[#F4F3EF] w-[300px] sm:w-[336px] space-y-2.5 tabular-nums pointer-events-none"
+    >
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="font-bold text-[#111111] dark:text-[#F4F3EF]">
+          {row.stageLabel}
+        </p>
+        <span
+          className={`text-[11px] font-semibold whitespace-nowrap shrink-0 ${
+            row.isBottleneck
+              ? 'text-[#FF4820]'
+              : 'text-[#16A34A] dark:text-[#4ADE80]'
+          }`}
+        >
+          {row.isBottleneck ? 'Узкое место' : 'В нормативе'}
+        </span>
+      </div>
+
+      {/* Метрики скорости прохождения этапа */}
+      <div className="space-y-1 pt-2 border-t border-[#111111]/10 dark:border-white/10">
+        <div className="flex items-baseline justify-between gap-3">
           <span className="text-[#111111]/68 dark:text-[#F4F3EF]/68">
-            Средняя длительность:
+            Среднее время (доля цикла):
           </span>
           <span
-            className={`font-bold ${
+            className={`font-bold whitespace-nowrap shrink-0 text-right ${
               row.isBottleneck
                 ? 'text-[#FF4820]'
                 : 'text-[#111111] dark:text-[#F4F3EF]'
             }`}
           >
-            {row.avgDurationHours} ч
+            {row.avgDurationHours} ч ({row.shareOfCyclePct}%)
           </span>
         </div>
-        <div className="flex items-center justify-between gap-5">
+        <div className="flex items-baseline justify-between gap-3">
           <span className="text-[#111111]/68 dark:text-[#F4F3EF]/68">
-            Сейчас на этапе в CRM:
+            Пиковое время на этапе:
           </span>
-          <span className="font-semibold">{row.activeOrdersCount} зак.</span>
+          <span className="font-semibold whitespace-nowrap shrink-0 text-right">
+            {row.maxDurationHours} ч
+          </span>
         </div>
-        <div className="flex items-center justify-between gap-5">
+        <div className="flex items-baseline justify-between gap-3">
           <span className="text-[#111111]/68 dark:text-[#F4F3EF]/68">
-            Зафиксировано переходов:
+            Сейчас на этапе · переходов:
           </span>
-          <span className="font-semibold">{row.transitionsCount}</span>
+          <span className="font-semibold whitespace-nowrap shrink-0 text-right">
+            {row.activeOrdersCount} зак. · {row.transitionsCount} пер.
+          </span>
         </div>
+      </div>
+
+      {/* Конкретные сделки на этапе или в выборке переходов */}
+      <div className="space-y-1.5 pt-2 border-t border-[#111111]/10 dark:border-white/10">
+        <p className="text-[11px] font-semibold text-[#111111]/62 dark:text-[#F4F3EF]/62">
+          Детализация по заказам этапа ({row.stageOrders.length}):
+        </p>
+        {row.stageOrders.length === 0 ? (
+          <p className="text-[11px] text-[#111111]/55 dark:text-[#F4F3EF]/55">
+            Расчёт по архивному нормативу · активных сделок на этапе нет.
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            {row.stageOrders.map((ord) => (
+              <div key={ord.orderNumber} className="space-y-0.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="font-semibold text-[#111111] dark:text-[#F4F3EF] truncate">
+                    #{ord.orderNumber} · {ord.clientLabel}
+                  </span>
+                  <span className="font-bold text-[#111111] dark:text-[#F4F3EF] whitespace-nowrap shrink-0">
+                    {ord.dwellHours !== undefined
+                      ? `${ord.dwellHours} ч`
+                      : formatRubCompact(ord.budgetRub)}
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#111111]/58 dark:text-[#F4F3EF]/58 truncate">
+                  {ord.isActiveOnStage
+                    ? 'сейчас на этапе'
+                    : 'завершён переход'}{' '}
+                  · {ord.formatSummary}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -732,9 +893,11 @@ export function AdminStudioAnalyticsPanel({
                     tickFormatter={(val: number) => `${val}%`}
                   />
                   <Tooltip
+                    isAnimationActive={false}
+                    offset={14}
                     cursor={{
                       fill: effectiveDark
-                        ? 'rgba(244, 243, 239, 0.04)'
+                        ? 'rgba(244, 243, 239, 0.05)'
                         : 'rgba(17, 17, 17, 0.04)',
                     }}
                     content={(props) => (
@@ -756,6 +919,11 @@ export function AdminStudioAnalyticsPanel({
                         dataKey="totalOrders"
                         name="Поступило заявок"
                         fill={inquiriesBarFill}
+                        activeBar={{
+                          fill: effectiveDark
+                            ? 'rgba(244, 243, 239, 0.42)'
+                            : 'rgba(17, 17, 17, 0.34)',
+                        }}
                         radius={[4, 4, 0, 0]}
                         maxBarSize={26}
                         isAnimationActive={false}
@@ -765,6 +933,7 @@ export function AdminStudioAnalyticsPanel({
                         dataKey="convertedOrders"
                         name="В сделке и продакшне"
                         fill={convertedBarFill}
+                        activeBar={{ fillOpacity: 0.82 }}
                         radius={[4, 4, 0, 0]}
                         maxBarSize={26}
                         isAnimationActive={false}
@@ -776,6 +945,7 @@ export function AdminStudioAnalyticsPanel({
                       dataKey="revenueThousandsRub"
                       name="Объём сделок (тыс. ₽)"
                       fill={convertedBarFill}
+                      activeBar={{ fillOpacity: 0.82 }}
                       radius={[4, 4, 0, 0]}
                       maxBarSize={32}
                       isAnimationActive={false}
@@ -789,7 +959,12 @@ export function AdminStudioAnalyticsPanel({
                     stroke="#FF4820"
                     strokeWidth={2.5}
                     dot={{ r: 3.5, fill: '#FF4820', strokeWidth: 0 }}
-                    activeDot={{ r: 5, fill: '#FF4820' }}
+                    activeDot={{
+                      r: 6,
+                      fill: '#FF4820',
+                      stroke: effectiveDark ? '#141418' : '#FFFFFF',
+                      strokeWidth: 2,
+                    }}
                     isAnimationActive={false}
                   />
                 </ComposedChart>
@@ -885,6 +1060,8 @@ export function AdminStudioAnalyticsPanel({
                       strokeOpacity={0.45}
                     />
                     <Tooltip
+                      isAnimationActive={false}
+                      offset={14}
                       content={(props) => (
                         <EfficiencyChartTooltip
                           active={props.active}
@@ -904,7 +1081,13 @@ export function AdminStudioAnalyticsPanel({
                       strokeWidth={2.5}
                       fill={slaStroke}
                       fillOpacity={0.12}
-                      dot={{ r: 3, fill: slaStroke, strokeWidth: 0 }}
+                      dot={{ r: 3.5, fill: slaStroke, strokeWidth: 0 }}
+                      activeDot={{
+                        r: 5.5,
+                        fill: slaStroke,
+                        stroke: effectiveDark ? '#141418' : '#FFFFFF',
+                        strokeWidth: 2,
+                      }}
                       isAnimationActive={false}
                     />
                     <Area
@@ -915,7 +1098,13 @@ export function AdminStudioAnalyticsPanel({
                       strokeWidth={2.2}
                       fill={firstTakeStroke}
                       fillOpacity={0.07}
-                      dot={{ r: 3, fill: firstTakeStroke, strokeWidth: 0 }}
+                      dot={{ r: 3.5, fill: firstTakeStroke, strokeWidth: 0 }}
+                      activeDot={{
+                        r: 5.5,
+                        fill: firstTakeStroke,
+                        stroke: effectiveDark ? '#141418' : '#FFFFFF',
+                        strokeWidth: 2,
+                      }}
                       isAnimationActive={false}
                     />
                   </AreaChart>
@@ -938,12 +1127,12 @@ export function AdminStudioAnalyticsPanel({
                 </p>
               </div>
 
-              <div className="h-[232px] w-full min-w-0">
+              <div className="h-[268px] w-full min-w-0">
                 <ResponsiveContainer
                   width="100%"
                   height="100%"
                   minWidth={200}
-                  minHeight={190}
+                  minHeight={210}
                 >
                   <BarChart
                     data={summary.stageEfficiency}
@@ -975,9 +1164,11 @@ export function AdminStudioAnalyticsPanel({
                       }}
                     />
                     <Tooltip
+                      isAnimationActive={false}
+                      offset={14}
                       cursor={{
                         fill: effectiveDark
-                          ? 'rgba(244, 243, 239, 0.04)'
+                          ? 'rgba(244, 243, 239, 0.05)'
                           : 'rgba(17, 17, 17, 0.04)',
                       }}
                       content={(props) => (
@@ -995,6 +1186,7 @@ export function AdminStudioAnalyticsPanel({
                       dataKey="avgDurationHours"
                       name="Среднее время (ч)"
                       barSize={20}
+                      activeBar={{ fillOpacity: 0.84 }}
                       radius={[0, 4, 4, 0]}
                       isAnimationActive={false}
                     >
