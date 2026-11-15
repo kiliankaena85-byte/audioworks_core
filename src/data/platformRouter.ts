@@ -50,7 +50,7 @@ export type PlatformRoute =
   | { kind: 'pricing'; scrollAnchor?: string }
   | { kind: 'approach'; scrollAnchor?: string }
   | { kind: 'mistake-detail'; articleSlug: string }
-  | { kind: 'faq' }
+  | { kind: 'faq'; scrollAnchor?: string }
   | { kind: 'order' }
   | {
       kind: 'cabinet';
@@ -68,7 +68,8 @@ export function resolveRouteScrollAnchor(route: PlatformRoute): string | undefin
     route.kind === 'home' ||
     route.kind === 'pricing' ||
     route.kind === 'approach' ||
-    route.kind === 'cases'
+    route.kind === 'cases' ||
+    route.kind === 'faq'
   ) {
     return route.scrollAnchor;
   }
@@ -274,7 +275,12 @@ export function parsePlatformRoute(
   }
 
   if (normalizedPath === '/faq') {
-    return { kind: 'faq' };
+    return {
+      kind: 'faq',
+      ...(normalizedHash === 'urgent-order' || normalizedHash === 'faq-questions'
+        ? { scrollAnchor: normalizedHash }
+        : {}),
+    };
   }
 
   // Обратная совместимость старых прямых ссылок с корневой страницы (`/?case=...`, `/#hot-air`, `/#work` и т.д.)
@@ -300,6 +306,9 @@ export function parsePlatformRoute(
   }
   if (normalizedHash === 'faq' || normalizedHash === 'home-faq') {
     return { kind: 'faq' };
+  }
+  if (normalizedHash === 'urgent-order') {
+    return { kind: 'faq', scrollAnchor: 'urgent-order' };
   }
   if (normalizedHash === 'approach') {
     return { kind: 'approach' };
@@ -347,7 +356,7 @@ export function buildPlatformPath(route: PlatformRoute): string {
     case 'mistake-detail':
       return `/approach/${encodeURIComponent(route.articleSlug)}`;
     case 'faq':
-      return '/faq';
+      return route.scrollAnchor ? `/faq#${route.scrollAnchor}` : '/faq';
     case 'order':
       return '/order';
     case 'cabinet': {

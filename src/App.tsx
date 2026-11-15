@@ -448,6 +448,8 @@ function FmworksExperience() {
 
           {route.kind === 'faq' && (
             <FaqPage
+              scrollAnchor={route.scrollAnchor}
+              navigationTick={navigationTick}
               onNavigate={navigateTo}
               onStartOrder={(formatId) => handleOpenStudioOrder(formatId ?? null)}
             />

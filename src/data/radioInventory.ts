@@ -3728,7 +3728,7 @@ export function formatBookingSpecificationText(params: {
     lines.push(`• Задача / акция: ${briefText.trim()}`);
   }
 
-  lines.push(``, `Отдел медиабаинга FMWorks: hello@fmworks.ru · https://fmworks.ru`);
+  lines.push(``, `Отдел медиабаинга FMWorks: art@artmspektr.ru · https://fmworks.ru`);
   return lines.join('\n');
 }
 

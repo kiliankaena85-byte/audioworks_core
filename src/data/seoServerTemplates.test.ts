@@ -234,8 +234,8 @@ test('buildOrganizationJsonLd и buildLocalBusinessJsonLd структуриру
   assert.equal(org['@type'], 'Organization');
   assert.equal(org['@id'], 'https://fmworks.ru/#organization');
   assert.equal(org.name, 'FMWorks');
-  assert.equal(org.email, 'hello@fmworks.ru');
-  assert.equal(org.telephone, '+7 (4822) 75-04-20');
+  assert.equal(org.email, 'art@artmspektr.ru');
+  assert.equal(org.telephone, '+79040000911');
   assert.equal(org.address['@type'], 'PostalAddress');
   assert.equal(org.address.postalCode, '170100');
   assert.equal(org.address.addressLocality, 'Тверь');
@@ -280,7 +280,7 @@ test('buildOrganizationJsonLd и buildLocalBusinessJsonLd структуриру
   const parsedLocal = JSON.parse(localMatch[1]);
   assert.equal(parsedOrg['@type'], 'Organization');
   assert.equal(parsedLocal['@type'], 'LocalBusiness');
-  assert.equal(parsedLocal.address.streetAddress, 'ул. Советская, д. 45, оф. 308');
+  assert.equal(parsedLocal.address.streetAddress, '');
 });
 
 test('buildWebSiteJsonLd формирует схему WebSite с potentialAction SearchAction и search-input для Sitelinks Search Box', () => {

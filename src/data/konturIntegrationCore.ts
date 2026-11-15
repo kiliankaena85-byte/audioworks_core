@@ -137,8 +137,7 @@ const SEED_COUNTERPARTIES_BY_INN: Readonly<Record<string, CounterpartyLookupResu
     shortName: 'ООО «ФМ Воркс Продакшн»',
     kpp: '695001001',
     ogrn: '1236900008415',
-    legalAddress:
-      '170100, Россия, Тверская обл., г. Тверь, ул. Советская, д. 45, оф. 310',
+    legalAddress: '170100, Россия, Тверская обл., г. Тверь',
     signatory: 'Генеральный директор Соколов А. В.',
     statusLabel: 'Действующая организация (ЕГРЮЛ)',
     source: 'seed_registry',
@@ -156,8 +155,7 @@ const SEED_COUNTERPARTIES_BY_INN: Readonly<Record<string, CounterpartyLookupResu
     shortName: 'ИП Соколов А. В.',
     kpp: '',
     ogrn: '322695200041850',
-    legalAddress:
-      '170100, Россия, Тверская обл., г. Тверь, ул. Советская, д. 45, оф. 308',
+    legalAddress: '170100, Россия, Тверская обл., г. Тверь',
     signatory: 'Индивидуальный предприниматель Соколов А. В.',
     statusLabel: 'Действующий ИП (ЕГРИП)',
     source: 'seed_registry',

@@ -2852,7 +2852,7 @@ async function startServer() {
         },
         error:
           preRateCheck.message ??
-          `Превышен лимит отправок с одного адреса. Подождите ${preRateCheck.retryAfterSec} сек. или напишите напрямую на hello@fmworks.ru.`,
+          `Превышен лимит отправок с одного адреса. Подождите ${preRateCheck.retryAfterSec} сек. или напишите напрямую на art@artmspektr.ru.`,
         nextChallenge: issueLeadChallenge(),
       });
       return;

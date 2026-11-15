@@ -56,7 +56,7 @@ export function formatRateLimitBlockMessage(
   if (reason === 'burst_cooldown') {
     return `Слишком частая отправка формы. Подождите ${safeSec} сек. перед следующей попыткой.`;
   }
-  return `Превышен лимит отправок заявки за короткое время. Повторите через ${safeSec} сек. или напишите на hello@fmworks.ru.`;
+  return `Превышен лимит отправок заявки за короткое время. Повторите через ${safeSec} сек. или напишите на art@artmspektr.ru.`;
 }
 
 /**

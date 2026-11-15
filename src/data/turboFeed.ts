@@ -138,7 +138,7 @@ function renderTurboItemXml(
     .filter(Boolean)
     .join('');
 
-  const footerBlock = `<p><strong>FMWorks®</strong> · г. Тверь, ул. Советская, д. 45, оф. 308 · Работаем по всей России · Пн–Пт 09:00–19:00 (МСК) · +7 (4822) 75-04-20 · hello@fmworks.ru</p>`;
+  const footerBlock = `<p><strong>FMWorks®</strong> · г. Тверь · Работаем по всей России · Пн–Пт 09:00–19:00 (МСК) · +79040000911 · art@artmspektr.ru</p>`;
   const cdataContent = sanitizeCdata(`${headerParts}${item.bodyHtml}${footerBlock}`);
 
   return [

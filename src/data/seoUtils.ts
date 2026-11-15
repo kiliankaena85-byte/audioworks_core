@@ -10,13 +10,13 @@ export const FMWORKS_BUSINESS_DETAILS = {
   alternateName: 'Студия коммерческого аудиопродакшна FMWorks',
   description:
     'Студия аудиопродакшна полного цикла: рекламные аудиоролики для радио и бизнеса от 24–48 ч по готовому тексту и 3–4 дня под ключ с паспортом прав РАО/ВОИС и гарантией прохождения модерации по ФЗ-38.',
-  email: 'hello@fmworks.ru',
-  telephone: '+7 (4822) 75-04-20',
+  email: 'art@artmspektr.ru',
+  telephone: '+79040000911',
   priceRange: '15 000 – 35 000 ₽',
   currenciesAccepted: 'RUB',
   paymentAccepted: 'Безналичный расчёт (ЭДО), банковская карта (54-ФЗ), СБП',
   address: {
-    streetAddress: 'ул. Советская, д. 45, оф. 308',
+    streetAddress: '',
     postalCode: '170100',
     addressLocality: 'Тверь',
     addressRegion: 'Тверская область',

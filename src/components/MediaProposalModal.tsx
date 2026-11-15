@@ -54,7 +54,7 @@ export function buildFlexibleExecutiveProposalText(
     `• Суммарная экономия компании: +${formatRubCompact(plan.totalSavingsRub)}`,
     `• ИТОГО К СОГЛАСОВАНИЮ (по договору и ЭДО): ${formatRubCompact(plan.totalClientCostRub)}`,
     ``,
-    `Контакты отдела медиабаинга: hello@fmworks.ru · https://fmworks.ru`,
+    `Контакты отдела медиабаинга: art@artmspektr.ru · https://fmworks.ru`,
   ];
 
   return lines.join('\n');
@@ -288,7 +288,7 @@ export function MediaProposalModal({
 
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 print:hidden">
                 <p className="text-xs text-[#111111]/55">
-                  hello@fmworks.ru · Все закрывающие документы и регистрация ОРД включены
+                  art@artmspektr.ru · Все закрывающие документы и регистрация ОРД включены
                 </p>
                 <button
                   type="button"

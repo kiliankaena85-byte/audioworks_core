@@ -10,7 +10,8 @@ import {
 import { BrandLogo } from './BrandLogo';
 import { PersonalData152FzModal } from './legal/PersonalData152FzModal';
 
-const STUDIO_EMAIL = 'hello@fmworks.ru';
+const STUDIO_EMAIL = 'art@artmspektr.ru';
+const STUDIO_PHONE = '+79040000911';
 
 function readStudioTimeHHMM(): string {
   const now = new Date();
@@ -100,8 +101,13 @@ const FOOTER_STUDIO_EXPERTISE_LINKS: readonly {
   },
   {
     id: 'faq',
-    label: 'Частые вопросы заказчиков',
+    label: 'FAQ: процесс работы и срочные заказы',
     route: { kind: 'faq' },
+  },
+  {
+    id: 'urgent-order',
+    label: 'Срочный заказ ролика от 1 часа',
+    route: { kind: 'faq', scrollAnchor: 'urgent-order' },
   },
 ] as const;
 
@@ -220,15 +226,12 @@ export function Footer({
 
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:text-sm text-[#111111]/64 dark:text-[#F4F3EF]/64 tabular-nums">
               <a
-                href="tel:+74822750420"
+                href={`tel:${STUDIO_PHONE}`}
+                data-testid="footer-studio-phone"
                 className="font-semibold text-[#111111]/82 dark:text-[#F4F3EF]/82 hover:text-[#FF4820] transition-colors"
               >
-                +7 (4822) 75-04-20
+                {STUDIO_PHONE}
               </a>
-              <span aria-hidden="true" className="opacity-35">
-                ·
-              </span>
-              <span>г. Тверь, ул. Советская, д. 45, оф. 308</span>
             </div>
           </div>
         </div>
@@ -342,6 +345,16 @@ export function Footer({
                 ))}
                 <li>
                   <a
+                    href="/faq"
+                    data-testid="footer-expertise-faq"
+                    onClick={(e) => handleRouteClick(e, { kind: 'faq' })}
+                    className="inline-flex py-0.5 text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors"
+                  >
+                    FAQ: процесс работы и срочные заказы
+                  </a>
+                </li>
+                <li>
+                  <a
                     href="/hot-air"
                     onClick={(e) => handleRouteClick(e, { kind: 'hot-air' })}
                     className="inline-flex py-0.5 text-[#111111]/58 dark:text-[#F4F3EF]/58 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors"
@@ -397,6 +410,17 @@ export function Footer({
           </div>
 
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <a
+              href="/faq"
+              data-testid="footer-bottom-faq-link"
+              onClick={(e) => handleRouteClick(e, { kind: 'faq' })}
+              className="min-h-[44px] inline-flex items-center text-[#111111]/62 dark:text-[#F4F3EF]/62 hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors whitespace-nowrap"
+            >
+              FAQ и срочные заказы
+            </a>
+            <span aria-hidden="true" className="opacity-25">
+              ·
+            </span>
             <button
               type="button"
               data-testid="footer-pdn-policy-btn"
@@ -425,6 +449,7 @@ export function Footer({
             </span>
             <a
               href={`mailto:${STUDIO_EMAIL}`}
+              data-testid="footer-mailto-link"
               className="min-h-[44px] inline-flex items-center hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors whitespace-nowrap"
             >
               {STUDIO_EMAIL}

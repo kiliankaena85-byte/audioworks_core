@@ -1,5 +1,5 @@
 import { ArrowRight, ArrowUpRight } from 'lucide-react';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useMemo } from 'react';
 import {
   buildFaqPageJsonLd,
   HOME_PROCESS_FAQ_ITEMS,
@@ -10,11 +10,29 @@ import { OrderFormatId } from '../../data/pricingData';
 import { FAQSection } from '../FAQSection';
 
 interface FaqPageProps {
+  scrollAnchor?: string;
+  navigationTick?: number;
   onNavigate: (route: PlatformRoute) => void;
   onStartOrder: (formatId?: OrderFormatId | null) => void;
 }
 
-export function FaqPage({ onNavigate, onStartOrder }: FaqPageProps) {
+export function FaqPage({
+  scrollAnchor,
+  navigationTick = 0,
+  onNavigate,
+  onStartOrder,
+}: FaqPageProps) {
+  useLayoutEffect(() => {
+    if (!scrollAnchor || typeof document === 'undefined') return;
+    const target = document.getElementById(scrollAnchor);
+    if (target) {
+      target.scrollIntoView({
+        behavior: 'instant' as ScrollBehavior,
+        block: 'start',
+      });
+    }
+  }, [scrollAnchor, navigationTick]);
+
   useEffect(() => {
     const ssrScript = document.head.querySelector('#fmworks-faqpage-jsonld');
     if (ssrScript) {
@@ -72,8 +90,9 @@ export function FaqPage({ onNavigate, onStartOrder }: FaqPageProps) {
 
       {/* Выделенный блок «Срочный заказ» (от 1 часа · без разработки сценария · по договорной цене) */}
       <section
+        id="urgent-order"
         aria-labelledby="faq-urgent-order-heading"
-        className="pb-6 sm:pb-10 px-4 sm:px-6 lg:px-12"
+        className="scroll-mt-24 pb-6 sm:pb-10 px-4 sm:px-6 lg:px-12"
       >
         <div
           data-testid="faq-urgent-order-block"
