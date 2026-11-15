@@ -270,3 +270,175 @@ export function serializeJsonLd(payload: unknown): string {
     .replace(/>/g, '\\u003e')
     .replace(/&/g, '\\u0026');
 }
+
+export const FAQ_URGENT_ORDER_SEARCH_TEXT =
+  'Срочный заказ Готовность от 1 часа Без разработки сценария Договорная цена Да, мы делаем ролики от 1 часа. Запись голоса и сведение. Без разработки сценария. Срочные заказы оплачиваются по договорной цене. По вашему готовому тексту вне очереди записываем диктора и выпускаем чистовой эфирный мастер (-14 LUFS, WAV + MP3) на условиях 100% предоплаты по договору или банковской картой.';
+
+export const FAQ_QUICK_SEARCH_TOPICS: readonly {
+  label: string;
+  query: string;
+}[] = [
+  { label: 'Срочный заказ', query: '1 час' },
+  { label: 'ЭДО и счёт', query: 'счёт' },
+  { label: 'Оплата картой / СБП', query: 'СБП' },
+  { label: 'Права РАО / ВОИС', query: 'РАО' },
+  { label: 'Сроки 24–48 ч', query: '24–48' },
+  { label: 'Договорная цена', query: 'договорной' },
+] as const;
+
+/**
+ * Нормализует текст для нечёткого регистронезависимого поиска (включая «ё» → «е»).
+ */
+export function normalizeFaqSearchText(raw: string): string {
+  return (raw ?? '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Разбивает поисковый запрос на уникальные непустые токены.
+ */
+export function tokenizeFaqSearchQuery(rawQuery: string): string[] {
+  const normalized = normalizeFaqSearchText(rawQuery);
+  if (!normalized) return [];
+  const parts = normalized.split(' ').filter(Boolean);
+  return Array.from(new Set(parts));
+}
+
+/**
+ * Проверяет, содержит ли текстовый блок все ключевые слова запроса.
+ */
+export function doesFaqTextMatchQuery(text: string, rawQuery: string): boolean {
+  const tokens = tokenizeFaqSearchQuery(rawQuery);
+  if (tokens.length === 0) return true;
+  const hay = normalizeFaqSearchText(text);
+  return tokens.every((token) => hay.includes(token));
+}
+
+/**
+ * Фильтрует и ранжирует вопросы/ответы FAQ по ключевым словам:
+ * 1) точная фраза в заголовке вопроса,
+ * 2) все токены в заголовке вопроса,
+ * 3) точная фраза в ответе,
+ * 4) совпадение токенов по вопросу и ответу.
+ */
+export function filterFaqItems(
+  items: readonly FaqItem[],
+  rawQuery: string
+): FaqItem[] {
+  const normalizedQuery = normalizeFaqSearchText(rawQuery);
+  if (!normalizedQuery) return [...items];
+
+  const tokens = tokenizeFaqSearchQuery(normalizedQuery);
+  if (tokens.length === 0) return [...items];
+
+  const scored: Array<{ item: FaqItem; score: number; originalIdx: number }> =
+    [];
+
+  items.forEach((item, originalIdx) => {
+    const qNorm = normalizeFaqSearchText(item.question);
+    const aNorm = normalizeFaqSearchText(item.answer);
+    const combined = `${item.indexLabel} ${qNorm} ${aNorm}`;
+
+    if (!tokens.every((token) => combined.includes(token))) {
+      return;
+    }
+
+    let score = 1;
+    if (qNorm.includes(normalizedQuery)) {
+      score += 100;
+    } else if (tokens.every((token) => qNorm.includes(token))) {
+      score += 50;
+    }
+    if (aNorm.includes(normalizedQuery)) {
+      score += 20;
+    }
+    for (const token of tokens) {
+      if (qNorm.includes(token)) score += 5;
+      if (aNorm.includes(token)) score += 2;
+    }
+
+    scored.push({ item, score, originalIdx });
+  });
+
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.originalIdx - b.originalIdx;
+  });
+
+  return scored.map((entry) => entry.item);
+}
+
+export interface FaqHighlightSegment {
+  text: string;
+  matched: boolean;
+}
+
+/**
+ * Разбивает исходный текст на сегменты с пометкой совпадений для безопасной подсветки,
+ * сохраняя исходный регистр и букву «ё».
+ */
+export function splitFaqHighlightSegments(
+  text: string,
+  rawQuery: string
+): FaqHighlightSegment[] {
+  if (!text) return [];
+  const tokens = tokenizeFaqSearchQuery(rawQuery)
+    .filter((t) => t.length >= 2)
+    .sort((a, b) => b.length - a.length);
+
+  if (tokens.length === 0) {
+    return [{ text, matched: false }];
+  }
+
+  // Строим 1:1 посимвольно нормализованную строку (toLowerCase + ё -> е;
+  // для редких символов, меняющих длину, откатываемся без сдвига индексов).
+  const chars = Array.from(text);
+  const normChars = chars.map((ch) => {
+    const low = ch.toLowerCase().replace(/ё/g, 'е');
+    return low.length === 1 ? low : ch.toLowerCase();
+  });
+
+  if (normChars.length !== chars.length) {
+    return [{ text, matched: false }];
+  }
+
+  const hay = normChars.join('');
+  const matchedMask = new Array<boolean>(chars.length).fill(false);
+
+  for (const token of tokens) {
+    let fromIdx = 0;
+    while (fromIdx < hay.length) {
+      const foundIdx = hay.indexOf(token, fromIdx);
+      if (foundIdx === -1) break;
+      for (let i = foundIdx; i < foundIdx + token.length; i += 1) {
+        matchedMask[i] = true;
+      }
+      fromIdx = foundIdx + token.length;
+    }
+  }
+
+  const segments: FaqHighlightSegment[] = [];
+  let currentText = '';
+  let currentMatched = matchedMask[0] ?? false;
+
+  for (let i = 0; i < chars.length; i += 1) {
+    const isMatched = matchedMask[i];
+    if (i > 0 && isMatched !== currentMatched) {
+      segments.push({ text: currentText, matched: currentMatched });
+      currentText = chars[i];
+      currentMatched = isMatched;
+    } else {
+      currentText += chars[i];
+    }
+  }
+
+  if (currentText) {
+    segments.push({ text: currentText, matched: currentMatched });
+  }
+
+  return segments;
+}
+

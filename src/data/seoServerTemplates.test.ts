@@ -11,15 +11,19 @@ import {
   buildLlmsTxt,
   buildRobotsTxt,
   buildSitemapXml,
+  collectSitemapRouteEntries,
+  DEFAULT_SITEMAP_LASTMOD,
   injectRouteSeoIntoHtml,
   resolveServerRouteLookup,
 } from './seoServerTemplates.ts';
 import {
   buildLocalBusinessJsonLd,
   buildOrganizationJsonLd,
+  buildServiceJsonLd,
   buildWebSiteJsonLd,
   LOCAL_BUSINESS_JSONLD_SCRIPT_ID,
   ORGANIZATION_JSONLD_SCRIPT_ID,
+  SERVICE_JSONLD_SCRIPT_ID,
   WEBSITE_JSONLD_SCRIPT_ID,
 } from './seoUtils.ts';
 
@@ -69,27 +73,74 @@ test('buildLlmsTxt формирует структурированный AI-па
   assert.equal(fs.readFileSync(publicLlmsPath, 'utf8'), llms);
 });
 
-test('buildSitemapXml включает публичные маршруты и исключает /admin, /order и отключённый /hot-air', () => {
+test('buildSitemapXml автоматически собирает публичные роуты, опубликованные кейсы и услуги и совпадает с public/sitemap.xml', () => {
   const studioSitemap = buildSitemapXml('https://fmworks.ru', {
     airtimeEnabled: false,
-    lastmodIsoDate: '2026-11-14',
+    lastmodIsoDate: DEFAULT_SITEMAP_LASTMOD,
   });
 
   assert.ok(studioSitemap.includes('<loc>https://fmworks.ru/</loc>'));
   assert.ok(studioSitemap.includes('<loc>https://fmworks.ru/cases</loc>'));
+  assert.ok(studioSitemap.includes('<loc>https://fmworks.ru/cases/audioworks-reel</loc>'));
+  assert.ok(studioSitemap.includes('<loc>https://fmworks.ru/cases/dmitrogorsky</loc>'));
+  assert.ok(studioSitemap.includes('<loc>https://fmworks.ru/cases/business-estate</loc>'));
+  assert.ok(studioSitemap.includes('<loc>https://fmworks.ru/cases/medical-clinics</loc>'));
+  assert.equal(studioSitemap.includes('auto-trade-in'), false);
   assert.ok(studioSitemap.includes('<loc>https://fmworks.ru/pricing</loc>'));
   assert.ok(studioSitemap.includes('<loc>https://fmworks.ru/approach</loc>'));
   assert.ok(studioSitemap.includes('<loc>https://fmworks.ru/faq</loc>'));
   assert.ok(studioSitemap.includes('/cases/industry/real-estate'));
+  assert.ok(studioSitemap.includes('/cases/industry/medicine'));
+  assert.ok(studioSitemap.includes('/cases/industry/retail-fmcg'));
+  assert.ok(studioSitemap.includes('/cases/industry/b2b-finance'));
   assert.ok(studioSitemap.includes('/approach/phonebook-syndrome'));
+  assert.ok(studioSitemap.includes('<image:image>'));
+  assert.ok(studioSitemap.includes('<image:loc>https://fmworks.ru/api/og.png?route=%2Fpricing</image:loc>'));
   assert.equal(studioSitemap.includes('/hot-air'), false);
   assert.equal(studioSitemap.includes('/admin'), false);
   assert.equal(studioSitemap.includes('/order'), false);
+  assert.equal(studioSitemap.includes('/cabinet'), false);
+  assert.equal(studioSitemap.includes('/sound-drop'), false);
 
-  const airtimeSitemap = buildSitemapXml('https://fmworks.ru', {
+  const publicSitemapPath = path.resolve(process.cwd(), 'public', 'sitemap.xml');
+  assert.equal(fs.existsSync(publicSitemapPath), true);
+  assert.equal(fs.readFileSync(publicSitemapPath, 'utf8'), studioSitemap);
+
+  const cmsFilteredSitemap = buildSitemapXml('https://fmworks.ru', {
+    airtimeEnabled: false,
+    lastmodIsoDate: '2026-11-15T10:58:00.000Z',
+    cmsCases: [
+      {
+        id: 'dmitrogorsky',
+        client: 'Дмитрогорский продукт',
+        headline: 'Вкус',
+        published: true,
+      },
+      {
+        id: 'draft-secret-case',
+        client: 'Черновик',
+        headline: 'Скрытый кейс',
+        published: false,
+      },
+      {
+        id: 'new-published-case',
+        client: 'Новый клиент',
+        headline: 'Премьера',
+        published: true,
+      },
+    ],
+  });
+  assert.ok(cmsFilteredSitemap.includes('<lastmod>2026-11-15</lastmod>'));
+  assert.ok(cmsFilteredSitemap.includes('<loc>https://fmworks.ru/cases/audioworks-reel</loc>'));
+  assert.ok(cmsFilteredSitemap.includes('<loc>https://fmworks.ru/cases/dmitrogorsky</loc>'));
+  assert.ok(cmsFilteredSitemap.includes('<loc>https://fmworks.ru/cases/new-published-case</loc>'));
+  assert.equal(cmsFilteredSitemap.includes('draft-secret-case'), false);
+
+  const airtimeEntries = collectSitemapRouteEntries('https://fmworks.ru', {
     airtimeEnabled: true,
   });
-  assert.ok(airtimeSitemap.includes('<loc>https://fmworks.ru/hot-air</loc>'));
+  assert.ok(airtimeEntries.some((e) => e.path === '/hot-air'));
+  assert.ok(airtimeEntries.some((e) => e.path.startsWith('/hot-air/stations/')));
 });
 
 test('resolveServerRouteLookup находит точные заголовки кейсов, отраслей и статей', () => {
@@ -119,6 +170,7 @@ test('injectRouteSeoIntoHtml подставляет метаданные, гео
   const faqHtml = injectRouteSeoIntoHtml(baseHtml, '/faq', 'https://fmworks.ru');
   assert.ok(faqHtml.includes('<title>Частые вопросы (FAQ) по договору, оплате и срокам — FMWorks</title>'));
   assert.ok(faqHtml.includes('<link rel="canonical" href="https://fmworks.ru/faq" />'));
+  assert.ok(faqHtml.includes('<link rel="sitemap" type="application/xml" title="Sitemap" href="https://fmworks.ru/sitemap.xml" />'));
   assert.ok(faqHtml.includes('<meta name="robots" content="index, follow" />'));
   assert.ok(faqHtml.includes('<meta name="geo.region" content="RU-TVE" />'));
   assert.ok(faqHtml.includes('<meta property="og:locale" content="ru_RU" />'));
@@ -255,9 +307,32 @@ test('buildOrganizationJsonLd и buildLocalBusinessJsonLd структуриру
   assert.equal(typeof local.geo.longitude, 'number');
   assert.equal(local.openingHoursSpecification[0].opens, '09:00');
   assert.equal(local.openingHoursSpecification[0].closes, '19:00');
+  assert.equal(local.contactPoint[0]['@type'], 'ContactPoint');
+  assert.equal(local.makesOffer[0].itemOffered['@type'], 'Service');
+  assert.equal(local.makesOffer[0].itemOffered['@id'], 'https://fmworks.ru/#service');
+  assert.equal(local.hasOfferCatalog['@type'], 'OfferCatalog');
+  assert.equal(local.hasOfferCatalog.itemListElement.length, 4);
   assert.deepEqual(local.parentOrganization, {
     '@id': 'https://fmworks.ru/#organization',
   });
+
+  const service = buildServiceJsonLd('https://fmworks.ru/');
+  assert.equal(service['@context'], 'https://schema.org');
+  assert.equal(service['@type'], 'Service');
+  assert.equal(service['@id'], 'https://fmworks.ru/#service');
+  assert.ok(service.name.includes('AudioWorks'));
+  assert.equal(service.provider['@type'], 'LocalBusiness');
+  assert.equal(service.provider['@id'], 'https://fmworks.ru/#localbusiness');
+  assert.equal(service.provider.telephone, '+79040000911');
+  assert.equal(service.provider.email, 'art@artmspektr.ru');
+  assert.equal(service.offers['@type'], 'AggregateOffer');
+  assert.equal(service.offers.priceCurrency, 'RUB');
+  assert.equal(service.offers.lowPrice, '15000');
+  assert.equal(service.offers.highPrice, '35000');
+  assert.equal(service.offers.offerCount, 4);
+  assert.equal(service.hasOfferCatalog['@type'], 'OfferCatalog');
+  assert.equal(service.hasOfferCatalog.itemListElement.length, 4);
+  assert.equal(service.hasOfferCatalog.itemListElement[0].itemOffered['@type'], 'Service');
 
   const baseHtml =
     '<!doctype html><html><head><title>Base</title></head><body><div id="root"></div></body></html>';
@@ -273,14 +348,24 @@ test('buildOrganizationJsonLd и buildLocalBusinessJsonLd структуриру
       `<script id="${LOCAL_BUSINESS_JSONLD_SCRIPT_ID}" type="application\\/ld\\+json">([\\s\\S]*?)<\\/script>`
     )
   );
+  const serviceMatch = homeHtml.match(
+    new RegExp(
+      `<script id="${SERVICE_JSONLD_SCRIPT_ID}" type="application\\/ld\\+json">([\\s\\S]*?)<\\/script>`
+    )
+  );
   assert.ok(orgMatch, 'Ожидался script Organization JSON-LD в head');
   assert.ok(localMatch, 'Ожидался script LocalBusiness JSON-LD в head');
+  assert.ok(serviceMatch, 'Ожидался script Service JSON-LD в head');
 
   const parsedOrg = JSON.parse(orgMatch[1]);
   const parsedLocal = JSON.parse(localMatch[1]);
+  const parsedService = JSON.parse(serviceMatch[1]);
   assert.equal(parsedOrg['@type'], 'Organization');
   assert.equal(parsedLocal['@type'], 'LocalBusiness');
   assert.equal(parsedLocal.address.streetAddress, '');
+  assert.equal(parsedService['@type'], 'Service');
+  assert.equal(parsedService.provider['@type'], 'LocalBusiness');
+  assert.equal(parsedService.offers.priceCurrency, 'RUB');
 });
 
 test('buildWebSiteJsonLd формирует схему WebSite с potentialAction SearchAction и search-input для Sitelinks Search Box', () => {

@@ -2,12 +2,13 @@ export const DEFAULT_OG_IMAGE_PATH =
   '/src/assets/images/hero_studio_editorial_1794399404984.jpg';
 export const ORGANIZATION_JSONLD_SCRIPT_ID = 'fmworks-organization-jsonld';
 export const LOCAL_BUSINESS_JSONLD_SCRIPT_ID = 'fmworks-localbusiness-jsonld';
+export const SERVICE_JSONLD_SCRIPT_ID = 'fmworks-service-jsonld';
 export const WEBSITE_JSONLD_SCRIPT_ID = 'fmworks-website-jsonld';
 
 export const FMWORKS_BUSINESS_DETAILS = {
   brandName: 'FMWorks',
   legalName: 'Аудиопродакшн-студия FMWorks®',
-  alternateName: 'Студия коммерческого аудиопродакшна FMWorks',
+  alternateName: 'Студия коммерческого аудиопродакшна FMWorks (AudioWorks)',
   description:
     'Студия аудиопродакшна полного цикла: рекламные аудиоролики для радио и бизнеса от 24–48 ч по готовому тексту и 3–4 дня под ключ с паспортом прав РАО/ВОИС и гарантией прохождения модерации по ФЗ-38.',
   email: 'art@artmspektr.ru',
@@ -54,6 +55,74 @@ export interface OpeningHoursSpecificationSchema {
   dayOfWeek: string[];
   opens: string;
   closes: string;
+}
+
+export interface ServiceOfferItemSchema {
+  '@type': 'Offer';
+  name: string;
+  description: string;
+  url: string;
+  price?: string;
+  priceCurrency: 'RUB';
+  availability: 'https://schema.org/InStock';
+  itemOffered: {
+    '@type': 'Service';
+    name: string;
+    description: string;
+    provider: {
+      '@id': string;
+    };
+  };
+}
+
+export interface ServiceOfferCatalogSchema {
+  '@type': 'OfferCatalog';
+  name: string;
+  itemListElement: ServiceOfferItemSchema[];
+}
+
+export interface ServiceJsonLd {
+  '@context': 'https://schema.org';
+  '@type': 'Service';
+  '@id': string;
+  name: string;
+  alternateName: string;
+  serviceType: string;
+  category: string;
+  description: string;
+  url: string;
+  image: string;
+  provider: {
+    '@type': 'LocalBusiness';
+    '@id': string;
+    name: string;
+    telephone: string;
+    email: string;
+  };
+  brand: {
+    '@type': 'Brand';
+    name: string;
+    alternateName: string;
+  };
+  areaServed: Array<{
+    '@type': 'City' | 'Country';
+    name: string;
+  }>;
+  audience: {
+    '@type': 'BusinessAudience';
+    audienceType: string;
+  };
+  termsOfService: string;
+  serviceOutput: string;
+  offers: {
+    '@type': 'AggregateOffer';
+    priceCurrency: 'RUB';
+    lowPrice: string;
+    highPrice: string;
+    offerCount: number;
+    url: string;
+  };
+  hasOfferCatalog: ServiceOfferCatalogSchema;
 }
 
 export interface OrganizationJsonLd {
@@ -111,10 +180,29 @@ export interface LocalBusinessJsonLd {
     longitude: number;
   };
   openingHoursSpecification: OpeningHoursSpecificationSchema[];
+  contactPoint: Array<{
+    '@type': 'ContactPoint';
+    telephone: string;
+    email: string;
+    contactType: string;
+    areaServed: string;
+    availableLanguage: string[];
+    hoursAvailable: OpeningHoursSpecificationSchema;
+  }>;
   areaServed: Array<{
     '@type': 'City' | 'Country';
     name: string;
   }>;
+  knowsAbout: string[];
+  makesOffer: Array<{
+    '@type': 'Offer';
+    itemOffered: {
+      '@type': 'Service';
+      '@id': string;
+      name: string;
+    };
+  }>;
+  hasOfferCatalog: ServiceOfferCatalogSchema;
   parentOrganization: {
     '@id': string;
   };
@@ -166,6 +254,145 @@ function buildOpeningHoursSpecification(): OpeningHoursSpecificationSchema {
   };
 }
 
+function buildServiceOfferCatalog(cleanOrigin: string): ServiceOfferCatalogSchema {
+  const providerRef = { '@id': `${cleanOrigin}/#localbusiness` };
+  return {
+    '@type': 'OfferCatalog',
+    name: 'Пакеты студийного аудиопродакшна FMWorks (AudioWorks)',
+    itemListElement: [
+      {
+        '@type': 'Offer',
+        name: 'Голос и стиль (по готовому тексту, 24–48 ч)',
+        description:
+          'Запись актёра дубляжа по готовому сценарию, редакторская выверка под эфир, лицензионная музыка, сведение -14 LUFS и паспорт прав РАО/ВОИС.',
+        url: `${cleanOrigin}/pricing`,
+        price: '15000',
+        priceCurrency: 'RUB',
+        availability: 'https://schema.org/InStock',
+        itemOffered: {
+          '@type': 'Service',
+          name: 'Голос и стиль — озвучка и сведение ролика по готовому тексту',
+          description:
+            'Выпуск готового эфирного аудиоролика за 24–48 часов по тексту заказчика с паспортом прав РАО/ВОИС.',
+          provider: providerRef,
+        },
+      },
+      {
+        '@type': 'Offer',
+        name: 'Продакшн под ключ (3 сценария с нуля, 3–4 дня)',
+        description:
+          'Полный цикл производства аудиоролика с нуля: 3 концепции сценария, кастинг и режиссёрская запись, саунд-дизайн, проверка ФЗ-38 и паспорт прав.',
+        url: `${cleanOrigin}/pricing`,
+        price: '25000',
+        priceCurrency: 'RUB',
+        availability: 'https://schema.org/InStock',
+        itemOffered: {
+          '@type': 'Service',
+          name: 'Продакшн аудиоролика под ключ',
+          description:
+            'Разработка 3 сценариев с нуля, запись диктора кинодубляжа, саунд-дизайн и полная очистка прав за 3–4 дня.',
+          provider: providerRef,
+        },
+      },
+      {
+        '@type': 'Offer',
+        name: 'Игровой ролик / Мини-кино (2–3 актёра, 4–5 дней)',
+        description:
+          'Постановочный диалоговый аудиоролик на 2–3 голоса, фоли-эффекты и атмосфера, эфирный ресайз 15 сек и паспорт прав РАО/ВОИС.',
+        url: `${cleanOrigin}/pricing`,
+        price: '35000',
+        priceCurrency: 'RUB',
+        availability: 'https://schema.org/InStock',
+        itemOffered: {
+          '@type': 'Service',
+          name: 'Игровой аудиоролик / Мини-кино',
+          description:
+            'Сюжетная радиопостановка с несколькими актёрами, кинематографическим саунд-дизайном и ресайзом 15 сек за 4–5 дней.',
+          provider: providerRef,
+        },
+      },
+      {
+        '@type': 'Offer',
+        name: 'Срочный заказ аудиоролика от 1 часа (по договорной цене)',
+        description:
+          'Экстренная запись голоса и сведение по готовому тексту без разработки сценария от 1 часа по договорной цене.',
+        url: `${cleanOrigin}/faq#urgent-order`,
+        priceCurrency: 'RUB',
+        availability: 'https://schema.org/InStock',
+        itemOffered: {
+          '@type': 'Service',
+          name: 'Срочный выпуск аудиоролика от 1 часа',
+          description:
+            'Внеочередная запись диктора и мастеринг под радиоэфир от 1 часа по готовому тексту заказчика.',
+          provider: providerRef,
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * Генерирует структурированную разметку Schema.org `Service` для услуг аудиопродакшна FMWorks (AudioWorks).
+ */
+export function buildServiceJsonLd(
+  origin: string,
+  imagePath = DEFAULT_OG_IMAGE_PATH
+): ServiceJsonLd {
+  const cleanOrigin = normalizeSeoOrigin(origin);
+  const imageUrl = `${cleanOrigin}${imagePath}`;
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'Service',
+    '@id': `${cleanOrigin}/#service`,
+    name: 'Студийный аудиопродакшн и производство рекламных аудиороликов FMWorks (AudioWorks)',
+    alternateName: 'AudioWorks — производство радиороликов, сценариев и озвучки под ключ',
+    serviceType: 'Производство рекламных аудиороликов и студийный аудиопродакшн',
+    category: 'Аудиореклама, озвучка и саунд-дизайн для радио и бизнеса',
+    description: FMWORKS_BUSINESS_DETAILS.description,
+    url: `${cleanOrigin}/pricing`,
+    image: imageUrl,
+    provider: {
+      '@type': 'LocalBusiness',
+      '@id': `${cleanOrigin}/#localbusiness`,
+      name: FMWORKS_BUSINESS_DETAILS.brandName,
+      telephone: FMWORKS_BUSINESS_DETAILS.telephone,
+      email: FMWORKS_BUSINESS_DETAILS.email,
+    },
+    brand: {
+      '@type': 'Brand',
+      name: FMWORKS_BUSINESS_DETAILS.brandName,
+      alternateName: 'AudioWorks',
+    },
+    areaServed: [
+      {
+        '@type': 'City',
+        name: 'Тверь',
+      },
+      {
+        '@type': 'Country',
+        name: 'Россия',
+      },
+    ],
+    audience: {
+      '@type': 'BusinessAudience',
+      audienceType:
+        'Рекламодатели, отделы маркетинга, девелоперы, медицинские клиники, ритейл и B2B-компании',
+    },
+    termsOfService: `${cleanOrigin}/faq`,
+    serviceOutput:
+      'Эфирный мастер-файл (WAV 44.1 kHz / 16 bit + MP3 320 kbps, -14 LUFS), паспорт прав РАО/ВОИС и закрывающие документы по ЭДО',
+    offers: {
+      '@type': 'AggregateOffer',
+      priceCurrency: 'RUB',
+      lowPrice: '15000',
+      highPrice: '35000',
+      offerCount: 4,
+      url: `${cleanOrigin}/pricing`,
+    },
+    hasOfferCatalog: buildServiceOfferCatalog(cleanOrigin),
+  };
+}
+
 /**
  * Генерирует структурированную разметку Schema.org `Organization` для парсеров Яндекса и Google.
  */
@@ -213,8 +440,8 @@ export function buildOrganizationJsonLd(
 }
 
 /**
- * Генерирует структурированную разметку Schema.org `LocalBusiness` с адресом в Твери,
- * координатами, режимом работы, прайс-диапазоном и способами оплаты.
+ * Генерирует структурированную разметку Schema.org `LocalBusiness` с регионом,
+ * координатами, режимом работы, прайс-диапазоном, каталогом услуг и способами оплаты.
  */
 export function buildLocalBusinessJsonLd(
   origin: string,
@@ -243,6 +470,17 @@ export function buildLocalBusinessJsonLd(
       longitude: FMWORKS_BUSINESS_DETAILS.geo.longitude,
     },
     openingHoursSpecification: [buildOpeningHoursSpecification()],
+    contactPoint: [
+      {
+        '@type': 'ContactPoint',
+        telephone: FMWORKS_BUSINESS_DETAILS.telephone,
+        email: FMWORKS_BUSINESS_DETAILS.email,
+        contactType: 'customer service',
+        areaServed: 'RU',
+        availableLanguage: ['Russian'],
+        hoursAvailable: buildOpeningHoursSpecification(),
+      },
+    ],
     areaServed: [
       {
         '@type': 'City',
@@ -253,6 +491,18 @@ export function buildLocalBusinessJsonLd(
         name: 'Россия',
       },
     ],
+    knowsAbout: [...FMWORKS_BUSINESS_DETAILS.knowsAbout],
+    makesOffer: [
+      {
+        '@type': 'Offer',
+        itemOffered: {
+          '@type': 'Service',
+          '@id': `${cleanOrigin}/#service`,
+          name: 'Студийный аудиопродакшн и производство рекламных аудиороликов FMWorks (AudioWorks)',
+        },
+      },
+    ],
+    hasOfferCatalog: buildServiceOfferCatalog(cleanOrigin),
     parentOrganization: {
       '@id': `${cleanOrigin}/#organization`,
     },
@@ -308,6 +558,23 @@ export function upsertJsonLdScriptInHead(
 }
 
 /**
+ * Автоматически внедряет JSON-LD схему `Service` в `<head>` документа.
+ */
+export function injectServiceSchemaIntoDocument(
+  origin?: string,
+  imagePath = DEFAULT_OG_IMAGE_PATH
+): ServiceJsonLd {
+  const resolvedOrigin =
+    origin ||
+    (typeof window !== 'undefined' && window.location.origin
+      ? window.location.origin
+      : 'https://fmworks.ru');
+  const service = buildServiceJsonLd(resolvedOrigin, imagePath);
+  upsertJsonLdScriptInHead(SERVICE_JSONLD_SCRIPT_ID, service);
+  return service;
+}
+
+/**
  * Автоматически внедряет JSON-LD схему `WebSite` (Sitelinks Search Box) в `<head>` документа.
  */
 export function injectWebSiteSchemaIntoDocument(origin?: string): WebSiteJsonLd {
@@ -322,7 +589,7 @@ export function injectWebSiteSchemaIntoDocument(origin?: string): WebSiteJsonLd 
 }
 
 /**
- * Автоматически внедряет JSON-LD схемы `Organization`, `LocalBusiness` и `WebSite` в `<head>` документа.
+ * Автоматически внедряет JSON-LD схемы `Organization`, `LocalBusiness`, `Service` и `WebSite` в `<head>` документа.
  */
 export function injectBusinessSchemasIntoDocument(
   origin?: string,
@@ -330,6 +597,7 @@ export function injectBusinessSchemasIntoDocument(
 ): {
   organization: OrganizationJsonLd;
   localBusiness: LocalBusinessJsonLd;
+  service: ServiceJsonLd;
   website: WebSiteJsonLd;
 } {
   const resolvedOrigin =
@@ -340,11 +608,13 @@ export function injectBusinessSchemasIntoDocument(
 
   const organization = buildOrganizationJsonLd(resolvedOrigin, imagePath);
   const localBusiness = buildLocalBusinessJsonLd(resolvedOrigin, imagePath);
+  const service = buildServiceJsonLd(resolvedOrigin, imagePath);
   const website = buildWebSiteJsonLd(resolvedOrigin);
 
   upsertJsonLdScriptInHead(ORGANIZATION_JSONLD_SCRIPT_ID, organization);
   upsertJsonLdScriptInHead(LOCAL_BUSINESS_JSONLD_SCRIPT_ID, localBusiness);
+  upsertJsonLdScriptInHead(SERVICE_JSONLD_SCRIPT_ID, service);
   upsertJsonLdScriptInHead(WEBSITE_JSONLD_SCRIPT_ID, website);
 
-  return { organization, localBusiness, website };
+  return { organization, localBusiness, service, website };
 }

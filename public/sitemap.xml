@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  <url>
+    <loc>https://fmworks.ru/</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2F</image:loc>
+      <image:title>FMWorks — студия коммерческого аудиопродакшна для радио и бизнеса</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://fmworks.ru/cases</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Fcases</image:loc>
+      <image:title>Кейсы аудиорекламы и отраслевые решения FMWorks</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://fmworks.ru/pricing</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Fpricing</image:loc>
+      <image:title>Тарифы на производство аудиороликов FMWorks — от 15 000 ₽</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://fmworks.ru/approach</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Fapproach</image:loc>
+      <image:title>Подход FMWorks к созданию эффективной аудиорекламы</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://fmworks.ru/faq</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Ffaq</image:loc>
+      <image:title>FAQ студии FMWorks — договор, оплата и срочный заказ от 1 часа</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://fmworks.ru/cases/industry/real-estate</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.85</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Fcases%2Findustry%2Freal-estate</image:loc>
+      <image:title>Аудиореклама для жилых комплексов и девелоперов — отраслевой стандарт FMWorks</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://fmworks.ru/cases/industry/medicine</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.85</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Fcases%2Findustry%2Fmedicine</image:loc>
+      <image:title>Аудиореклама для клиник, стоматологии и диагностики — отраслевой стандарт FMWorks</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://fmworks.ru/cases/industry/retail-fmcg</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.85</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Fcases%2Findustry%2Fretail-fmcg</image:loc>
+      <image:title>Аудиореклама для продуктовых брендов, торговых сетей и HoReCa — отраслевой стандарт FMWorks</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://fmworks.ru/cases/industry/b2b-finance</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.85</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Fcases%2Findustry%2Fb2b-finance</image:loc>
+      <image:title>Аудиореклама для банков, лизинга, логистики и B2B-сервисов — отраслевой стандарт FMWorks</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://fmworks.ru/cases/audioworks-reel</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.85</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Fcases%2Faudioworks-reel</image:loc>
+      <image:title>Промо-ролик FMWorks — Сильная реклама не кричит в ухо — она включает кино в голове | Кейс FMWorks</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://fmworks.ru/cases/dmitrogorsky</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Fcases%2Fdmitrogorsky</image:loc>
+      <image:title>Дмитрогорский продукт — Вкус, который слышно даже в утренней пробке | Кейс FMWorks</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://fmworks.ru/cases/business-estate</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Fcases%2Fbusiness-estate</image:loc>
+      <image:title>Квартал бизнес-класса — Тихая уверенность вместо кричащих распродаж | Кейс FMWorks</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://fmworks.ru/cases/medical-clinics</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Fcases%2Fmedical-clinics</image:loc>
+      <image:title>Сеть многопрофильных клиник — Человеческая интонация там, где все читают по бумажке | Кейс FMWorks</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://fmworks.ru/approach/phonebook-syndrome</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.75</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Fapproach%2Fphonebook-syndrome</image:loc>
+      <image:title>Синдром телефонного справочника: почему два контакта в ролике обнуляют звонки — разбор FMWorks</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://fmworks.ru/approach/fake-radio-euphoria</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.75</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Fapproach%2Ffake-radio-euphoria</image:loc>
+      <image:title>Фальшивый радио-восторг: как дежурная дикторская подача включает рекламную глухоту — разбор FMWorks</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://fmworks.ru/approach/lost-first-three-seconds</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.75</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Fapproach%2Flost-first-three-seconds</image:loc>
+      <image:title>Потерянные первые 3 секунды: почему нельзя начинать ролик с названия компании — разбор FMWorks</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://fmworks.ru/approach/disclaimer-ate-the-offer</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.75</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Fapproach%2Fdisclaimer-ate-the-offer</image:loc>
+      <image:title>Юридический хвост, съевший оффер: ошибки расчёта хронометража в ЖК и медицине — разбор FMWorks</image:title>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://fmworks.ru/approach/wrong-daypart-trap</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.75</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Fapproach%2Fwrong-daypart-trap</image:loc>
+      <image:title>Ловушка утреннего прайма: когда дневные и вечерние слоты дают в 1,8 раза больше заявок — разбор FMWorks</image:title>
+    </image:image>
+  </url>
+</urlset>

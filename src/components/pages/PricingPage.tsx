@@ -14,6 +14,7 @@ import {
   OrderFormatId,
 } from '../../data/pricingData';
 import { BROADCAST_TECH_STANDARD_ROWS } from '../../data/studioDocumentsCore';
+import { OgSharePreviewCard } from '../OgSharePreviewCard';
 import { OptimizedImage } from '../OptimizedImage';
 import { PricingPackageCharts } from '../PricingPackageCharts';
 import { PricingSection } from '../PricingSection';
@@ -426,8 +427,14 @@ export function PricingPage({
         </div>
       </section>
 
-      {/* Мост к единому разделу частых вопросов (/faq) */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 pb-12">
+      {/* Мост к единому разделу частых вопросов (/faq) и шеринг карточки услуг */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 pb-12 space-y-8">
+        <OgSharePreviewCard
+          routePath="/pricing"
+          shareTitle="Тарифы на аудиоролики FMWorks — от 15 000 ₽ по договору и ЭДО"
+          shareDescription="3 сценария, голоса кинодубляжа, саунд-дизайн -14 LUFS, паспорт прав РАО/ВОИС и срочный заказ от 1 часа."
+          downloadFileSlug="fmworks-pricing"
+        />
         <div className="pt-8 border-t border-[#111111]/10 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <p className="text-sm sm:text-base text-[#111111]/70 dark:text-[#F4F3EF]/70">
             Вопросы по проверке контрагента, 100% предоплате по договору или картой, срочному

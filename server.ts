@@ -18,6 +18,10 @@ import {
   injectRouteSeoIntoHtml,
   resolveServerRouteLookup,
 } from './src/data/seoServerTemplates.ts';
+import {
+  renderOgPngForRoute,
+  renderOgSvgForRoute,
+} from './src/server/ogImageRenderer.ts';
 import { convertRasterFileToWebp } from './scripts/generate-webp.mjs';
 import { buildTurboPagesXml } from './src/data/turboFeed.ts';
 import {
@@ -7743,16 +7747,15 @@ async function startServer() {
 
   app.get('/sitemap.xml', (req, res) => {
     const cms = readPersistedCmsSnapshot();
-    const caseSlugs = cms?.portfolioCases
-      ?.filter((c) => c.published !== false)
-      .map((c) => c.id);
     sendCompressibleText(
       req,
       res,
       'application/xml; charset=utf-8',
       buildSitemapXml(resolveRequestPublicOrigin(req), {
         airtimeEnabled: AIRTIME_SALES_ENABLED,
-        caseSlugs,
+        cmsCases: cms?.portfolioCases,
+        flagshipReel: cms?.flagshipReel,
+        lastmodIsoDate: cms?.updatedAt,
       }),
       'public, max-age=3600'
     );
@@ -7783,6 +7786,53 @@ async function startServer() {
     res.setHeader('Service-Worker-Allowed', '/');
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.sendFile(resolvedSwPath);
+  });
+
+  app.get('/api/og.png', (req, res) => {
+    try {
+      const requestedRoute =
+        typeof req.query.route === 'string'
+          ? req.query.route
+          : typeof req.query.path === 'string'
+            ? req.query.path
+            : '/';
+      const cms = readPersistedCmsSnapshot();
+      const { png } = renderOgPngForRoute(__dirname, requestedRoute, {
+        cmsCases: cms?.portfolioCases,
+        flagshipReel: cms?.flagshipReel,
+        cacheKeySuffix: cms?.updatedAt ?? 'static',
+      });
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      res.send(png);
+    } catch (err) {
+      console.error('[OG PNG] Failed to render OpenGraph image:', err);
+      res.status(500).type('text/plain').send('Failed to render OpenGraph image');
+    }
+  });
+
+  app.get('/api/og.svg', (req, res) => {
+    try {
+      const requestedRoute =
+        typeof req.query.route === 'string'
+          ? req.query.route
+          : typeof req.query.path === 'string'
+            ? req.query.path
+            : '/';
+      const cms = readPersistedCmsSnapshot();
+      const { svg } = renderOgSvgForRoute(__dirname, requestedRoute, {
+        cmsCases: cms?.portfolioCases,
+        flagshipReel: cms?.flagshipReel,
+      });
+      res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      res.send(svg);
+    } catch (err) {
+      console.error('[OG SVG] Failed to render OpenGraph SVG:', err);
+      res.status(500).type('text/plain').send('Failed to render OpenGraph SVG');
+    }
   });
 
   // OWASP WSTG-ERRH-01: все неизвестные /api/* маршруты возвращают 404 JSON, не доходя до SPA fallback

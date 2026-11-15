@@ -29,8 +29,90 @@
     <meta property="og:type" content="website" />
     <meta
       property="og:image"
-      content="/src/assets/images/hero_studio_editorial_1794399404984.jpg"
+      content="https://fmworks.ru/api/og.png?route=%2F"
     />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:type" content="image/png" />
+    <meta
+      property="og:image:alt"
+      content="FMWorks — студия коммерческого аудиопродакшна для радио и бизнеса"
+    />
+    <script id="fmworks-localbusiness-jsonld" type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "LocalBusiness",
+        "@id": "https://fmworks.ru/#localbusiness",
+        "name": "FMWorks",
+        "alternateName": "Аудиопродакшн-студия FMWorks®",
+        "description": "Студия аудиопродакшна полного цикла: рекламные аудиоролики для радио и бизнеса от 24–48 ч по готовому тексту и 3–4 дня под ключ с паспортом прав РАО/ВОИС и гарантией прохождения модерации по ФЗ-38.",
+        "url": "https://fmworks.ru",
+        "image": "https://fmworks.ru/src/assets/images/hero_studio_editorial_1794399404984.jpg",
+        "email": "art@artmspektr.ru",
+        "telephone": "+79040000911",
+        "priceRange": "15 000 – 35 000 ₽",
+        "currenciesAccepted": "RUB",
+        "paymentAccepted": "Безналичный расчёт (ЭДО), банковская карта (54-ФЗ), СБП",
+        "address": {
+          "@type": "PostalAddress",
+          "streetAddress": "",
+          "postalCode": "170100",
+          "addressLocality": "Тверь",
+          "addressRegion": "Тверская область",
+          "addressCountry": "RU"
+        },
+        "geo": {
+          "@type": "GeoCoordinates",
+          "latitude": 56.859611,
+          "longitude": 35.911896
+        },
+        "openingHoursSpecification": [
+          {
+            "@type": "OpeningHoursSpecification",
+            "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+            "opens": "09:00",
+            "closes": "19:00"
+          }
+        ],
+        "areaServed": [
+          { "@type": "City", "name": "Тверь" },
+          { "@type": "Country", "name": "Россия" }
+        ]
+      }
+    </script>
+    <script id="fmworks-service-jsonld" type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Service",
+        "@id": "https://fmworks.ru/#service",
+        "name": "Студийный аудиопродакшн и производство рекламных аудиороликов FMWorks (AudioWorks)",
+        "alternateName": "AudioWorks — производство радиороликов, сценариев и озвучки под ключ",
+        "serviceType": "Производство рекламных аудиороликов и студийный аудиопродакшн",
+        "category": "Аудиореклама, озвучка и саунд-дизайн для радио и бизнеса",
+        "description": "Студия аудиопродакшна полного цикла: рекламные аудиоролики для радио и бизнеса от 24–48 ч по готовому тексту и 3–4 дня под ключ с паспортом прав РАО/ВОИС и гарантией прохождения модерации по ФЗ-38.",
+        "url": "https://fmworks.ru/pricing",
+        "image": "https://fmworks.ru/src/assets/images/hero_studio_editorial_1794399404984.jpg",
+        "provider": {
+          "@type": "LocalBusiness",
+          "@id": "https://fmworks.ru/#localbusiness",
+          "name": "FMWorks",
+          "telephone": "+79040000911",
+          "email": "art@artmspektr.ru"
+        },
+        "areaServed": [
+          { "@type": "City", "name": "Тверь" },
+          { "@type": "Country", "name": "Россия" }
+        ],
+        "offers": {
+          "@type": "AggregateOffer",
+          "priceCurrency": "RUB",
+          "lowPrice": "15000",
+          "highPrice": "35000",
+          "offerCount": 4,
+          "url": "https://fmworks.ru/pricing"
+        }
+      }
+    </script>
   </head>
   <body class="bg-[#F7F6F2] text-[#111111] dark:bg-[#0D0D0F] dark:text-[#F4F3EF] antialiased selection:bg-[#FF4820] selection:text-white">
     <div id="root"></div>

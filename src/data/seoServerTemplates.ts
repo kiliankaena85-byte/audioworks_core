@@ -1,4 +1,8 @@
-import { BRAND_CASES, FLAGSHIP_STUDIO_REEL } from './casesData.ts';
+import {
+  BRAND_CASES,
+  type BrandCasePoster,
+  FLAGSHIP_STUDIO_REEL,
+} from './casesData.ts';
 import {
   buildFaqPageJsonLd,
   EDITORIAL_FAQ_ITEMS,
@@ -17,30 +21,39 @@ import {
   VALID_INDUSTRY_SLUGS,
 } from './platformRouter.ts';
 import {
+  buildRouteOgImageUrl,
+  OG_IMAGE_HEIGHT,
+  OG_IMAGE_WIDTH,
+  resolveOgCardSpecForPath,
+} from './ogImageTemplates.ts';
+import {
+  INDUSTRY_SOLUTIONS,
+  RADIO_MISTAKE_ARTICLES,
+} from './multiPageContentData.ts';
+import { SEO_STATION_TITLE_BY_SLUG } from './seoRouteLabels.ts';
+import type { PortfolioCaseRecord } from './studioCmsTypes.ts';
+import {
   buildLocalBusinessJsonLd,
   buildOrganizationJsonLd,
+  buildServiceJsonLd,
   buildWebSiteJsonLd,
   LOCAL_BUSINESS_JSONLD_SCRIPT_ID,
   ORGANIZATION_JSONLD_SCRIPT_ID,
+  SERVICE_JSONLD_SCRIPT_ID,
   WEBSITE_JSONLD_SCRIPT_ID,
 } from './seoUtils.ts';
 import { CUSTOM_CONSULT_PRICING_ROW, EDITORIAL_PRICING_ROWS } from './pricingData.ts';
 import { BROADCAST_TECH_STANDARD_ROWS } from './studioDocumentsCore.ts';
 
-export const STATIC_MISTAKE_ARTICLE_SLUGS: readonly string[] = [
-  'phonebook-syndrome',
-  'fake-radio-euphoria',
-  'lost-first-three-seconds',
-  'disclaimer-ate-the-offer',
-  'wrong-daypart-trap',
-] as const;
+export const DEFAULT_SITEMAP_LASTMOD = '2026-11-15';
+
+export const STATIC_MISTAKE_ARTICLE_SLUGS: readonly string[] =
+  RADIO_MISTAKE_ARTICLES.map((article) => article.slug);
 
 export const DEFAULT_CASE_SLUGS: readonly string[] = [
-  'dmitrogorsky',
-  'business-estate',
-  'medical-clinics',
-  'auto-trade-in',
-] as const;
+  FLAGSHIP_STUDIO_REEL.id,
+  ...BRAND_CASES.map((item) => item.id),
+];
 
 const SERVER_INDUSTRY_TITLES: Record<string, string> = {
   'real-estate': 'Аудиореклама для жилых комплексов и девелоперов',
@@ -202,48 +215,144 @@ export function buildLlmsTxt(origin: string): string {
   ].join('\n');
 }
 
+export type SitemapRouteCategory =
+  | 'core'
+  | 'services'
+  | 'industry-service'
+  | 'case'
+  | 'article'
+  | 'station';
+
+export interface SitemapUrlEntry {
+  path: string;
+  loc: string;
+  lastmod: string;
+  changefreq: 'daily' | 'weekly' | 'monthly';
+  priority: string;
+  category: SitemapRouteCategory;
+  imageUrl?: string;
+  imageTitle?: string;
+}
+
 export interface BuildSitemapOptions {
   airtimeEnabled?: boolean;
   caseSlugs?: readonly string[];
+  cmsCases?: readonly Pick<
+    PortfolioCaseRecord,
+    'id' | 'client' | 'headline' | 'published'
+  >[];
+  flagshipReel?: Pick<BrandCasePoster, 'id' | 'client' | 'headline'>;
   articleSlugs?: readonly string[];
+  stationSlugs?: readonly string[];
   lastmodIsoDate?: string;
+  includeImages?: boolean;
+}
+
+function normalizeIsoDateOnly(rawDate?: string): string {
+  const trimmed = (rawDate ?? '').trim();
+  const match = /^(\d{4}-\d{2}-\d{2})/.exec(trimmed);
+  if (match) return match[1];
+  return new Date().toISOString().slice(0, 10);
 }
 
 /**
- * Генерирует актуальный `sitemap.xml` для всех публичных разделов платформы FMWorks.
+ * Автоматически собирает структурированный список всех индексируемых URL платформы
+ * на основе актуальных роутов, опубликованных кейсов (включая CMS), отраслевых услуг и статей.
  */
-export function buildSitemapXml(
+export function collectSitemapRouteEntries(
   origin: string,
   options: BuildSitemapOptions = {}
-): string {
+): SitemapUrlEntry[] {
   const cleanOrigin = normalizeOrigin(origin);
   const airtimeEnabled = isAirtimeSalesEnabled(options.airtimeEnabled);
-  const lastmod =
-    options.lastmodIsoDate || new Date().toISOString().slice(0, 10);
+  const lastmod = normalizeIsoDateOnly(options.lastmodIsoDate);
+  const includeImages = options.includeImages !== false;
 
-  const uniquePaths = new Set<string>([
-    '/',
-    '/cases',
-    '/pricing',
-    '/approach',
-    '/faq',
-  ]);
+  const cmsPublishedCases =
+    options.cmsCases && options.cmsCases.length > 0
+      ? options.cmsCases.filter((c) => c.published !== false)
+      : null;
+
+  const flagship = options.flagshipReel ?? FLAGSHIP_STUDIO_REEL;
+
+  const candidateSpecs: Array<{
+    path: string;
+    category: SitemapRouteCategory;
+    changefreq: 'daily' | 'weekly' | 'monthly';
+    priority: string;
+  }> = [
+    { path: '/', category: 'core', changefreq: 'weekly', priority: '1.0' },
+    { path: '/cases', category: 'core', changefreq: 'weekly', priority: '0.9' },
+    {
+      path: '/pricing',
+      category: 'services',
+      changefreq: 'weekly',
+      priority: '0.9',
+    },
+    {
+      path: '/approach',
+      category: 'core',
+      changefreq: 'monthly',
+      priority: '0.8',
+    },
+    { path: '/faq', category: 'core', changefreq: 'monthly', priority: '0.9' },
+  ];
 
   if (airtimeEnabled) {
-    uniquePaths.add('/hot-air');
+    candidateSpecs.push({
+      path: '/hot-air',
+      category: 'services',
+      changefreq: 'daily',
+      priority: '0.8',
+    });
+    const stationSlugs =
+      options.stationSlugs && options.stationSlugs.length > 0
+        ? options.stationSlugs
+        : Object.keys(SEO_STATION_TITLE_BY_SLUG);
+    for (const slug of stationSlugs) {
+      const clean = slug.trim().toLowerCase();
+      if (clean) {
+        candidateSpecs.push({
+          path: `/hot-air/stations/${encodeURIComponent(clean)}`,
+          category: 'station',
+          changefreq: 'weekly',
+          priority: '0.7',
+        });
+      }
+    }
   }
 
   for (const industrySlug of VALID_INDUSTRY_SLUGS) {
-    uniquePaths.add(`/cases/industry/${industrySlug}`);
+    if (INDUSTRY_SOLUTIONS[industrySlug]) {
+      candidateSpecs.push({
+        path: `/cases/industry/${industrySlug}`,
+        category: 'industry-service',
+        changefreq: 'monthly',
+        priority: '0.85',
+      });
+    }
   }
 
-  const caseSlugs =
-    options.caseSlugs && options.caseSlugs.length > 0
-      ? options.caseSlugs
-      : DEFAULT_CASE_SLUGS;
-  for (const slug of caseSlugs) {
+  const resolvedCaseSlugs: string[] = (() => {
+    if (options.caseSlugs && options.caseSlugs.length > 0) {
+      return [...options.caseSlugs];
+    }
+    if (cmsPublishedCases) {
+      return [flagship.id, ...cmsPublishedCases.map((c) => c.id)];
+    }
+    return [...DEFAULT_CASE_SLUGS];
+  })();
+
+  for (const slug of resolvedCaseSlugs) {
     const clean = slug.trim().toLowerCase();
-    if (clean) uniquePaths.add(`/cases/${encodeURIComponent(clean)}`);
+    if (clean) {
+      candidateSpecs.push({
+        path: `/cases/${encodeURIComponent(clean)}`,
+        category: 'case',
+        changefreq: 'monthly',
+        priority: clean === flagship.id.toLowerCase() ? '0.85' : '0.8',
+      });
+    }
   }
 
   const articleSlugs =
@@ -252,32 +361,102 @@ export function buildSitemapXml(
       : STATIC_MISTAKE_ARTICLE_SLUGS;
   for (const slug of articleSlugs) {
     const clean = slug.trim().toLowerCase();
-    if (clean) uniquePaths.add(`/approach/${encodeURIComponent(clean)}`);
+    if (clean) {
+      candidateSpecs.push({
+        path: `/approach/${encodeURIComponent(clean)}`,
+        category: 'article',
+        changefreq: 'monthly',
+        priority: '0.75',
+      });
+    }
   }
 
-  const urlsXml = Array.from(uniquePaths)
-    .map((routePath) => {
-      const priority =
-        routePath === '/'
-          ? '1.0'
-          : routePath === '/pricing' || routePath === '/cases' || routePath === '/faq'
-            ? '0.9'
-            : '0.8';
-      const changefreq = routePath === '/' ? 'weekly' : 'monthly';
+  const seenPaths = new Set<string>();
+  const entries: SitemapUrlEntry[] = [];
+
+  for (const spec of candidateSpecs) {
+    if (seenPaths.has(spec.path)) continue;
+    const parsed = parsePlatformRoute(spec.path, '', '', { airtimeEnabled });
+    const lookup = resolveServerRouteLookup(
+      spec.path,
+      cmsPublishedCases ?? undefined,
+      { airtimeEnabled }
+    );
+    const meta = resolveRouteSeoMeta(parsed, lookup, { airtimeEnabled });
+    if (meta.noindex) continue;
+
+    seenPaths.add(spec.path);
+    const loc = `${cleanOrigin}${spec.path}`;
+
+    let imageUrl: string | undefined;
+    let imageTitle: string | undefined;
+    if (includeImages) {
+      imageUrl = buildRouteOgImageUrl(cleanOrigin, meta.canonicalPath);
+      const ogSpec = resolveOgCardSpecForPath(meta.canonicalPath, {
+        cmsCases: cmsPublishedCases ?? undefined,
+        flagshipReel: options.flagshipReel,
+      });
+      imageTitle = ogSpec.alt || meta.title;
+    }
+
+    entries.push({
+      path: spec.path,
+      loc,
+      lastmod,
+      changefreq: spec.changefreq,
+      priority: spec.priority,
+      category: spec.category,
+      ...(imageUrl ? { imageUrl, imageTitle } : {}),
+    });
+  }
+
+  return entries;
+}
+
+/**
+ * Генерирует актуальный `sitemap.xml` (стандарт Sitemap 0.9 + Image Sitemap)
+ * на основе списка доступных роутов, опубликованных кейсов и отраслевых услуг FMWorks.
+ */
+export function buildSitemapXml(
+  origin: string,
+  options: BuildSitemapOptions = {}
+): string {
+  const entries = collectSitemapRouteEntries(origin, options);
+  const includeImages = options.includeImages !== false;
+
+  const urlsXml = entries
+    .map((entry) => {
+      const imageBlock =
+        includeImages && entry.imageUrl
+          ? [
+              '    <image:image>',
+              `      <image:loc>${escapeXmlText(entry.imageUrl)}</image:loc>`,
+              ...(entry.imageTitle
+                ? [`      <image:title>${escapeXmlText(entry.imageTitle)}</image:title>`]
+                : []),
+              '    </image:image>',
+            ]
+          : [];
+
       return [
         '  <url>',
-        `    <loc>${escapeXmlText(`${cleanOrigin}${routePath}`)}</loc>`,
-        `    <lastmod>${escapeXmlText(lastmod)}</lastmod>`,
-        `    <changefreq>${changefreq}</changefreq>`,
-        `    <priority>${priority}</priority>`,
+        `    <loc>${escapeXmlText(entry.loc)}</loc>`,
+        `    <lastmod>${escapeXmlText(entry.lastmod)}</lastmod>`,
+        `    <changefreq>${entry.changefreq}</changefreq>`,
+        `    <priority>${entry.priority}</priority>`,
+        ...imageBlock,
         '  </url>',
       ].join('\n');
     })
     .join('\n');
 
+  const urlsetHeader = includeImages
+    ? '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"\n        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">'
+    : '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">';
+
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    urlsetHeader,
     urlsXml,
     '</urlset>',
     '',
@@ -479,6 +658,16 @@ function upsertHeadTurboRssLink(html: string, feedUrl: string): string {
   return html.replace('</head>', `    ${tag}\n  </head>`);
 }
 
+function upsertHeadSitemapLink(html: string, sitemapUrl: string): string {
+  const escaped = escapeHtmlAttr(sitemapUrl);
+  const tag = `<link rel="sitemap" type="application/xml" title="Sitemap" href="${escaped}" />`;
+  const regex = /<link\b[^>]*\brel=["']sitemap["'][^>]*>/i;
+  if (regex.test(html)) {
+    return html.replace(regex, tag);
+  }
+  return html.replace('</head>', `    ${tag}\n  </head>`);
+}
+
 function upsertHeadJsonLdScript(
   html: string,
   scriptId: string,
@@ -526,7 +715,7 @@ export function injectRouteSeoIntoHtml(
   });
 
   const fullUrl = `${cleanOrigin}${meta.canonicalPath}`;
-  const ogImageUrl = `${cleanOrigin}${DEFAULT_OG_IMAGE_PATH}`;
+  const ogImageUrl = buildRouteOgImageUrl(cleanOrigin, meta.canonicalPath);
   const robotsValue = meta.noindex ? 'noindex, nofollow' : 'index, follow';
 
   let out = html.replace(
@@ -549,8 +738,23 @@ export function injectRouteSeoIntoHtml(
   out = upsertHeadMetaTag(out, 'property', 'og:description', meta.description);
   out = upsertHeadMetaTag(out, 'property', 'og:url', fullUrl);
   out = upsertHeadMetaTag(out, 'property', 'og:image', ogImageUrl);
+  out = upsertHeadMetaTag(
+    out,
+    'property',
+    'og:image:width',
+    String(OG_IMAGE_WIDTH)
+  );
+  out = upsertHeadMetaTag(
+    out,
+    'property',
+    'og:image:height',
+    String(OG_IMAGE_HEIGHT)
+  );
+  out = upsertHeadMetaTag(out, 'property', 'og:image:type', 'image/png');
+  out = upsertHeadMetaTag(out, 'property', 'og:image:alt', meta.title);
   out = upsertHeadMetaTag(out, 'property', 'og:site_name', 'FMWorks');
   out = upsertHeadLinkTag(out, 'canonical', fullUrl);
+  out = upsertHeadSitemapLink(out, `${cleanOrigin}/sitemap.xml`);
   out = upsertHeadTurboRssLink(out, `${cleanOrigin}/turbo-pages.xml`);
   out = upsertHeadJsonLdScript(
     out,
@@ -566,6 +770,11 @@ export function injectRouteSeoIntoHtml(
     out,
     LOCAL_BUSINESS_JSONLD_SCRIPT_ID,
     buildLocalBusinessJsonLd(cleanOrigin, DEFAULT_OG_IMAGE_PATH)
+  );
+  out = upsertHeadJsonLdScript(
+    out,
+    SERVICE_JSONLD_SCRIPT_ID,
+    buildServiceJsonLd(cleanOrigin, DEFAULT_OG_IMAGE_PATH)
   );
   out = upsertHeadJsonLdScript(
     out,

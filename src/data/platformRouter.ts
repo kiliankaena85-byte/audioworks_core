@@ -1,14 +1,22 @@
 import { AIRTIME_SALES_ENABLED, isAirtimeSalesEnabled } from './platformFeatures.ts';
 import {
+  buildRouteOgImageUrl,
+  OG_IMAGE_HEIGHT,
+  OG_IMAGE_WIDTH,
+} from './ogImageTemplates.ts';
+import {
   buildLocalBusinessJsonLd,
   buildOrganizationJsonLd,
+  buildServiceJsonLd,
   buildWebSiteJsonLd,
   DEFAULT_OG_IMAGE_PATH,
   FMWORKS_BUSINESS_DETAILS,
   injectBusinessSchemasIntoDocument,
+  injectServiceSchemaIntoDocument,
   injectWebSiteSchemaIntoDocument,
   LOCAL_BUSINESS_JSONLD_SCRIPT_ID,
   ORGANIZATION_JSONLD_SCRIPT_ID,
+  SERVICE_JSONLD_SCRIPT_ID,
   upsertJsonLdScriptInHead,
   WEBSITE_JSONLD_SCRIPT_ID,
 } from './seoUtils.ts';
@@ -437,13 +445,16 @@ export interface RouteSeoLookupTitles {
 export {
   buildLocalBusinessJsonLd,
   buildOrganizationJsonLd,
+  buildServiceJsonLd,
   buildWebSiteJsonLd,
   DEFAULT_OG_IMAGE_PATH,
   FMWORKS_BUSINESS_DETAILS,
   injectBusinessSchemasIntoDocument,
+  injectServiceSchemaIntoDocument,
   injectWebSiteSchemaIntoDocument,
   LOCAL_BUSINESS_JSONLD_SCRIPT_ID,
   ORGANIZATION_JSONLD_SCRIPT_ID,
+  SERVICE_JSONLD_SCRIPT_ID,
   WEBSITE_JSONLD_SCRIPT_ID,
 };
 
@@ -728,7 +739,7 @@ export function buildRouteSchemaGraph(
 ): Record<string, unknown> {
   const cleanOrigin = origin.replace(/\/+$/g, '') || 'https://fmworks.ru';
   const fullUrl = `${cleanOrigin}${meta.canonicalPath}`;
-  const ogImageUrl = `${cleanOrigin}${DEFAULT_OG_IMAGE_PATH}`;
+  const ogImageUrl = buildRouteOgImageUrl(cleanOrigin, meta.canonicalPath);
 
   const organizationNode: Record<string, unknown> = {
     '@type': 'ProfessionalService',
@@ -865,7 +876,7 @@ export function applyRouteSeoToDocument(meta: RouteSeoMetadata): void {
       ? window.location.origin
       : 'https://fmworks.ru';
   const fullUrl = `${origin}${meta.canonicalPath}`;
-  const ogImageUrl = `${origin}${DEFAULT_OG_IMAGE_PATH}`;
+  const ogImageUrl = buildRouteOgImageUrl(origin, meta.canonicalPath);
 
   upsertMeta('name', 'description', meta.description);
   upsertMeta(
@@ -885,6 +896,10 @@ export function applyRouteSeoToDocument(meta: RouteSeoMetadata): void {
   upsertMeta('property', 'og:description', meta.description);
   upsertMeta('property', 'og:url', fullUrl);
   upsertMeta('property', 'og:image', ogImageUrl);
+  upsertMeta('property', 'og:image:width', String(OG_IMAGE_WIDTH));
+  upsertMeta('property', 'og:image:height', String(OG_IMAGE_HEIGHT));
+  upsertMeta('property', 'og:image:type', 'image/png');
+  upsertMeta('property', 'og:image:alt', meta.title);
   upsertMeta('property', 'og:site_name', 'FMWorks');
 
   let canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');

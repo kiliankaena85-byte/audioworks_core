@@ -28,6 +28,7 @@ import {
 } from '../../data/platformRouter';
 import { formatNumberSpaced, radioInventoryStore } from '../../data/radioInventory';
 import { CasesGallery } from '../CasesGallery';
+import { OgSharePreviewCard } from '../OgSharePreviewCard';
 import { OptimizedImage } from '../OptimizedImage';
 
 interface CasesPageProps {
@@ -364,6 +365,14 @@ function CaseDetailSubpage({
           </div>
         </div>
 
+        {/* Карточка шеринга с Canvas API OpenGraph-превью */}
+        <OgSharePreviewCard
+          routePath={`/cases/${item.id}`}
+          shareTitle={`${item.client}: ${item.headline} | FMWorks`}
+          shareDescription={item.summary}
+          downloadFileSlug={`case-${item.id}`}
+        />
+
         {/* 3 измеримых показателя кейса */}
         <div className="grid grid-cols-1 md:grid-cols-3 border-y border-[#111111]/12 dark:border-white/12 divide-y md:divide-y-0 md:divide-x divide-[#111111]/12 dark:divide-white/12 tabular-nums">
           {detail.metrics.map((m, i) => (
@@ -667,6 +676,13 @@ function IndustrySolutionSubpage({
               </div>
             ))}
           </div>
+
+          <OgSharePreviewCard
+            routePath={`/cases/industry/${spec.slug}`}
+            shareTitle={`${spec.fullTitle} | FMWorks`}
+            shareDescription={spec.heroSummary}
+            downloadFileSlug={`industry-${spec.slug}`}
+          />
         </div>
 
         {/* Контекст слушателя и эталонный сценарий */}

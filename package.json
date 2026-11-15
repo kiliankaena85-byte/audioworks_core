@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build",
+    "seo:sitemap": "tsx scripts/generate-sitemap.ts",
+    "build": "tsx scripts/generate-sitemap.ts && vite build",
     "start": "node server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
@@ -17,6 +18,7 @@
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@fontsource/manrope": "^5.3.0",
     "@google/genai": "^3.2.0",
+    "@resvg/resvg-js": "^2.6.2",
     "@types/qrcode": "^1.5.6",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
