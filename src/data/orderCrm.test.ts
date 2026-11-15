@@ -75,7 +75,7 @@ test('Форматтеры счёта ЭДО, Telegram-уведомления, W
   assert.ok(seedOrder.mediaPlanSnapshot);
 
   const edoDoc = formatEdoInvoiceSpecificationDocument(seedOrder);
-  assert.ok(edoDoc.includes('СПЕЦИФИКАЦИЯ И СЧЁТ-ОФЕРТА ДЛЯ ЭДО'));
+  assert.ok(edoDoc.includes('ДОГОВОР, СПЕЦИФИКАЦИЯ И СЧЁТ НА ОПЛАТУ ДЛЯ ЭДО'));
   assert.ok(edoDoc.includes(seedOrder.orderNumber));
   assert.ok(edoDoc.includes('Business FM'));
   assert.ok(edoDoc.includes('Серебряный Дождь'));
@@ -118,7 +118,7 @@ test('Форматтеры ЭДО и Telegram корректно обрабат�
   };
 
   const edoDoc = formatEdoInvoiceSpecificationDocument(consultCardOrder);
-  assert.ok(edoDoc.includes('РАМОЧНЫЙ ДОГОВОР-ОФЕРТА, СПЕЦИФИКАЦИЯ И СЧЁТ-ОФЕРТА ДЛЯ ЭДО'));
+  assert.ok(edoDoc.includes('ДОГОВОР, СПЕЦИФИКАЦИЯ И СЧЁТ НА ОПЛАТУ ДЛЯ ЭДО'));
   assert.ok(edoDoc.includes('Договорная цена'));
   assert.ok(edoDoc.includes('54-ФЗ'));
   assert.ok(edoDoc.includes('100% предоплаты'));

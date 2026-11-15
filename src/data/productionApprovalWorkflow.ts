@@ -192,6 +192,52 @@ export interface SoundDropTokenPayload {
   expMs: number;
 }
 
+export interface SoundEngineerEmailGrantPayload {
+  v: 1;
+  orderId: string;
+  orderNumber: string;
+  engineerId: string;
+  engineerName: string;
+  gen: number;
+  expMs: number;
+}
+
+export type SoundEngineerEmailTriggerReason =
+  | 'stage_changed'
+  | 'script_approved'
+  | 'revision_requested'
+  | 'escalation_resolved'
+  | 'manual_dispatch';
+
+export interface SoundEngineerEmailNotificationRecord {
+  id: string;
+  createdAt: string;
+  orderId: string;
+  orderNumber: string;
+  engineerId: string;
+  engineerName: string;
+  engineerEmail: string;
+  recipientEmail?: string;
+  previousStageLabel: string | null;
+  currentStageLabel: string;
+  triggerReason: SoundEngineerEmailTriggerReason;
+  triggerSummary?: string;
+  subject: string;
+  plainBody: string;
+  htmlBody: string;
+  buttonLabel: string;
+  emailActionPath: string;
+  emailActionUrl: string;
+  directDropPath?: string;
+  directDropUrl?: string;
+  deliveryStatus: 'delivered_webhook' | 'queued_outbox';
+  deliveryState?: 'sent_webhook' | 'logged_preview' | 'skipped_no_email';
+  deliveryDetail: string;
+  clickedCount: number;
+  lastClickedAt: string | null;
+  lastIssuedDropUrl: string | null;
+}
+
 export const STUDIO_KANBAN_COLUMNS: readonly {
   id: StudioKanbanColumnId;
   stepCode: string;
@@ -1222,9 +1268,111 @@ export function verifySoundDropTokenWithSigner(
   }
 }
 
+export function issueSoundEngineerEmailGrantWithSigner(
+  payload: Omit<SoundEngineerEmailGrantPayload, 'v'>,
+  signHmacBase64Url: (signingInput: string) => string
+): string {
+  const fullPayload: SoundEngineerEmailGrantPayload = {
+    v: 1,
+    orderId: payload.orderId,
+    orderNumber: payload.orderNumber,
+    engineerId: payload.engineerId,
+    engineerName: payload.engineerName.slice(0, 64),
+    gen: payload.gen,
+    expMs: payload.expMs,
+  };
+  const bodyPart = encodeUtf8Base64Url(JSON.stringify(fullPayload));
+  const sigPart = signHmacBase64Url(`sound-email-grant-v1:${bodyPart}`);
+  return `${bodyPart}.${sigPart}`;
+}
+
+export function verifySoundEngineerEmailGrantWithSigner(
+  rawGrant: string | null | undefined,
+  signHmacBase64Url: (signingInput: string) => string,
+  nowMs: number,
+  options?: { expectedGeneration?: number }
+):
+  | { ok: true; payload: SoundEngineerEmailGrantPayload }
+  | { ok: false; reason: 'malformed' | 'bad_signature' | 'expired' | 'revoked' } {
+  if (!rawGrant || typeof rawGrant !== 'string') {
+    return { ok: false, reason: 'malformed' };
+  }
+  const trimmed = rawGrant.trim();
+  const dotIdx = trimmed.indexOf('.');
+  if (dotIdx <= 0 || dotIdx === trimmed.length - 1) {
+    return { ok: false, reason: 'malformed' };
+  }
+
+  const bodyPart = trimmed.slice(0, dotIdx);
+  const sigPart = trimmed.slice(dotIdx + 1);
+  const expectedSig = signHmacBase64Url(`sound-email-grant-v1:${bodyPart}`);
+
+  if (sigPart.length !== expectedSig.length) {
+    return { ok: false, reason: 'bad_signature' };
+  }
+  let diff = 0;
+  for (let i = 0; i < sigPart.length; i += 1) {
+    diff |= sigPart.charCodeAt(i) ^ expectedSig.charCodeAt(i);
+  }
+  if (diff !== 0) {
+    return { ok: false, reason: 'bad_signature' };
+  }
+
+  const jsonStr = decodeUtf8Base64Url(bodyPart);
+  if (!jsonStr) {
+    return { ok: false, reason: 'malformed' };
+  }
+
+  try {
+    const parsed = JSON.parse(jsonStr) as Partial<SoundEngineerEmailGrantPayload>;
+    if (
+      parsed.v !== 1 ||
+      typeof parsed.orderId !== 'string' ||
+      typeof parsed.orderNumber !== 'string' ||
+      typeof parsed.engineerId !== 'string' ||
+      typeof parsed.engineerName !== 'string' ||
+      typeof parsed.gen !== 'number' ||
+      typeof parsed.expMs !== 'number'
+    ) {
+      return { ok: false, reason: 'malformed' };
+    }
+
+    if (nowMs > parsed.expMs) {
+      return { ok: false, reason: 'expired' };
+    }
+
+    if (
+      typeof options?.expectedGeneration === 'number' &&
+      parsed.gen !== options.expectedGeneration
+    ) {
+      return { ok: false, reason: 'revoked' };
+    }
+
+    return {
+      ok: true,
+      payload: parsed as SoundEngineerEmailGrantPayload,
+    };
+  } catch {
+    return { ok: false, reason: 'malformed' };
+  }
+}
+
+function escapeHtmlEmailText(raw: string): string {
+  return String(raw || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+export const SOUND_ENGINEER_EMAIL_CTA_LABEL = 'Сдать файл на проверку';
+
 /**
- * Стандартизированный техлист для звукорежиссёра (Почта / Telegram).
+ * Стандартизированный техлист и e-mail уведомление для звукорежиссёра (Почта / Telegram).
  * Строго без цен, сумм счёта, ИНН, телефона и почты клиента!
+ * Содержит активную кнопку «Сдать файл на проверку», которая при нажатии генерирует
+ * уникальный токен прямой загрузки мастер-файла без авторизации в админ-панели.
  */
 export function formatSoundEngineerProductionSheet(params: {
   orderNumber: string;
@@ -1232,32 +1380,74 @@ export function formatSoundEngineerProductionSheet(params: {
   workflow: OrderApprovalWorkflow;
   briefFallbackText: string;
   directDropUrl: string;
+  emailActionUrl?: string;
+  previousStageLabel?: string | null;
+  currentStageLabel?: string | null;
+  triggerSummary?: string | null;
 }): {
   subject: string;
   plainBody: string;
+  htmlBody: string;
+  buttonLabel: string;
+  actionButtonUrl: string;
   telegramMessage: string;
   mailtoHref: string;
 } {
-  const { orderNumber, engineer, workflow, briefFallbackText, directDropUrl } =
-    params;
+  const {
+    orderNumber,
+    engineer,
+    workflow,
+    briefFallbackText,
+    directDropUrl,
+    emailActionUrl,
+    previousStageLabel,
+    currentStageLabel,
+    triggerSummary,
+  } = params;
   const activeRevs = workflow.spotRevisions.filter(
     (r) => r.status === 'sent_to_engineer' || r.status === 'approved_by_producer'
   );
   const isRevision = activeRevs.length > 0;
-  const script = workflow.lockedScript ?? workflow.scriptVersions[0]?.concepts[0] ?? null;
+  const script =
+    workflow.lockedScript ?? workflow.scriptVersions[0]?.concepts[0] ?? null;
 
+  const buttonLabel = SOUND_ENGINEER_EMAIL_CTA_LABEL;
+  const actionButtonUrl = (emailActionUrl || directDropUrl).trim();
+
+  const stageSubjectSuffix = currentStageLabel
+    ? ` · Статус: ${currentStageLabel}`
+    : '';
   const subject = isRevision
-    ? `[FMWorks · Правка] Заказ #${orderNumber} · Слот ровно ${workflow.targetSlotSec},00 с`
-    : `[FMWorks · В запись] Заказ #${orderNumber} · Слот ровно ${workflow.targetSlotSec},00 с`;
+    ? `[FMWorks · Правка] Заказ #${orderNumber} · Слот ровно ${workflow.targetSlotSec},00 с${stageSubjectSuffix}`
+    : `[FMWorks · Статус заказа #${orderNumber}] Слот ровно ${workflow.targetSlotSec},00 с${stageSubjectSuffix}`;
+
+  const statusTransitionLine =
+    previousStageLabel &&
+    currentStageLabel &&
+    previousStageLabel !== currentStageLabel
+      ? `Смена статуса заказа: ${previousStageLabel} → ${currentStageLabel}`
+      : currentStageLabel
+        ? `Актуальный статус заказа: ${currentStageLabel}`
+        : `Этап конвейера: ${
+            isRevision ? 'Доводка аудиоролика' : 'Студийное производство и мастеринг'
+          }`;
 
   const lines: string[] = [
-    `FMWorks Studio · Технический лист звукорежиссёру`,
+    `FMWorks Studio · E-mail уведомление звукорежиссёру`,
     `Исполнитель смены: ${engineer.name}`,
     `Заказ: #${orderNumber}`,
+    statusTransitionLine,
+  ];
+
+  if (triggerSummary && triggerSummary.trim()) {
+    lines.push(`Основание уведомления: ${triggerSummary.trim()}`);
+  }
+
+  lines.push(
     `Строгий эфирный хронометраж: ${workflow.targetSlotSec},00 сек (допуск ±0,05 сек)`,
     `Формат сдачи: WAV PCM 44.1/48 кГц, 16/24 bit, Stereo · громкость −14 LUFS, True Peak ≤ −0.5 dBTP`,
-    ``,
-  ];
+    ``
+  );
 
   if (isRevision) {
     lines.push(`ЗАДАЧА НА ДОВОДКУ РОЛИКА:`);
@@ -1274,29 +1464,39 @@ export function formatSoundEngineerProductionSheet(params: {
     lines.push(``);
   }
 
+  const scriptTitleText = script
+    ? 'conceptTitle' in script
+      ? script.conceptTitle
+      : script.title
+    : '';
+  const scriptBodyText = script
+    ? script.bodyText
+    : briefFallbackText ||
+      'Подготовка эфирного рекламного ролика по стандарту студии.';
+
   if (script) {
-    const scriptHeading =
-      'conceptTitle' in script ? script.conceptTitle : script.title;
-    lines.push(`УТВЕРЖДЁННЫЙ ТЕКСТ СЦЕНАРИЯ (${scriptHeading}):`);
+    lines.push(`УТВЕРЖДЁННЫЙ ТЕКСТ СЦЕНАРИЯ (${scriptTitleText}):`);
     lines.push(script.bodyText);
     if (script.stressNotes) {
       lines.push(`Ударения и произношение: ${script.stressNotes}`);
     }
     if (script.fz38Disclaimer) {
-      lines.push(`Обязательный дисклеймер ФЗ-38 (внутри слота): ${script.fz38Disclaimer}`);
+      lines.push(
+        `Обязательный дисклеймер ФЗ-38 (внутри слота): ${script.fz38Disclaimer}`
+      );
     }
     lines.push(``);
     lines.push(`РЕЖИССЁРСКОЕ РЕШЕНИЕ СТУДИИ (ГОЛОС И МУЗЫКА):`);
     lines.push(script.directorApproach);
   } else {
     lines.push(`КРАТКАЯ ЗАДАЧА ПРОЕКТА:`);
-    lines.push(briefFallbackText || 'Подготовка эфирного рекламного ролика по стандарту студии.');
+    lines.push(scriptBodyText);
   }
 
   lines.push(
     ``,
-    `ОДНОКНОПОЧНАЯ СДАЧА ГОТОВОГО ФАЙЛА НА ПРОВЕРКУ ПРОДЮСЕРУ (БЕЗ ВХОДА В КАБИНЕТ):`,
-    directDropUrl
+    `АКТИВНАЯ КНОПКА В ПИСЬМЕ — «${buttonLabel.toUpperCase()}» (ПРЯМАЯ ЗАГРУЗКА МАСТЕР-ФАЙЛА БЕЗ АВТОРИЗАЦИИ В АДМИН-ПАНЕЛИ):`,
+    actionButtonUrl
   );
 
   const plainBody = lines.join('\n');
@@ -1307,9 +1507,112 @@ export function formatSoundEngineerProductionSheet(params: {
       )}&body=${encodeURIComponent(plainBody)}`
     : '';
 
+  const revisionsHtmlBlock = isRevision
+    ? `<div style="margin:16px 0;padding:14px 16px;background:#FFF7ED;border:1px solid #FDBA74;border-radius:10px;">
+        <div style="font-size:12px;font-weight:700;color:#9A3412;margin-bottom:6px;">Поправки к ролику по таймкоду:</div>
+        <ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.5;color:#111111;">
+          ${activeRevs
+            .map((rev) => {
+              const tc =
+                typeof rev.timecodeSec === 'number'
+                  ? ` <strong>[${rev.timecodeSec.toFixed(1)} с]</strong>`
+                  : '';
+              const note = rev.producerResolutionNote
+                ? `<div style="font-size:12px;color:#57534E;margin-top:2px;">Продюсер: ${escapeHtmlEmailText(
+                    rev.producerResolutionNote
+                  )}</div>`
+                : '';
+              return `<li style="margin-bottom:6px;"><strong>${escapeHtmlEmailText(
+                SPOT_REVISION_KIND_LABELS[rev.kind]
+              )}</strong>${tc}: ${escapeHtmlEmailText(rev.comment)}${note}</li>`;
+            })
+            .join('')}
+        </ul>
+      </div>`
+    : '';
+
+  const htmlBody = `<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtmlEmailText(subject)}</title>
+</head>
+<body style="margin:0;padding:24px;background:#F7F6F2;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111111;">
+  <div style="max-width:600px;margin:0 auto;background:#FFFFFF;border:1px solid rgba(17,17,17,0.12);border-radius:16px;padding:28px;">
+    <div style="font-size:12px;color:#666666;margin-bottom:6px;">
+      FMWorks Studio · Заказ <strong>#${escapeHtmlEmailText(orderNumber)}</strong> · Исполнитель: <strong>${escapeHtmlEmailText(engineer.name)}</strong>
+    </div>
+    <h1 style="margin:0 0 10px 0;font-size:20px;line-height:1.3;color:#111111;">
+      ${escapeHtmlEmailText(statusTransitionLine)}
+    </h1>
+    ${
+      triggerSummary
+        ? `<p style="margin:0 0 14px 0;font-size:13px;line-height:1.5;color:#444444;">${escapeHtmlEmailText(
+            triggerSummary
+          )}</p>`
+        : ''
+    }
+    <div style="padding:12px 14px;background:#F7F6F2;border-radius:10px;font-size:13px;line-height:1.55;color:#111111;margin-bottom:16px;">
+      <div><strong>Строгий эфирный хронометраж:</strong> ${workflow.targetSlotSec},00 с (допуск ±0,05 с)</div>
+      <div><strong>Технический стандарт:</strong> WAV PCM 44.1/48 кГц · −14 LUFS · True Peak ≤ −0.5 dBTP</div>
+    </div>
+    ${revisionsHtmlBlock}
+    <div style="padding:16px;background:#F7F6F2;border-radius:12px;margin-bottom:20px;">
+      <div style="font-size:12px;font-weight:700;color:#111111;margin-bottom:8px;">
+        ${
+          script
+            ? `Утверждённый режиссёрский сценарий (${escapeHtmlEmailText(scriptTitleText)})`
+            : 'Задача на производство аудиоролика'
+        }
+      </div>
+      <div style="font-size:14px;line-height:1.6;color:#111111;font-weight:600;margin-bottom:10px;">
+        ${escapeHtmlEmailText(scriptBodyText)}
+      </div>
+      ${
+        script?.stressNotes
+          ? `<div style="font-size:12px;color:#444444;margin-bottom:4px;"><strong>Ударения:</strong> ${escapeHtmlEmailText(
+              script.stressNotes
+            )}</div>`
+          : ''
+      }
+      ${
+        script?.fz38Disclaimer
+          ? `<div style="font-size:12px;color:#444444;margin-bottom:4px;"><strong>Дисклеймер ФЗ-38 (внутри слота):</strong> ${escapeHtmlEmailText(
+              script.fz38Disclaimer
+            )}</div>`
+          : ''
+      }
+      ${
+        script?.directorApproach
+          ? `<div style="font-size:12px;color:#444444;margin-top:8px;padding-top:8px;border-top:1px solid rgba(17,17,17,0.08);"><strong>Режиссёрское решение:</strong> ${escapeHtmlEmailText(
+              script.directorApproach
+            )}</div>`
+          : ''
+      }
+    </div>
+    <div style="margin:22px 0;text-align:left;">
+      <a href="${escapeHtmlEmailText(actionButtonUrl)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:13px 22px;background:#FF4820;color:#FFFFFF;text-decoration:none;font-size:14px;font-weight:700;border-radius:12px;">
+        ${escapeHtmlEmailText(buttonLabel)} →
+      </a>
+      <div style="font-size:11px;color:#666666;margin-top:8px;">
+        При нажатии на кнопку автоматически генерируется уникальная ссылка-токен для прямой загрузки мастер-файла в буфер ОТК продюсера без авторизации в админ-панели.
+      </div>
+    </div>
+    <div style="padding-top:12px;border-top:1px solid rgba(17,17,17,0.08);font-size:11px;color:#777777;word-break:break-all;">
+      Прямая ссылка кнопки: <a href="${escapeHtmlEmailText(actionButtonUrl)}" style="color:#FF4820;">${escapeHtmlEmailText(
+        actionButtonUrl
+      )}</a>
+    </div>
+  </div>
+</body>
+</html>`;
+
   return {
     subject,
     plainBody,
+    htmlBody,
+    buttonLabel,
+    actionButtonUrl,
     telegramMessage,
     mailtoHref,
   };

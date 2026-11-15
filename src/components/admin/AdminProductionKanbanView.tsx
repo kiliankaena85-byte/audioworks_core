@@ -19,7 +19,9 @@ import {
   evaluateBroadcastSlotFit,
   resolveStudioKanbanColumn,
   resolveWhoseTurn,
+  SOUND_ENGINEER_EMAIL_CTA_LABEL,
   type SoundEngineerContact,
+  type SoundEngineerEmailNotificationRecord,
   SPOT_REVISION_KIND_LABELS,
   STUDIO_KANBAN_COLUMNS,
   type StudioKanbanColumnId,
@@ -29,10 +31,14 @@ import { formatRubCompact } from '../../data/radioInventory';
 export interface AdminProductionKanbanViewProps {
   orders: CrmOrderRecord[];
   soundEngineers: SoundEngineerContact[];
+  soundEngineerEmails?: SoundEngineerEmailNotificationRecord[];
   selectedOrderId: string;
   onSelectOrderId: (id: string) => void;
   onOrderUpdated: (updatedOrder: CrmOrderRecord) => void;
   onSoundEngineersUpdated: (roster: SoundEngineerContact[]) => void;
+  onSoundEngineerEmailsUpdated?: (
+    emails: SoundEngineerEmailNotificationRecord[]
+  ) => void;
   onFeedback: (banner: { kind: 'ok' | 'error'; text: string }) => void;
 }
 
@@ -40,10 +46,15 @@ interface DispatchedEngineerBundle {
   orderId: string;
   dropPath: string;
   dropUrl: string;
+  emailActionPath?: string;
+  emailActionUrl?: string;
   channelSummary: string;
   sheet: {
     subject: string;
     plainBody: string;
+    htmlBody?: string;
+    buttonLabel?: string;
+    actionButtonUrl?: string;
     mailtoHref: string;
   };
 }
@@ -67,10 +78,12 @@ function formatShortTimeRu(iso: string | null | undefined): string {
 export function AdminProductionKanbanView({
   orders,
   soundEngineers,
+  soundEngineerEmails = [],
   selectedOrderId,
   onSelectOrderId,
   onOrderUpdated,
   onSoundEngineersUpdated,
+  onSoundEngineerEmailsUpdated,
   onFeedback,
 }: AdminProductionKanbanViewProps) {
   const [columnFilter, setColumnFilter] = useState<
@@ -359,10 +372,17 @@ export function AdminProductionKanbanView({
         order?: CrmOrderRecord;
         dropPath?: string;
         dropUrl?: string;
+        emailActionPath?: string;
+        emailActionUrl?: string;
+        soundEngineerEmail?: SoundEngineerEmailNotificationRecord;
+        soundEngineerEmails?: SoundEngineerEmailNotificationRecord[];
         channelSummary?: string;
         sheet?: {
           subject: string;
           plainBody: string;
+          htmlBody?: string;
+          buttonLabel?: string;
+          actionButtonUrl?: string;
           mailtoHref: string;
         };
         error?: string;
@@ -380,16 +400,30 @@ export function AdminProductionKanbanView({
         );
       }
       onOrderUpdated(json.order);
+      if (Array.isArray(json.soundEngineerEmails)) {
+        onSoundEngineerEmailsUpdated?.(json.soundEngineerEmails);
+      } else if (json.soundEngineerEmail) {
+        onSoundEngineerEmailsUpdated?.(
+          [
+            json.soundEngineerEmail,
+            ...soundEngineerEmails.filter(
+              (m) => m.id !== json.soundEngineerEmail!.id
+            ),
+          ].slice(0, 30)
+        );
+      }
       setDispatchedBundle({
         orderId: json.order.id,
         dropPath: json.dropPath,
         dropUrl: json.dropUrl,
+        emailActionPath: json.emailActionPath,
+        emailActionUrl: json.emailActionUrl,
         channelSummary: json.channelSummary ?? '',
         sheet: json.sheet,
       });
       onFeedback({
         kind: 'ok',
-        text: `${json.channelSummary ?? 'Техлист сформирован'} — однокнопочная ссылка прямой сдачи файла готова.`,
+        text: `${json.channelSummary ?? 'Техлист сформирован'} — в письмо добавлена кнопка «${SOUND_ENGINEER_EMAIL_CTA_LABEL}».`,
       });
     } catch (err) {
       onFeedback({
@@ -497,12 +531,17 @@ export function AdminProductionKanbanView({
       const json = (await res.json()) as {
         ok?: boolean;
         order?: CrmOrderRecord;
+        soundEngineerEmail?: SoundEngineerEmailNotificationRecord | null;
+        soundEngineerEmails?: SoundEngineerEmailNotificationRecord[];
         error?: string;
       };
       if (!res.ok || !json.ok || !json.order) {
         throw new Error(json.error ?? 'Не удалось зафиксировать решение продюсера');
       }
       onOrderUpdated(json.order);
+      if (Array.isArray(json.soundEngineerEmails)) {
+        onSoundEngineerEmailsUpdated?.(json.soundEngineerEmails);
+      }
       onFeedback({
         kind: 'ok',
         text:
@@ -1102,9 +1141,20 @@ export function AdminProductionKanbanView({
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                     <span className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
-                      Однокнопочная ссылка сдачи файла для звукорежиссёра (7 дней):
+                      Кнопка в письме звукорежиссёра и прямая ссылка сдачи (7 дней):
                     </span>
                     <div className="flex flex-wrap items-center gap-2">
+                      {dispatchedBundle.emailActionPath && (
+                        <a
+                          href={dispatchedBundle.emailActionPath}
+                          data-testid="kanban-dispatched-email-submit-btn"
+                          className="min-h-[34px] px-3.5 py-1.5 rounded-lg bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                        >
+                          <span>{SOUND_ENGINEER_EMAIL_CTA_LABEL}</span>
+                          <ExternalLink className="w-3 h-3" aria-hidden="true" />
+                        </a>
+                      )}
+
                       <button
                         type="button"
                         data-testid="kanban-copy-drop-url"
@@ -1184,6 +1234,56 @@ export function AdminProductionKanbanView({
                   </div>
                 </div>
               )}
+
+              {/* Почтовый журнал уведомлений звукорежиссёру при смене статуса заказа с активной кнопкой «Сдать файл на проверку» */}
+              {(() => {
+                const orderEmails = soundEngineerEmails.filter(
+                  (m) => m.orderId === activeOrder.id
+                );
+                const latestEmail = orderEmails[0];
+                if (!latestEmail) return null;
+
+                return (
+                  <div
+                    data-testid="kanban-engineer-email-preview-card"
+                    className="p-4 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] space-y-3"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2 text-xs">
+                      <div className="space-y-0.5 min-w-0">
+                        <p className="font-bold text-[#111111] dark:text-[#F4F3EF]">
+                          Отправленное e-mail уведомление звукорежиссёру ·{' '}
+                          {latestEmail.engineerName} ({latestEmail.engineerEmail})
+                        </p>
+                        <p className="text-[11px] text-[#111111]/64 dark:text-[#F4F3EF]/64">
+                          Тема: <strong>{latestEmail.subject}</strong> · Статус:{' '}
+                          {latestEmail.previousStageLabel
+                            ? `${latestEmail.previousStageLabel} → ${latestEmail.currentStageLabel}`
+                            : latestEmail.currentStageLabel}
+                          {latestEmail.clickedCount > 0
+                            ? ` · Переходов по кнопке: ${latestEmail.clickedCount}`
+                            : ''}
+                        </p>
+                      </div>
+
+                      <a
+                        href={latestEmail.emailActionPath}
+                        data-testid="kanban-email-cta-submit-file-btn"
+                        className="min-h-[38px] px-4 py-1.5 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                      >
+                        <span>{latestEmail.buttonLabel}</span>
+                        <ExternalLink className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                      </a>
+                    </div>
+
+                    <p className="text-[11px] text-[#111111]/58 dark:text-[#F4F3EF]/58">
+                      При нажатии на кнопку «{latestEmail.buttonLabel}» в письме
+                      автоматически генерируется свежая уникальная ссылка-токен{' '}
+                      <code className="font-mono">/sound-drop?token=…</code> для
+                      прямой загрузки мастер-файла без авторизации в админ-панели.
+                    </p>
+                  </div>
+                );
+              })()}
             </section>
 
             {/* БЛОК Г: Подготовка и публикация режиссёрского сценария клиенту */}

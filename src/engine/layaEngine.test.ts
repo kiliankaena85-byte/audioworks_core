@@ -212,15 +212,19 @@ test('Editorial FAQ logic & content: 4 questions, smooth toggle state, and respe
   assert.equal(toggleFaqItem(null, secondId), secondId);
   assert.equal(toggleFaqItem(secondId, firstId), firstId);
 
-  assert.equal(HOME_PROCESS_FAQ_ITEMS.length, 6);
+  assert.equal(HOME_PROCESS_FAQ_ITEMS.length, 7);
   assert.deepEqual(
     HOME_PROCESS_FAQ_ITEMS.map((item) => item.indexLabel),
-    ['01', '02', '03', '04', '05', '06']
+    ['01', '02', '03', '04', '05', '06', '07']
   );
   assert.ok(HOME_PROCESS_FAQ_ITEMS[0].answer.includes('Без договора и предоплаты сценарии не пишутся'));
   assert.ok(HOME_PROCESS_FAQ_ITEMS[3].question.includes('24–48'));
   assert.ok(HOME_PROCESS_FAQ_ITEMS[4].answer.includes('Индивидуальный проект'));
   assert.ok(HOME_PROCESS_FAQ_ITEMS[5].answer.includes('Только сценарий'.slice(6)) || HOME_PROCESS_FAQ_ITEMS[5].question.includes('только сценарий'));
+  assert.ok(HOME_PROCESS_FAQ_ITEMS[6].question.includes('Срочный заказ'));
+  assert.ok(HOME_PROCESS_FAQ_ITEMS[6].answer.includes('от 1 часа'));
+  assert.ok(HOME_PROCESS_FAQ_ITEMS[6].answer.includes('без разработки сценария'));
+  assert.ok(HOME_PROCESS_FAQ_ITEMS[6].answer.includes('по договорной цене'));
   assert.equal(
     toggleFaqItem(HOME_PROCESS_FAQ_ITEMS[0].id, HOME_PROCESS_FAQ_ITEMS[0].id),
     null
@@ -231,7 +235,7 @@ test('Editorial FAQ logic & content: 4 questions, smooth toggle state, and respe
   );
   assert.deepEqual(
     HOME_PROCESS_FAQ_ITEMS.map((item) => resolveFaqIconKey(item)),
-    ['waveform', 'shield', 'receipt', 'clock', 'sliders', 'mic']
+    ['waveform', 'shield', 'receipt', 'clock', 'sliders', 'mic', 'clock']
   );
   assert.equal(
     resolveFaqIconKey({

@@ -170,14 +170,18 @@ import {
   ensureOrderApprovalWorkflow,
   formatSoundEngineerProductionSheet,
   issueSoundDropTokenWithSigner,
+  issueSoundEngineerEmailGrantWithSigner,
   parseWavExactDurationSec,
   type PublishScriptConceptInput,
   sanitizeSoundEngineerRoster,
   type SoundEngineerContact,
+  type SoundEngineerEmailNotificationRecord,
+  type SoundEngineerEmailTriggerReason,
   type SpotRevisionKind,
   toClientApprovalWorkflowView,
   toSoundDropTaskPublicView,
   verifySoundDropTokenWithSigner,
+  verifySoundEngineerEmailGrantWithSigner,
 } from './src/data/productionApprovalWorkflow.ts';
 import { sanitizeClientAvatarPresetId } from './src/data/clientAvatarLogic.ts';
 import {
@@ -848,6 +852,7 @@ interface PersistedOrdersCrmStore {
   orders: CrmOrderRecord[];
   clientAccounts: ClientAccountRecord[];
   soundEngineers: SoundEngineerContact[];
+  soundEngineerEmails: SoundEngineerEmailNotificationRecord[];
   settings: OrderDispatchSettings;
   dispatchLogs: DispatchAttemptLog[];
   legalProfiles: StudioLegalProfilesConfig;
@@ -920,6 +925,7 @@ function readOrdersCrmStore(): PersistedOrdersCrmStore {
         orders: createSeedCrmOrders(),
         clientAccounts: createSeedClientAccounts(),
         soundEngineers: createDefaultSoundEngineerRoster(),
+        soundEngineerEmails: [],
         settings: defaults,
         dispatchLogs: [],
         legalProfiles: createDefaultStudioLegalProfiles(),
@@ -988,6 +994,9 @@ function readOrdersCrmStore(): PersistedOrdersCrmStore {
       }),
       clientAccounts: hydratePersistedClientAccounts(raw.clientAccounts),
       soundEngineers: sanitizeSoundEngineerRoster(raw.soundEngineers),
+      soundEngineerEmails: Array.isArray(raw.soundEngineerEmails)
+        ? raw.soundEngineerEmails.slice(0, 60)
+        : [],
       settings: {
         telegram: {
           ...defaults.telegram,
@@ -1023,6 +1032,7 @@ function readOrdersCrmStore(): PersistedOrdersCrmStore {
       orders: createSeedCrmOrders(),
       clientAccounts: createSeedClientAccounts(),
       soundEngineers: createDefaultSoundEngineerRoster(),
+      soundEngineerEmails: [],
       settings: createDefaultDispatchSettings(),
       dispatchLogs: [],
       legalProfiles: createDefaultStudioLegalProfiles(),
@@ -5014,6 +5024,7 @@ async function startServer() {
       ok: true,
       orders: crmStore.orders.map((ord) => ensureOrderApprovalWorkflow(ord)),
       soundEngineers: sanitizeSoundEngineerRoster(crmStore.soundEngineers),
+      soundEngineerEmails: (crmStore.soundEngineerEmails ?? []).slice(0, 30),
       dispatchLogs: crmStore.dispatchLogs.slice(0, 25),
       operatingRegime: resolveStudioOperatingRegime(Date.now(), workSchedule),
       legalProfiles: sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles),
@@ -5082,7 +5093,7 @@ async function startServer() {
     '/api/cms/orders/:orderId',
     requireStudioAuth,
     express.json({ limit: '64kb' }),
-    (req, res) => {
+    async (req, res) => {
       const { orderId } = req.params;
       const body = (req.body ?? {}) as {
         stage?: CrmOrderStage;
@@ -5242,6 +5253,9 @@ async function startServer() {
       crmStore.orders[idx] = updatedOrder;
       writeOrdersCrmStore(crmStore);
 
+      let finalOrder: CrmOrderRecord = updatedOrder;
+      let latestEngineerEmail: SoundEngineerEmailNotificationRecord | null = null;
+
       if (stageChanged) {
         const stageNotif = buildStageChangedNotification({
           id: `notif-stage-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
@@ -5253,11 +5267,59 @@ async function startServer() {
         });
         recordAndBroadcastCabinetNotification(stageNotif, crmStore);
         void dispatchOrderToExternalChannels(updatedOrder.id, 'order.stage_changed');
+
+        // Автоматическая отправка e-mail уведомления звукорежиссёру при смене статуса заказа с кнопкой «Сдать файл на проверку»
+        const prevStageLabel =
+          CRM_ORDER_STAGES.find((s) => s.id === existing.stage)?.shortLabel ??
+          existing.stage;
+        const nextStageLabel =
+          CRM_ORDER_STAGES.find((s) => s.id === updatedOrder.stage)?.shortLabel ??
+          updatedOrder.stage;
+        const hydrated = ensureOrderApprovalWorkflow(updatedOrder);
+        const roster = sanitizeSoundEngineerRoster(crmStore.soundEngineers);
+        const engineer =
+          roster.find((e) => e.id === hydrated.approvalWorkflow.assignedEngineerId) ??
+          roster.find((e) => e.isDefault) ??
+          roster[0];
+
+        if (engineer) {
+          const preDispatchedOrder: CrmOrderRecord = {
+            ...hydrated,
+            approvalWorkflow: {
+              ...hydrated.approvalWorkflow,
+              assignedEngineerId: engineer.id,
+            },
+          };
+          const dispatched = await buildAndDispatchSoundEngineerSheet({
+            req,
+            order: preDispatchedOrder,
+            engineer,
+            crmStore,
+            autoSendExternal: true,
+            triggerReason: 'stage_changed',
+            previousStageLabel: prevStageLabel,
+            currentStageLabel: nextStageLabel,
+            triggerSummary: `Статус заказа #${updatedOrder.orderNumber} изменён: «${prevStageLabel}» → «${nextStageLabel}».`,
+          });
+          latestEngineerEmail = dispatched.emailNotification;
+          finalOrder = {
+            ...preDispatchedOrder,
+            approvalWorkflow: {
+              ...preDispatchedOrder.approvalWorkflow!,
+              lastDispatchedToEngineerAt: nowIso,
+              lastDispatchChannelSummary: dispatched.channelSummary,
+            },
+          };
+          crmStore.orders[idx] = finalOrder;
+          writeOrdersCrmStore(crmStore);
+        }
       }
 
       res.json({
         ok: true,
-        order: updatedOrder,
+        order: finalOrder,
+        soundEngineerEmail: latestEngineerEmail,
+        soundEngineerEmails: (crmStore.soundEngineerEmails ?? []).slice(0, 30),
       });
     }
   );
@@ -5602,14 +5664,32 @@ async function startServer() {
     engineer: SoundEngineerContact;
     crmStore: PersistedOrdersCrmStore;
     autoSendExternal?: boolean;
+    triggerReason?: SoundEngineerEmailTriggerReason;
+    previousStageLabel?: string | null;
+    currentStageLabel?: string | null;
+    triggerSummary?: string | null;
   }): Promise<{
     dropToken: string;
     dropPath: string;
     dropUrl: string;
+    emailGrant: string;
+    emailActionPath: string;
+    emailActionUrl: string;
+    emailNotification: SoundEngineerEmailNotificationRecord;
     sheet: ReturnType<typeof formatSoundEngineerProductionSheet>;
     channelSummary: string;
   }> {
-    const { req, order, engineer, crmStore, autoSendExternal = true } = params;
+    const {
+      req,
+      order,
+      engineer,
+      crmStore,
+      autoSendExternal = true,
+      triggerReason = 'manual_dispatch',
+      previousStageLabel = null,
+      currentStageLabel = null,
+      triggerSummary = null,
+    } = params;
     const wf = ensureOrderApprovalWorkflow(order).approvalWorkflow;
     const expMs = Date.now() + 7 * 24 * 60 * 60 * 1000;
     const dropToken = issueSoundDropTokenWithSigner(
@@ -5624,7 +5704,20 @@ async function startServer() {
       signSoundDropHmac
     );
 
+    const emailGrant = issueSoundEngineerEmailGrantWithSigner(
+      {
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        engineerId: engineer.id,
+        engineerName: engineer.name,
+        gen: wf.dropTokenGeneration,
+        expMs,
+      },
+      signSoundDropHmac
+    );
+
     const dropPath = `/sound-drop?token=${encodeURIComponent(dropToken)}`;
+    const emailActionPath = `/api/sound-drop/from-email?grant=${encodeURIComponent(emailGrant)}`;
     const origin = resolveSafePublicOrigin({
       configuredOrigin: process.env.PUBLIC_ORIGIN,
       hostHeader: req.headers.host,
@@ -5635,6 +5728,12 @@ async function startServer() {
       fallbackOrigin: `http://localhost:${PORT}`,
     });
     const dropUrl = `${origin}${dropPath}`;
+    const emailActionUrl = `${origin}${emailActionPath}`;
+
+    const stageLabelResolved =
+      currentStageLabel ||
+      CRM_ORDER_STAGES.find((s) => s.id === order.stage)?.shortLabel ||
+      order.stage;
 
     const sheet = formatSoundEngineerProductionSheet({
       orderNumber: order.orderNumber,
@@ -5642,9 +5741,14 @@ async function startServer() {
       workflow: wf,
       briefFallbackText: order.briefText,
       directDropUrl: dropUrl,
+      emailActionUrl,
+      previousStageLabel,
+      currentStageLabel: stageLabelResolved,
+      triggerSummary,
     });
 
     const deliveredVia: string[] = [];
+    let mailGatewayDelivered = false;
 
     if (
       autoSendExternal &&
@@ -5692,11 +5796,15 @@ async function startServer() {
               orderNumber: order.orderNumber,
               subject: sheet.subject,
               text: sheet.plainBody,
+              html: sheet.htmlBody,
+              buttonLabel: sheet.buttonLabel,
+              actionButtonUrl: sheet.actionButtonUrl,
               dropUrl,
             }),
             signal: AbortSignal.timeout(4500),
           });
           if (mailRes.ok) {
+            mailGatewayDelivered = true;
             deliveredVia.push(`Почта (${engineer.email})`);
           }
         }
@@ -5705,17 +5813,57 @@ async function startServer() {
       }
     }
 
+    const nowIso = new Date().toISOString();
+    const emailNotification: SoundEngineerEmailNotificationRecord = {
+      id: `se-mail-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      engineerId: engineer.id,
+      engineerName: engineer.name,
+      engineerEmail: engineer.email || 'sound@fmworks.studio',
+      triggerReason,
+      previousStageLabel,
+      currentStageLabel: stageLabelResolved,
+      subject: sheet.subject,
+      plainBody: sheet.plainBody,
+      htmlBody: sheet.htmlBody,
+      buttonLabel: sheet.buttonLabel,
+      emailActionPath,
+      emailActionUrl,
+      deliveryStatus: mailGatewayDelivered
+        ? 'delivered_webhook'
+        : 'queued_outbox',
+      deliveryDetail: mailGatewayDelivered
+        ? `Отправлено на ${engineer.email} через почтовый шлюз`
+        : `E-mail уведомление сформировано для ${engineer.email || engineer.name} · кнопка «${sheet.buttonLabel}» активна`,
+      createdAt: nowIso,
+      clickedCount: 0,
+      lastClickedAt: null,
+      lastIssuedDropUrl: dropUrl,
+    };
+
+    crmStore.soundEngineerEmails = [
+      emailNotification,
+      ...(Array.isArray(crmStore.soundEngineerEmails)
+        ? crmStore.soundEngineerEmails
+        : []),
+    ].slice(0, 60);
+
     const channelSummary =
       deliveredVia.length > 0
-        ? `Техлист отправлен (${deliveredVia.join(' + ')})`
+        ? `Уведомление отправлено (${deliveredVia.join(' + ')})`
         : engineer.email
-          ? `Техлист сформирован для ${engineer.name} (${engineer.email})`
-          : `Техлист и прямая ссылка сформированы (${engineer.name})`;
+          ? `E-mail уведомление с кнопкой «${sheet.buttonLabel}» отправлено в почтовый журнал (${engineer.email})`
+          : `Техлист и ссылка «${sheet.buttonLabel}» сформированы (${engineer.name})`;
 
     return {
       dropToken,
       dropPath,
       dropUrl,
+      emailGrant,
+      emailActionPath,
+      emailActionUrl,
+      emailNotification,
       sheet,
       channelSummary,
     };
@@ -5888,12 +6036,21 @@ async function startServer() {
         },
       };
 
+      const stageLabel =
+        CRM_ORDER_STAGES.find((s) => s.id === preUpdatedOrder.stage)?.shortLabel ??
+        preUpdatedOrder.stage;
+
       const dispatched = await buildAndDispatchSoundEngineerSheet({
         req,
         order: preUpdatedOrder,
         engineer,
         crmStore,
         autoSendExternal: true,
+        triggerReason: 'manual_dispatch',
+        currentStageLabel: stageLabel,
+        triggerSummary: engineerSwitched
+          ? `Назначен звукорежиссёр ${engineer.name} по заказу #${preUpdatedOrder.orderNumber} (предыдущие ссылки отозваны).`
+          : `Продюсер отправил актуальный техлист звукорежиссёру ${engineer.name}.`,
       });
 
       const finalOrder: CrmOrderRecord = {
@@ -5914,6 +6071,10 @@ async function startServer() {
         engineer,
         dropPath: dispatched.dropPath,
         dropUrl: dispatched.dropUrl,
+        emailActionPath: dispatched.emailActionPath,
+        emailActionUrl: dispatched.emailActionUrl,
+        soundEngineerEmail: dispatched.emailNotification,
+        soundEngineerEmails: (crmStore.soundEngineerEmails ?? []).slice(0, 30),
         sheet: dispatched.sheet,
         channelSummary: dispatched.channelSummary,
       });
@@ -5924,7 +6085,7 @@ async function startServer() {
     '/api/cms/orders/:orderId/approval/resolve-escalation',
     requireStudioAuth,
     express.json({ limit: '32kb' }),
-    (req, res) => {
+    async (req, res) => {
       const { orderId } = req.params;
       const body = (req.body ?? {}) as {
         revisionId?: string;
@@ -5972,13 +6133,47 @@ async function startServer() {
         });
       }
 
-      const updatedOrder: CrmOrderRecord = {
+      let updatedOrder: CrmOrderRecord = {
         ...existing,
         updatedAt: nowIso,
         totalBudgetRub: nextBudget,
         ...(nextDocMeta ? { documentMeta: nextDocMeta } : {}),
         approvalWorkflow: nextWorkflow,
       };
+
+      // Автоматически отправляем звукорежиссёру e-mail уведомление о согласованной доработке с кнопкой «Сдать файл на проверку»
+      const roster = sanitizeSoundEngineerRoster(crmStore.soundEngineers);
+      const assignedEng =
+        roster.find((e) => e.id === nextWorkflow.assignedEngineerId) ??
+        roster.find((e) => e.isDefault) ??
+        roster[0];
+      let latestEngineerEmail: SoundEngineerEmailNotificationRecord | null = null;
+
+      if (assignedEng) {
+        const stageLabel =
+          CRM_ORDER_STAGES.find((s) => s.id === updatedOrder.stage)?.shortLabel ??
+          updatedOrder.stage;
+        const dispatched = await buildAndDispatchSoundEngineerSheet({
+          req,
+          order: updatedOrder,
+          engineer: assignedEng,
+          crmStore,
+          autoSendExternal: true,
+          triggerReason: 'escalation_resolved',
+          currentStageLabel: stageLabel,
+          triggerSummary: `Продюсер согласовал доработку по заказу #${updatedOrder.orderNumber} и вернул задачу в студию звукорежиссёру.`,
+        });
+        latestEngineerEmail = dispatched.emailNotification;
+        updatedOrder = {
+          ...updatedOrder,
+          approvalWorkflow: {
+            ...updatedOrder.approvalWorkflow!,
+            assignedEngineerId: assignedEng.id,
+            lastDispatchedToEngineerAt: nowIso,
+            lastDispatchChannelSummary: dispatched.channelSummary,
+          },
+        };
+      }
 
       crmStore.orders[idx] = updatedOrder;
       const notif = buildApprovalWorkflowNotification({
@@ -5996,6 +6191,8 @@ async function startServer() {
       res.json({
         ok: true,
         order: updatedOrder,
+        soundEngineerEmail: latestEngineerEmail,
+        soundEngineerEmails: (crmStore.soundEngineerEmails ?? []).slice(0, 30),
       });
     }
   );
@@ -6213,24 +6410,22 @@ async function startServer() {
             ? 'in_production'
             : existing.stage;
 
-        // При утверждении сценария автоматически отправляем техлист назначенному звукорежиссёру, если шлюз настроен
+        let scriptApprovedEmail: SoundEngineerEmailNotificationRecord | null = null;
+        // При утверждении сценария автоматически формируем и отправляем e-mail уведомление звукорежиссёру с кнопкой «Сдать файл на проверку»
         if (body.action === 'approve') {
           const roster = sanitizeSoundEngineerRoster(crmStore.soundEngineers);
           const assignedEng =
             roster.find((e) => e.id === nextWorkflow.assignedEngineerId) ??
             roster.find((e) => e.isDefault) ??
             roster[0];
-          const hasAutoChannel =
-            Boolean(
-              crmStore.settings.telegram.botToken.trim() &&
-                assignedEng?.telegramChatId.trim()
-            ) ||
-            Boolean(
-              (process.env.SOUND_ENGINEER_EMAIL_WEBHOOK_URL ?? '').trim() &&
-                assignedEng?.email
-            );
 
-          if (assignedEng && hasAutoChannel) {
+          if (assignedEng) {
+            const prevStageLabel =
+              CRM_ORDER_STAGES.find((s) => s.id === existing.stage)?.shortLabel ??
+              existing.stage;
+            const nextStageLabel =
+              CRM_ORDER_STAGES.find((s) => s.id === nextStage)?.shortLabel ??
+              nextStage;
             const tempOrder: CrmOrderRecord = {
               ...existing,
               stage: nextStage,
@@ -6246,7 +6441,12 @@ async function startServer() {
               engineer: assignedEng,
               crmStore,
               autoSendExternal: true,
+              triggerReason: 'script_approved',
+              previousStageLabel: prevStageLabel,
+              currentStageLabel: nextStageLabel,
+              triggerSummary: `Клиент утвердил режиссёрский сценарий по заказу #${existing.orderNumber} — заказ переведён в студийное производство.`,
             });
+            scriptApprovedEmail = autoSent.emailNotification;
             finalWorkflow = {
               ...nextWorkflow,
               assignedEngineerId: assignedEng.id,
@@ -6275,6 +6475,7 @@ async function startServer() {
             effectiveRescueToken,
             sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles)
           ),
+          soundEngineerEmail: scriptApprovedEmail,
         });
       } catch (err) {
         res.status(400).json({
@@ -6372,6 +6573,48 @@ async function startServer() {
               : 'on_air'
             : existing.stage;
 
+        let finalWorkflow = result.workflow;
+        let spotRevisionEmail: SoundEngineerEmailNotificationRecord | null = null;
+
+        if (result.routedTo === 'sound_engineer_included_round') {
+          const roster = sanitizeSoundEngineerRoster(crmStore.soundEngineers);
+          const assignedEng =
+            roster.find((e) => e.id === finalWorkflow.assignedEngineerId) ??
+            roster.find((e) => e.isDefault) ??
+            roster[0];
+          if (assignedEng) {
+            const stageLabel =
+              CRM_ORDER_STAGES.find((s) => s.id === nextStage)?.shortLabel ??
+              nextStage;
+            const tempOrder: CrmOrderRecord = {
+              ...existing,
+              stage: nextStage,
+              updatedAt: nowIso,
+              approvalWorkflow: {
+                ...finalWorkflow,
+                assignedEngineerId: assignedEng.id,
+              },
+            };
+            const autoSent = await buildAndDispatchSoundEngineerSheet({
+              req,
+              order: tempOrder,
+              engineer: assignedEng,
+              crmStore,
+              autoSendExternal: true,
+              triggerReason: 'revision_requested',
+              currentStageLabel: stageLabel,
+              triggerSummary: `Клиент запросил сервисный раунд доводки по заказу #${existing.orderNumber} — комментарий передан звукорежиссёру.`,
+            });
+            spotRevisionEmail = autoSent.emailNotification;
+            finalWorkflow = {
+              ...finalWorkflow,
+              assignedEngineerId: assignedEng.id,
+              lastDispatchedToEngineerAt: nowIso,
+              lastDispatchChannelSummary: autoSent.channelSummary,
+            };
+          }
+        }
+
         const updatedOrder: CrmOrderRecord = {
           ...existing,
           stage: nextStage,
@@ -6380,7 +6623,7 @@ async function startServer() {
             result.routedTo === 'accepted'
               ? { ...existing.compliance, rightsPassportIssued: true }
               : existing.compliance,
-          approvalWorkflow: result.workflow,
+          approvalWorkflow: finalWorkflow,
         };
 
         crmStore.orders[idx] = updatedOrder;
@@ -6396,6 +6639,7 @@ async function startServer() {
             effectiveRescueToken,
             sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles)
           ),
+          soundEngineerEmail: spotRevisionEmail,
         });
       } catch (err) {
         res.status(400).json({
@@ -6407,6 +6651,128 @@ async function startServer() {
         });
       }
     }
+  );
+
+  // Обработчик нажатия на кнопку «Сдать файл на проверку» в e-mail уведомлении звукорежиссёру:
+  // При переходе генерирует свежую уникальную ссылку-токен (/sound-drop?token=...) для прямой сдачи мастер-файла без авторизации в админ-панели.
+  const handleSoundDropFromEmailButton = (req: Request, res: Response) => {
+    const rawGrant =
+      typeof req.query.grant === 'string' && req.query.grant.trim()
+        ? req.query.grant.trim()
+        : typeof (req.body as { grant?: unknown } | undefined)?.grant === 'string'
+          ? String((req.body as { grant?: string }).grant).trim()
+          : '';
+
+    const crmStore = readOrdersCrmStore();
+    const prelimVerified = verifySoundEngineerEmailGrantWithSigner(
+      rawGrant,
+      signSoundDropHmac,
+      Date.now()
+    );
+    if (!prelimVerified.ok) {
+      res.status(403).json({
+        ok: false,
+        reason: prelimVerified.reason,
+        error:
+          prelimVerified.reason === 'expired'
+            ? 'Срок действия кнопки из письма истёк — запросите свежее уведомление у продюсера.'
+            : 'Недействительный токен кнопки из письма звукорежиссёра.',
+      });
+      return;
+    }
+
+    const found = crmStore.orders.find(
+      (o) => o.id === prelimVerified.payload.orderId
+    );
+    if (!found) {
+      res.status(404).json({ ok: false, error: 'Заказ не найден в студии' });
+      return;
+    }
+
+    const hydrated = ensureOrderApprovalWorkflow(found);
+    const verified = verifySoundEngineerEmailGrantWithSigner(
+      rawGrant,
+      signSoundDropHmac,
+      Date.now(),
+      { expectedGeneration: hydrated.approvalWorkflow.dropTokenGeneration }
+    );
+    if (!verified.ok) {
+      res.status(403).json({
+        ok: false,
+        reason: verified.reason,
+        error:
+          'Эта ссылка из письма была отозвана при смене звукорежиссёра — используйте последнее письмо.',
+      });
+      return;
+    }
+
+    // Генерируем уникальную ссылку-токен специально для этого нажатия кнопки «Сдать файл на проверку»
+    const uniqueExpMs =
+      Date.now() + 7 * 24 * 60 * 60 * 1000 + crypto.randomInt(1, 999);
+    const freshDropToken = issueSoundDropTokenWithSigner(
+      {
+        orderId: hydrated.id,
+        orderNumber: hydrated.orderNumber,
+        engineerId: verified.payload.engineerId,
+        engineerName: verified.payload.engineerName,
+        gen: hydrated.approvalWorkflow.dropTokenGeneration,
+        expMs: uniqueExpMs,
+      },
+      signSoundDropHmac
+    );
+
+    const dropPath = `/sound-drop?token=${encodeURIComponent(freshDropToken)}`;
+    const origin = resolveSafePublicOrigin({
+      configuredOrigin: process.env.PUBLIC_ORIGIN,
+      hostHeader: req.headers.host,
+      forwardedHost: req.headers['x-forwarded-host'],
+      protocol: req.protocol,
+      forwardedProto: req.headers['x-forwarded-proto'],
+      trustProxy: process.env.TRUST_PROXY === 'true',
+      fallbackOrigin: `http://localhost:${PORT}`,
+    });
+    const dropUrl = `${origin}${dropPath}`;
+    const nowIso = new Date().toISOString();
+
+    if (Array.isArray(crmStore.soundEngineerEmails)) {
+      const mailIdx = crmStore.soundEngineerEmails.findIndex(
+        (m) =>
+          m.orderId === hydrated.id &&
+          m.engineerId === verified.payload.engineerId
+      );
+      if (mailIdx !== -1) {
+        const rec = crmStore.soundEngineerEmails[mailIdx];
+        crmStore.soundEngineerEmails[mailIdx] = {
+          ...rec,
+          clickedCount: (rec.clickedCount ?? 0) + 1,
+          lastClickedAt: nowIso,
+          lastIssuedDropUrl: dropUrl,
+        };
+        writeOrdersCrmStore(crmStore);
+      }
+    }
+
+    res.setHeader('Cache-Control', 'no-store');
+    if (req.method === 'POST' || req.query.format === 'json') {
+      res.json({
+        ok: true,
+        orderNumber: hydrated.orderNumber,
+        engineerName: verified.payload.engineerName,
+        dropToken: freshDropToken,
+        dropPath,
+        dropUrl,
+      });
+      return;
+    }
+
+    res.redirect(302, dropPath);
+  };
+
+  app.get('/api/sound-drop/from-email', handleSoundDropFromEmailButton);
+  app.post(
+    '/api/sound-drop/from-email',
+    express.json({ limit: '16kb' }),
+    handleSoundDropFromEmailButton
   );
 
   // Однокнопочный шлюз прямой сдачи файла для звукорежиссёра (/api/sound-drop/* — без админки и без ПДн клиента)

@@ -299,13 +299,13 @@ function ContractAndAppendixSheet({
         suite={suite}
         kicker={
           contractVariant === 'appendix_only'
-            ? `Приложение № ${suite.appendixNumber} к действующему Рамочному договору`
-            : 'Рамочный договор подряда на аудиопродакшн + Приложение № 1'
+            ? `Приложение № ${suite.appendixNumber} к действующему Договору`
+            : 'Договор подряда на аудиопродакшн + Приложение № 1'
         }
         title={
           contractVariant === 'appendix_only'
             ? `Заказ-спецификация (Приложение № ${suite.appendixNumber}) к Договору № ${suite.contractNumber}`
-            : `Рамочный договор № ${suite.contractNumber} на производство аудиопродукции`
+            : `Договор № ${suite.contractNumber} на производство аудиопродукции`
         }
         docNumberLine={`${studio.city} · от ${suite.contractDateRu} · Приложение № ${suite.appendixNumber} от ${suite.issueDateRu}`}
       />
@@ -322,13 +322,13 @@ function ContractAndAppendixSheet({
             {customer.kpp ? `, КПП ${customer.kpp}` : ''}
             {customer.inn ? ')' : ''}
             {customer.address ? `, ${customer.address}` : ''}, именуемое в дальнейшем{' '}
-            <strong>«Заказчик»</strong>, с другой стороны, заключили настоящий Рамочный договор
+            <strong>«Заказчик»</strong>, с другой стороны, заключили настоящий Договор
             (далее — «Договор») о нижеследующем:
           </p>
 
           <section className="space-y-1">
             <h4 className="font-bold text-xs uppercase tracking-wide text-[#111111]">
-              1. Предмет рамочного договора (студийный продакшн)
+              1. Предмет договора (студийный продакшн)
             </h4>
             <p>
               1.1. Исполнитель обязуется по заданиям Заказчика создавать рекламные и
@@ -340,7 +340,7 @@ function ContractAndAppendixSheet({
             <p>
               1.2. Конкретный перечень работ, хронометраж, сроки, стоимость и особенности заказа
               согласуются в отдельных <strong>Приложениях (Заказ-спецификациях)</strong> без
-              необходимости перезаключения или переделки текста настоящего Рамочного договора при
+              необходимости перезаключения или переделки текста настоящего Договора при
               повторных заказах.
             </p>
           </section>
@@ -484,7 +484,7 @@ function ContractAndAppendixSheet({
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-[#FF4820]">
-              Приложение № {suite.appendixNumber} к Рамочному договору № {suite.contractNumber}
+              Приложение № {suite.appendixNumber} к Договору № {suite.contractNumber}
             </p>
             <h4 className="text-sm sm:text-base font-bold text-[#111111]">
               Заказ-спецификация на производство аудиоролика от {suite.issueDateRu}

@@ -38,7 +38,7 @@ test('buildFaqPageJsonLd отбрасывает пустые элементы и
       id: 'valid',
       indexLabel: '01',
       question: '  Как передаются права?  ',
-      answer: '  По рамочному договору с паспортом РАО/ВОИС.  ',
+      answer: '  По договору с паспортом РАО/ВОИС (100% предоплата по договору или картой).  ',
     },
     {
       id: 'empty-question',
@@ -67,7 +67,7 @@ test('buildFaqPageJsonLd отбрасывает пустые элементы и
   assert.equal(schema.mainEntity[0].name, 'Как передаются права?');
   assert.equal(
     schema.mainEntity[0].acceptedAnswer.text,
-    'По рамочному договору с паспортом РАО/ВОИС.'
+    'По договору с паспортом РАО/ВОИС (100% предоплата по договору или картой).'
   );
 });
 

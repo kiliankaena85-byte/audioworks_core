@@ -59,7 +59,9 @@ import { BrandedDocumentSuiteModal } from '../documents/BrandedDocumentSuiteModa
 import { evaluateWebhookEndpointRfSafety } from '../../security/rfLegalCompliance';
 import {
   createDefaultSoundEngineerRoster,
+  SOUND_ENGINEER_EMAIL_CTA_LABEL,
   type SoundEngineerContact,
+  type SoundEngineerEmailNotificationRecord,
 } from '../../data/productionApprovalWorkflow';
 import { studioCmsStore } from '../../cms/studioCmsStore';
 import { AdminProductionKanbanView } from './AdminProductionKanbanView';
@@ -153,6 +155,9 @@ export function AdminOrdersCrmPanel({
   const [soundEngineers, setSoundEngineers] = useState<SoundEngineerContact[]>(
     () => createDefaultSoundEngineerRoster()
   );
+  const [soundEngineerEmails, setSoundEngineerEmails] = useState<
+    SoundEngineerEmailNotificationRecord[]
+  >([]);
   const [dispatchLogs, setDispatchLogs] = useState<DispatchAttemptLog[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -266,6 +271,7 @@ export function AdminOrdersCrmPanel({
           ok: boolean;
           orders: CrmOrderRecord[];
           soundEngineers?: SoundEngineerContact[];
+          soundEngineerEmails?: SoundEngineerEmailNotificationRecord[];
           dispatchLogs: DispatchAttemptLog[];
           settings: AdminDispatchSettingsResponse;
           legalProfiles?: StudioLegalProfilesConfig;
@@ -275,6 +281,9 @@ export function AdminOrdersCrmPanel({
         setOrders(json.orders);
         if (Array.isArray(json.soundEngineers)) {
           setSoundEngineers(json.soundEngineers);
+        }
+        if (Array.isArray(json.soundEngineerEmails)) {
+          setSoundEngineerEmails(json.soundEngineerEmails);
         }
         setDispatchLogs(json.dispatchLogs);
         applyServerSettings(json.settings);
@@ -418,6 +427,8 @@ export function AdminOrdersCrmPanel({
       const json = (await res.json()) as {
         ok: boolean;
         order?: CrmOrderRecord;
+        soundEngineerEmail?: SoundEngineerEmailNotificationRecord | null;
+        soundEngineerEmails?: SoundEngineerEmailNotificationRecord[];
         error?: string;
       };
       if (!res.ok || !json.ok || !json.order) {
@@ -425,9 +436,22 @@ export function AdminOrdersCrmPanel({
       }
       const updated = json.order;
       setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+      if (Array.isArray(json.soundEngineerEmails)) {
+        setSoundEngineerEmails(json.soundEngineerEmails);
+      } else if (json.soundEngineerEmail) {
+        setSoundEngineerEmails((prev) =>
+          [
+            json.soundEngineerEmail!,
+            ...prev.filter((item) => item.id !== json.soundEngineerEmail!.id),
+          ].slice(0, 30)
+        );
+      }
       setEdoModalOrder((prev) => (prev && prev.id === updated.id ? updated : prev));
       if (successMessage) {
-        setFeedbackBanner({ kind: 'ok', text: successMessage });
+        const emailSuffix = json.soundEngineerEmail
+          ? ` Уведомление звукорежиссёру (${json.soundEngineerEmail.engineerEmail}) с кнопкой «${SOUND_ENGINEER_EMAIL_CTA_LABEL}» отправлено.`
+          : '';
+        setFeedbackBanner({ kind: 'ok', text: `${successMessage}${emailSuffix}` });
       }
     } catch (err) {
       setFeedbackBanner({
@@ -1078,6 +1102,7 @@ export function AdminOrdersCrmPanel({
         <AdminProductionKanbanView
           orders={orders}
           soundEngineers={soundEngineers}
+          soundEngineerEmails={soundEngineerEmails}
           selectedOrderId={selectedOrderId}
           onSelectOrderId={setSelectedOrderId}
           onOrderUpdated={(updated) =>
@@ -1086,6 +1111,7 @@ export function AdminOrdersCrmPanel({
             )
           }
           onSoundEngineersUpdated={setSoundEngineers}
+          onSoundEngineerEmailsUpdated={setSoundEngineerEmails}
           onFeedback={setFeedbackBanner}
         />
       )}
@@ -1391,6 +1417,37 @@ export function AdminOrdersCrmPanel({
                         <p className="text-[11px] text-[#111111]/58 dark:text-[#F4F3EF]/58">
                           Регламент этапа: {stageMeta.slaHint}
                         </p>
+
+                        {(() => {
+                          const latestMail = soundEngineerEmails.find(
+                            (m) => m.orderId === selectedOrder.id
+                          );
+                          if (!latestMail) return null;
+                          return (
+                            <div
+                              data-testid="crm-funnel-sound-engineer-email-card"
+                              className="p-3.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] flex flex-wrap items-center justify-between gap-3 text-xs"
+                            >
+                              <div className="space-y-0.5 min-w-0">
+                                <p className="font-bold text-[#111111] dark:text-[#F4F3EF]">
+                                  E-mail звукорежиссёру при смене статуса:{' '}
+                                  {latestMail.engineerName} ({latestMail.engineerEmail})
+                                </p>
+                                <p className="text-[11px] text-[#111111]/64 dark:text-[#F4F3EF]/64 truncate">
+                                  Тема: {latestMail.subject}
+                                </p>
+                              </div>
+                              <a
+                                href={latestMail.emailActionPath}
+                                data-testid="crm-funnel-email-submit-file-btn"
+                                className="min-h-[38px] px-4 py-1.5 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                              >
+                                <span>{latestMail.buttonLabel}</span>
+                                <ExternalLink className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                              </a>
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       {/* Спецификация медиаплана (радиостанции, хронометраж, выходы, OTS) */}
@@ -2448,7 +2505,7 @@ export function AdminOrdersCrmPanel({
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#111111]/10 dark:border-white/10">
                 <div className="space-y-1">
                   <p className="text-xs font-medium text-[#111111]/56 dark:text-[#F4F3EF]/56">
-                    Брендированные документы A4 (КП · Рамочный договор г. Тверь · Счёт · Паспорт РАО/ВОИС)
+                    Брендированные документы A4 (КП · Договор г. Тверь · Счёт · Паспорт РАО/ВОИС)
                   </p>
                   <h2 className="text-lg font-bold text-[#111111] dark:text-[#F4F3EF]">
                     Переключаемый профиль исполнителя (ИП / ООО) и налоговый режим (УСН / НДС)

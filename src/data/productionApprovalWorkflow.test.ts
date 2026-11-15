@@ -15,13 +15,16 @@ import {
   evaluateBroadcastSlotFit,
   formatSoundEngineerProductionSheet,
   issueSoundDropTokenWithSigner,
+  issueSoundEngineerEmailGrantWithSigner,
   parseWavExactDurationSec,
   resolveExternalClientStep,
   resolveStudioKanbanColumn,
   resolveWhoseTurn,
+  SOUND_ENGINEER_EMAIL_CTA_LABEL,
   toClientApprovalWorkflowView,
   toSoundDropTaskPublicView,
   verifySoundDropTokenWithSigner,
+  verifySoundEngineerEmailGrantWithSigner,
 } from './productionApprovalWorkflow';
 import { BANNED_EDITORIAL_TERMS } from './studioCmsTypes';
 
@@ -249,7 +252,7 @@ test('Точный расчёт длительности WAV и проверка
   assert.ok(est.estimatedSec >= 8 && est.estimatedSec <= 14);
 });
 
-test('Однокнопочный токен звукорежиссёра и техлист не содержат цен, ИНН клиента и запрещённых слов', () => {
+test('Однокнопочный токен звукорежиссёра, e-mail грант кнопки «Сдать файл на проверку» и техлист не содержат цен, ИНН клиента и запрещённых слов', () => {
   const secret = 'test-sound-drop-secret-2026';
   const signFn = (msg: string) =>
     crypto.createHmac('sha256', secret).update(msg).digest('base64url').slice(0, 32);
@@ -266,6 +269,28 @@ test('Однокнопочный токен звукорежиссёра и те
     },
     signFn
   );
+
+  const emailGrant = issueSoundEngineerEmailGrantWithSigner(
+    {
+      orderId: 'crm-seed-prod-2948',
+      orderNumber: 'FM-2948',
+      engineerId: 'eng-gromov',
+      engineerName: 'Илья Громов',
+      gen: 2,
+      expMs: nowMs + 7 * 24 * 3600 * 1000,
+    },
+    signFn
+  );
+
+  const verifiedGrant = verifySoundEngineerEmailGrantWithSigner(emailGrant, signFn, nowMs, {
+    expectedGeneration: 2,
+  });
+  assert.equal(verifiedGrant.ok, true);
+
+  const revokedGrant = verifySoundEngineerEmailGrantWithSigner(emailGrant, signFn, nowMs, {
+    expectedGeneration: 3,
+  });
+  assert.deepEqual(revokedGrant, { ok: false, reason: 'revoked' });
 
   const verified = verifySoundDropTokenWithSigner(token, signFn, nowMs, {
     expectedGeneration: 2,
@@ -302,13 +327,23 @@ test('Однокнопочный токен звукорежиссёра и те
     '2026-11-14T12:05:00.000Z'
   );
 
+  const emailActionUrl = `https://fmworks.ru/api/sound-drop/from-email?grant=${encodeURIComponent(emailGrant)}`;
   const sheet = formatSoundEngineerProductionSheet({
     orderNumber: 'FM-2948',
     engineer: roster[0]!,
     workflow: wf,
     briefFallbackText: 'Зимний лизинг тягачей',
     directDropUrl: `https://fmworks.ru/sound-drop?token=${encodeURIComponent(token)}`,
+    emailActionUrl,
+    previousStageLabel: '03. Счёт и предоплата',
+    currentStageLabel: '04. Сценарии и запись',
+    triggerSummary: 'Заказ переведён на этап производства ролика',
   });
+
+  assert.equal(sheet.buttonLabel, SOUND_ENGINEER_EMAIL_CTA_LABEL);
+  assert.equal(sheet.actionButtonUrl, emailActionUrl);
+  assert.equal(sheet.htmlBody.includes(SOUND_ENGINEER_EMAIL_CTA_LABEL), true);
+  assert.equal(sheet.htmlBody.includes('/api/sound-drop/from-email?grant='), true);
 
   const publicDropView = toSoundDropTaskPublicView({
     orderNumber: 'FM-2948',
@@ -317,12 +352,12 @@ test('Однокнопочный токен звукорежиссёра и те
     workflow: wf,
   });
 
-  const combined = `${sheet.subject}\n${sheet.plainBody}\n${JSON.stringify(publicDropView)}`;
+  const combined = `${sheet.subject}\n${sheet.plainBody}\n${sheet.htmlBody}\n${JSON.stringify(publicDropView)}`;
   // Не должно быть ни цены 25 000 ₽, ни ИНН 7702070139, ни телефона клиента!
   assert.equal(combined.includes('25 000'), false);
   assert.equal(combined.includes('7702070139'), false);
   assert.equal(combined.includes('925 310-88-42'), false);
-  assert.equal(combined.includes('/sound-drop?token='), true);
+  assert.equal(combined.includes('/api/sound-drop/from-email?grant='), true);
 
   const lower = combined.toLowerCase();
   for (const banned of BANNED_EDITORIAL_TERMS) {

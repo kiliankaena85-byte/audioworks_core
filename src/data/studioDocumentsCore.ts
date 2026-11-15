@@ -225,7 +225,7 @@ export const FZ38_DISCLAIMER_STATUS_OPTIONS: readonly {
 ] as const;
 
 /**
- * Раздел 3 основного Рамочного договора (ст. 721 ГК РФ):
+ * Раздел 3 основного Договора (ст. 721 ГК РФ):
  * Единый базовый технический стандарт сдачи рекламных аудиороликов
  * для служб технического контроля коммерческих радиостанций РФ.
  */
@@ -1266,11 +1266,11 @@ export function formatProductionSuitePlainSummary(
   if (activeDoc === 'contract') {
     return [
       ...headerLines,
-      `РАМОЧНЫЙ ДОГОВОР № ${suite.contractNumber} от ${suite.contractDateRu} (${studio.city})`,
+      `ДОГОВОР № ${suite.contractNumber} от ${suite.contractDateRu} (${studio.city})`,
       `+ ПРИЛОЖЕНИЕ № ${suite.appendixNumber} (ЗАКАЗ-СПЕЦИФИКАЦИЯ)`,
       `Исполнитель: ${studio.legalName} (ИНН ${studio.inn}${kppPart}, ${ogrnLabel} ${studio.ogrnOrOgrnip})`,
       `Заказчик: ${customer.displayName}${customer.inn ? ` (ИНН ${customer.inn})` : ''}`,
-      `• Принцип: Рамочный договор без переделки при новых заказах; цена и объём в Приложении № ${suite.appendixNumber}.`,
+      `• Принцип: Единый договор на производство аудиопродукции (100% предоплата по договору или картой); цена и объём в Приложении № ${suite.appendixNumber}.`,
       `• Раздел 3 Договора (ст. 721 ГК РФ): Базовый эфирный техстандарт радиостанций РФ — WAV 44 100 Гц / 16 bit Stereo + MP3 320 kbps, -14…-11 LUFS (ч. 11 ст. 15 ФЗ-38), пики ≤ -0.5 dBTP, моносовместимость, отсутствие пустых пауз > 0,1 сек.`,
       `• Раздел 5 Договора: Двусторонняя ответственность (ст. 431.2, 1285, 1301, 1311, 400 ГК РФ, ст. 38 ФЗ-38), подсудность — Арбитражный суд Тверской области (${studio.city}).`,
       `• Приложение № ${suite.appendixNumber}: «${suite.spotWorkingTitle}», ${suite.spotDurationSec} сек, тариф «${scope.tierTitle}», ${
