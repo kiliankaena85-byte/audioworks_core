@@ -26,6 +26,10 @@ import {
   OrderDocumentMeta,
   sanitizeOrderDocumentMeta,
 } from './studioDocumentsCore';
+import {
+  isValidVoiceArchetypeId,
+  type VoiceArchetypeId,
+} from './voiceCastingCatalog';
 
 export type OrderCheckoutMode = 'production_only' | 'air_plus_production';
 
@@ -59,6 +63,7 @@ export interface ConfirmedReservationSummary {
   firstContactedAtIso?: string | null;
   formatLabel: string;
   spotDurationSec: number;
+  selectedVoiceId?: VoiceArchetypeId | null;
   industryLabel: string | null;
   briefNote: string;
   hasVoice: boolean;
@@ -95,6 +100,7 @@ export interface OrderDraftSnapshot {
   wantsDiadocDuplicate: boolean;
   resolvedCounterpartyMeta: OrderDocumentMeta | null;
   spotDurationSec: number;
+  selectedVoiceId: VoiceArchetypeId | null;
   industryPreset: IndustryVerticalSlug | null;
   briefText: string;
   contactLine: string;
@@ -207,6 +213,7 @@ export function createDefaultOrderDraft(): OrderDraftSnapshot {
     wantsDiadocDuplicate: false,
     resolvedCounterpartyMeta: null,
     spotDurationSec: 20,
+    selectedVoiceId: null,
     industryPreset: null,
     briefText: '',
     contactLine: '',
@@ -323,6 +330,9 @@ function sanitizeConfirmedReservation(
       typeof obj.spotDurationSec === 'number' && Number.isFinite(obj.spotDurationSec)
         ? Math.max(5, Math.min(60, Math.round(obj.spotDurationSec)))
         : 20,
+    selectedVoiceId: isValidVoiceArchetypeId(obj.selectedVoiceId)
+      ? obj.selectedVoiceId
+      : null,
     industryLabel:
       typeof obj.industryLabel === 'string' ? obj.industryLabel.slice(0, 160) : null,
     briefNote: typeof obj.briefNote === 'string' ? obj.briefNote.slice(0, 2000) : '',
@@ -367,6 +377,12 @@ function sanitizeDraftFromStorage(
     typeof obj.spotDurationSec === 'number' && Number.isFinite(obj.spotDurationSec)
       ? Math.max(5, Math.min(60, Math.round(obj.spotDurationSec)))
       : base.spotDurationSec;
+
+  const selectedVoiceId: VoiceArchetypeId | null = isValidVoiceArchetypeId(
+    obj.selectedVoiceId
+  )
+    ? obj.selectedVoiceId
+    : null;
 
   const industryPreset =
     typeof obj.industryPreset === 'string' && isValidIndustrySlug(obj.industryPreset)
@@ -467,6 +483,7 @@ function sanitizeDraftFromStorage(
       ? sanitizeOrderDocumentMeta(obj.resolvedCounterpartyMeta)
       : null,
     spotDurationSec,
+    selectedVoiceId,
     industryPreset,
     briefText: typeof obj.briefText === 'string' ? obj.briefText.slice(0, 2000) : '',
     contactLine: typeof obj.contactLine === 'string' ? obj.contactLine.slice(0, 240) : '',
@@ -568,22 +585,38 @@ export function createOrderDraftStore(
       formatId?: OrderFormatId | null;
       industryPreset?: IndustryVerticalSlug | null;
       spotDurationSec?: number;
+      selectedVoiceId?: VoiceArchetypeId | null;
       briefHint?: string;
+      overwriteBriefText?: boolean;
       returnPath?: string;
     } = {}): OrderDraftSnapshot {
+      const nextBriefText =
+        params.briefHint !== undefined
+          ? params.overwriteBriefText || !state.briefText.trim()
+            ? params.briefHint.slice(0, 2000)
+            : state.briefText
+          : state.briefText;
       const next: OrderDraftSnapshot = {
         ...state,
         mode: 'production_only',
         selectedFormat: params.formatId ?? state.selectedFormat,
-        isFormatPreselected: Boolean(params.formatId),
+        isFormatPreselected:
+          params.formatId === null
+            ? false
+            : params.formatId !== undefined
+              ? true
+              : state.isFormatPreselected,
+        selectedVoiceId:
+          params.selectedVoiceId !== undefined
+            ? params.selectedVoiceId
+            : state.selectedVoiceId,
         industryPreset:
           params.industryPreset !== undefined ? params.industryPreset : state.industryPreset,
         spotDurationSec:
           params.spotDurationSec !== undefined
             ? Math.max(5, Math.min(60, Math.round(params.spotDurationSec)))
             : state.spotDurationSec,
-        briefText:
-          params.briefHint && !state.briefText.trim() ? params.briefHint : state.briefText,
+        briefText: nextBriefText,
         mediaReservation: airtimeEnabled ? state.mediaReservation : null,
         holdExpiresAtMs: airtimeEnabled ? state.holdExpiresAtMs : null,
         isViewingSubmittedReceipt: false,

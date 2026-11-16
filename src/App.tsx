@@ -99,6 +99,11 @@ const PrivacyPolicyPage = lazy(() =>
     default: m.PrivacyPolicyPage,
   }))
 );
+const SharedProposalPage = lazy(() =>
+  import('./components/pages/SharedProposalPage').then((m) => ({
+    default: m.SharedProposalPage,
+  }))
+);
 const SoundEngineerDropPage = lazy(() =>
   import('./components/pages/SoundEngineerDropPage').then((m) => ({
     default: m.SoundEngineerDropPage,
@@ -493,12 +498,26 @@ function FmworksExperience() {
                 scrollAnchor={route.scrollAnchor}
                 navigationTick={navigationTick}
                 playerSnap={caseSnap}
+                selectedVoiceId={orderDraft.selectedVoiceId}
                 onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
                 onSeekCase={(item, ratio) => casePlayerEngine.seekToRatio(ratio, item)}
                 onWarmCasePlayer={() => void casePlayerEngine.preload()}
                 onStopPreview={(caseId) => casePlayerEngine.stopPreview(caseId)}
                 onNavigate={navigateTo}
                 onStartStudioOrder={handleOpenStudioOrder}
+                onSelectVoiceForOrder={({
+                  voiceId,
+                  recommendedFormatId,
+                  mappedIndustrySlug,
+                }) => {
+                  orderDraftStore.prepareProductionOrder({
+                    formatId: recommendedFormatId,
+                    selectedVoiceId: voiceId,
+                    industryPreset: mappedIndustrySlug ?? undefined,
+                    returnPath: '/#voice-casting',
+                  });
+                  navigateTo({ kind: 'order' });
+                }}
               />
             )}
 
@@ -539,6 +558,17 @@ function FmworksExperience() {
                 scrollAnchor={route.scrollAnchor}
                 navigationTick={navigationTick}
                 onSelectFormat={(formatId) => handleOpenStudioOrder(formatId)}
+                onApplyChronometerToOrder={(payload) => {
+                  orderDraftStore.prepareProductionOrder({
+                    formatId: payload.formatId,
+                    spotDurationSec: payload.spotDurationSec,
+                    industryPreset: payload.industryPreset,
+                    briefHint: payload.briefText,
+                    overwriteBriefText: true,
+                    returnPath: '/pricing#script-chronometer',
+                  });
+                  navigateTo({ kind: 'order' });
+                }}
                 onNavigate={navigateTo}
               />
             )}
@@ -579,6 +609,15 @@ function FmworksExperience() {
               <ClientCabinetPage
                 subroute={route.subroute}
                 magicToken={route.magicToken}
+                onNavigate={navigateTo}
+              />
+            )}
+
+            {route.kind === 'proposal' && (
+              <SharedProposalPage
+                shareToken={route.shareToken}
+                playerSnap={caseSnap}
+                onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
                 onNavigate={navigateTo}
               />
             )}

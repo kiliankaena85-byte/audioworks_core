@@ -7,13 +7,17 @@ import {
   PRODUCTION_STAGES_24_48H,
 } from '../../data/multiPageContentData';
 import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
-import { PlatformRoute } from '../../data/platformRouter';
+import {
+  IndustryVerticalSlug,
+  PlatformRoute,
+} from '../../data/platformRouter';
 import {
   CUSTOM_CONSULT_PRICING_ROW,
   EDITORIAL_PRICING_ROWS,
   OrderFormatId,
 } from '../../data/pricingData';
 import { BROADCAST_TECH_STANDARD_ROWS } from '../../data/studioDocumentsCore';
+import { ClientChronometerFz38Section } from '../ClientChronometerFz38Section';
 import { OgSharePreviewCard } from '../OgSharePreviewCard';
 import { OptimizedImage } from '../OptimizedImage';
 import { PricingPackageCharts } from '../PricingPackageCharts';
@@ -23,6 +27,12 @@ interface PricingPageProps {
   scrollAnchor?: string;
   navigationTick?: number;
   onSelectFormat: (formatId: OrderFormatId) => void;
+  onApplyChronometerToOrder: (payload: {
+    formatId: OrderFormatId;
+    spotDurationSec: number;
+    industryPreset: IndustryVerticalSlug | null;
+    briefText: string;
+  }) => void;
   onNavigate: (route: PlatformRoute) => void;
 }
 
@@ -30,6 +40,7 @@ export function PricingPage({
   scrollAnchor,
   navigationTick = 0,
   onSelectFormat,
+  onApplyChronometerToOrder,
   onNavigate,
 }: PricingPageProps) {
   useLayoutEffect(() => {
@@ -85,6 +96,14 @@ export function PricingPage({
             <div className="lg:col-span-4 flex flex-wrap lg:justify-end gap-x-5 gap-y-2 text-xs sm:text-sm font-semibold text-[#111111]/68 dark:text-[#F4F3EF]/68">
               <button
                 type="button"
+                data-testid="pricing-chronometer-anchor-btn"
+                onClick={() => scrollToLocalId('script-chronometer')}
+                className="min-h-[40px] inline-flex items-center hover:text-[#FF4820] transition-colors cursor-pointer whitespace-nowrap"
+              >
+                Хронометр и ФЗ-38 ↓
+              </button>
+              <button
+                type="button"
                 data-testid="pricing-charts-anchor-btn"
                 onClick={() => scrollToLocalId('pricing-visual-charts')}
                 className="min-h-[40px] inline-flex items-center hover:text-[#FF4820] transition-colors cursor-pointer whitespace-nowrap"
@@ -120,6 +139,9 @@ export function PricingPage({
 
       {/* Линейка студийных тарифов */}
       <PricingSection onSelectFormat={onSelectFormat} />
+
+      {/* Онлайн-хронометр текста + автопроверка обязательных сносок по ФЗ-38 */}
+      <ClientChronometerFz38Section onApplyToOrder={onApplyChronometerToOrder} />
 
       {/* Интерактивные графики сравнения пакетов (Хронометраж / Сложность / Сроки) */}
       <PricingPackageCharts onSelectFormat={onSelectFormat} />

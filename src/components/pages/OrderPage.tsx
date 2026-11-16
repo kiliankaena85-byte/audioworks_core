@@ -7,12 +7,14 @@ import {
   Clock,
   Copy,
   Download,
+  ExternalLink,
   FileCheck2,
   FileText,
   FolderOpen,
   Paperclip,
   Radio,
   RotateCcw,
+  Share2,
   ShieldCheck,
 } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -110,6 +112,12 @@ import {
   buildCommercialProposalFromDraft,
   downloadCommercialProposalPdfFromDraft,
 } from '../../data/orderDraftKpPdf';
+import {
+  formatVoiceSelectionSummary,
+  getVoiceArchetypeById,
+} from '../../data/voiceCastingCatalog';
+import { ClientChronometerFz38Section } from '../ClientChronometerFz38Section';
+import { VoiceCastingSection } from '../VoiceCastingSection';
 import { ReservationConfirmedModal } from '../ReservationConfirmedModal';
 import { BrandedDocumentSuiteModal } from '../documents/BrandedDocumentSuiteModal';
 
@@ -196,6 +204,15 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
   const [bindEmailError, setBindEmailError] = useState<string | null>(null);
   const [bindConsentError, setBindConsentError] = useState<string | null>(null);
   const [isBindingEmail, setIsBindingEmail] = useState<boolean>(false);
+  const [isCreatingShareLink, setIsCreatingShareLink] = useState<boolean>(false);
+  const [executiveShareInfo, setExecutiveShareInfo] = useState<{
+    token: string;
+    sharePath: string;
+    shareUrl: string;
+    kpNumber: string;
+  } | null>(null);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [copiedShareLink, setCopiedShareLink] = useState<boolean>(false);
 
   const activeRateScope = resolveLeadFormRateScope(
     isMediaBookingMode ? 'air_plus_production' : 'production_only'
@@ -292,6 +309,111 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
     setDocModalInitialKind('kp');
     setIsDocModalOpen(true);
   }, []);
+
+  const handleCreateExecutiveShareLink = useCallback(
+    async (options?: { fromConfirmed?: boolean }) => {
+      if (isCreatingShareLink) return;
+      setIsCreatingShareLink(true);
+      setShareError(null);
+      try {
+        const useConfirmed = Boolean(options?.fromConfirmed && confirmedOrder);
+        const res = await fetch('/api/public/shared-proposals', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            selectedFormatId: useConfirmed
+              ? (confirmedOrder?.selectedFormatId ?? draft.selectedFormat)
+              : draft.selectedFormat,
+            spotDurationSec: useConfirmed
+              ? (confirmedOrder?.spotDurationSec || draft.spotDurationSec)
+              : draft.spotDurationSec,
+            selectedVoiceId: useConfirmed
+              ? (confirmedOrder?.selectedVoiceId ?? draft.selectedVoiceId)
+              : draft.selectedVoiceId,
+            industrySlug: draft.industryPreset,
+            briefText: useConfirmed
+              ? (confirmedOrder?.briefNote ?? draft.briefText)
+              : draft.briefText,
+            companyName: useConfirmed
+              ? (confirmedOrder?.companyLine || draft.companyName)
+              : draft.companyName || draft.companyLine,
+            existingOrderNumber: useConfirmed
+              ? (confirmedOrder?.orderNumber ?? null)
+              : null,
+            customBudgetRub: useConfirmed
+              ? (confirmedOrder?.lockedTotals?.unifiedTotalRub ??
+                confirmedOrder?.selectedBudgetRub ??
+                null)
+              : isMediaBookingMode && reservationTotals
+                ? reservationTotals.unifiedTotalRub
+                : null,
+          }),
+        });
+        const json = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          token?: string;
+          sharePath?: string;
+          shareUrl?: string;
+          proposal?: { kpNumber?: string };
+          error?: string;
+        };
+        if (!res.ok || !json.ok || !json.token || !json.sharePath) {
+          setShareError(
+            json.error || 'Не удалось сформировать ссылку КП. Попробуйте ещё раз.'
+          );
+          return;
+        }
+        const fullUrl =
+          json.shareUrl ||
+          (typeof window !== 'undefined'
+            ? `${window.location.origin}${json.sharePath}`
+            : json.sharePath);
+        setExecutiveShareInfo({
+          token: json.token,
+          sharePath: json.sharePath,
+          shareUrl: fullUrl,
+          kpNumber: json.proposal?.kpNumber ?? draftCommercialProposal.kpNumber,
+        });
+        if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(fullUrl).catch(() => undefined);
+          setCopiedShareLink(true);
+          window.setTimeout(() => setCopiedShareLink(false), 2500);
+        }
+      } catch {
+        setShareError('Сбой соединения при формировании ссылки КП.');
+      } finally {
+        setIsCreatingShareLink(false);
+      }
+    },
+    [
+      confirmedOrder,
+      draft.briefText,
+      draft.companyLine,
+      draft.companyName,
+      draft.industryPreset,
+      draft.selectedFormat,
+      draft.selectedVoiceId,
+      draft.spotDurationSec,
+      draftCommercialProposal.kpNumber,
+      isCreatingShareLink,
+      isMediaBookingMode,
+      reservationTotals,
+    ]
+  );
+
+  const handleCopyExistingShareUrl = useCallback(async () => {
+    if (!executiveShareInfo) return;
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard
+        .writeText(executiveShareInfo.shareUrl)
+        .catch(() => undefined);
+      setCopiedShareLink(true);
+      window.setTimeout(() => setCopiedShareLink(false), 2500);
+    }
+  }, [executiveShareInfo]);
 
   // Загружаем актуальное расписание смен и праздников студии с сервера (с локальным резервом)
   useEffect(() => {
@@ -444,6 +566,11 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
     [draft.selectedFormat]
   );
 
+  const selectedVoiceSpec = useMemo(
+    () => getVoiceArchetypeById(draft.selectedVoiceId),
+    [draft.selectedVoiceId]
+  );
+
   const resolvedDeliveryDetail = useMemo(
     () =>
       buildCanonicalDeliveryDetail({
@@ -579,6 +706,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
         (trimmedManualName === offlineCp?.shortName ||
           trimmedManualName === resolvedFullLegalName);
 
+      const voiceSummaryLine = formatVoiceSelectionSummary(draft.selectedVoiceId);
       const merged: OrderDocumentMeta = {
         ...basePatch,
         ...(draft.resolvedCounterpartyMeta ?? {}),
@@ -586,15 +714,31 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
           ? { customerLegalName: trimmedManualName }
           : {}),
         ...(candidateInn ? { customerInn: candidateInn } : {}),
+        ...(voiceSummaryLine ? { voiceTalentLine: voiceSummaryLine } : {}),
         wantsDiadocDuplicate: draft.wantsDiadocDuplicate,
       };
       return Object.keys(merged).length > 0 ? merged : null;
     };
 
     const submittedDocMeta =
-      draft.wantsInvoiceNow || effectiveMode === 'air_plus_production' || Boolean(draft.companyInn)
+      draft.wantsInvoiceNow ||
+      effectiveMode === 'air_plus_production' ||
+      Boolean(draft.companyInn) ||
+      Boolean(draft.selectedVoiceId)
         ? buildClientSideDocumentMeta()
         : null;
+
+    const voiceBriefTag = draft.selectedVoiceId
+      ? formatVoiceSelectionSummary(draft.selectedVoiceId)
+      : null;
+    const enrichedBriefText = (() => {
+      const baseBrief = draft.briefText.trim();
+      if (!voiceBriefTag) return baseBrief;
+      if (baseBrief.includes(voiceBriefTag)) return baseBrief;
+      return baseBrief
+        ? `${baseBrief}\n[Кастинг голоса: ${voiceBriefTag}]`
+        : `[Кастинг голоса: ${voiceBriefTag}]`;
+    })();
 
     if (effectiveMode === 'air_plus_production' && mediaReservation && reservationTotals) {
       const recordedRate = recordAttempt(activeRateScope);
@@ -623,7 +767,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
         contactLine: effectiveContact,
         companyLine: effectiveCompany,
         callbackPreference: draft.callbackPreference,
-        briefText: draft.briefText.trim(),
+        briefText: enrichedBriefText,
         hasVoiceRecording: hasVoice,
         voiceDurationSec: voiceSec,
         hasAttachedFile: Boolean(attachedFileName),
@@ -699,10 +843,11 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
         rescueToken: shieldResult.rescueToken ?? null,
         formatLabel: reservationTotals.spotStatusLabel,
         spotDurationSec: mediaReservation.spotDurationSec ?? draft.spotDurationSec,
+        selectedVoiceId: draft.selectedVoiceId,
         industryLabel: mediaReservation.nicheLabel,
         contactLine: effectiveContact,
         companyLine: nextVip.company,
-        briefNote: draft.briefText.trim(),
+        briefNote: enrichedBriefText,
         hasVoice,
         voiceSec,
         fileName: attachedFileName,
@@ -766,7 +911,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       contactLine: effectiveContact,
       companyLine: effectiveCompany,
       callbackPreference: draft.callbackPreference,
-      briefText: draft.briefText.trim(),
+      briefText: enrichedBriefText,
       hasVoiceRecording: hasVoice,
       voiceDurationSec: voiceSec,
       hasAttachedFile: Boolean(attachedFileName),
@@ -841,10 +986,11 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       rescueToken: shieldResult.rescueToken ?? null,
       formatLabel: chosenPill.label,
       spotDurationSec: draft.spotDurationSec,
+      selectedVoiceId: draft.selectedVoiceId,
       industryLabel: activeIndustrySpec?.shortTitle ?? null,
       contactLine: effectiveContact,
       companyLine: nextVip.company,
-      briefNote: draft.briefText.trim(),
+      briefNote: enrichedBriefText,
       hasVoice,
       voiceSec,
       fileName: attachedFileName,
@@ -1412,7 +1558,68 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                     : 'Перейти в Личный кабинет →'}
                 </span>
               </button>
+
+              <button
+                type="button"
+                disabled={isCreatingShareLink}
+                data-testid="confirmed-create-executive-kp-link-btn"
+                onClick={() =>
+                  void handleCreateExecutiveShareLink({ fromConfirmed: true })
+                }
+                className="min-h-[46px] px-5 py-2.5 rounded-full border border-[#111111]/18 dark:border-white/18 hover:border-[#FF4820] text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap"
+              >
+                <Share2
+                  className="w-4 h-4 text-[#FF4820] shrink-0"
+                  aria-hidden="true"
+                />
+                <span>
+                  {isCreatingShareLink
+                    ? 'Формируем КП…'
+                    : 'Ссылка КП для руководителя (без ПДн)'}
+                </span>
+              </button>
             </div>
+
+            {executiveShareInfo && (
+              <div
+                data-testid="confirmed-executive-kp-share-card"
+                className="rounded-2xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+              >
+                <div className="space-y-0.5 min-w-0">
+                  <p className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
+                    Защищённая карточка КП № {executiveShareInfo.kpNumber} (0 ПДн по 152-ФЗ · 14 дней)
+                  </p>
+                  <p className="text-[#111111]/64 dark:text-[#F4F3EF]/64 truncate font-mono">
+                    {executiveShareInfo.shareUrl}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    data-testid="confirmed-copy-executive-kp-link-btn"
+                    onClick={() => void handleCopyExistingShareUrl()}
+                    className="min-h-[36px] px-3.5 rounded-xl bg-[#111111] hover:bg-[#FF4820] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                  >
+                    <Copy className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    <span>{copiedShareLink ? 'Скопировано' : 'Скопировать'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="confirmed-open-executive-kp-card-btn"
+                    onClick={() =>
+                      onNavigate({
+                        kind: 'proposal',
+                        shareToken: executiveShareInfo.token,
+                      })
+                    }
+                    className="min-h-[36px] px-3.5 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                  >
+                    <span>Открыть карточку КП</span>
+                    <ExternalLink className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Опциональная 1-клик привязка почты для входа с других устройств (если заказ оформлен только по телефону) */}
             {!confirmedOrder.clientEmail && confirmedOrder.rescueToken && (
@@ -2328,6 +2535,32 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                       )}
                     </div>
 
+                    {/* Живой хронометр текста + проверка сносок ФЗ-38 прямо внутри брифа */}
+                    <ClientChronometerFz38Section
+                      mode="inline_order"
+                      briefText={draft.briefText}
+                      spotDurationSec={draft.spotDurationSec}
+                      onUpdateBriefText={(nextText) => {
+                        orderDraftStore.updateDraft({ briefText: nextText });
+                        if (taskError) setTaskError(undefined);
+                      }}
+                      onUpdateSpotDuration={(nextSec) =>
+                        orderDraftStore.updateDraft({ spotDurationSec: nextSec })
+                      }
+                      onUpdateIndustryPreset={(slug) =>
+                        orderDraftStore.updateDraft({ industryPreset: slug })
+                      }
+                    />
+
+                    {/* Выбор референса голоса кинодубляжа (привязывается к заявке и КП) */}
+                    <VoiceCastingSection
+                      mode="inline_order"
+                      selectedVoiceId={draft.selectedVoiceId}
+                      onChangeSelectedVoice={(vid) =>
+                        orderDraftStore.updateDraft({ selectedVoiceId: vid })
+                      }
+                    />
+
                     {taskError && (
                       <p
                         id="production-order-task-error"
@@ -3052,12 +3285,26 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between gap-2">
+                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[#111111]/62 dark:text-[#F4F3EF]/62">
                         Хронометраж:
                       </span>
                       <span className="font-semibold">{draft.spotDurationSec} сек</span>
                     </div>
+
+                    {selectedVoiceSpec && (
+                      <div
+                        data-testid="order-summary-selected-voice"
+                        className="flex items-start justify-between gap-3"
+                      >
+                        <span className="text-[#111111]/62 dark:text-[#F4F3EF]/62 shrink-0">
+                          Голос (кастинг):
+                        </span>
+                        <span className="font-semibold text-right text-xs sm:text-sm leading-snug">
+                          {selectedVoiceSpec.code} · {selectedVoiceSpec.title}
+                        </span>
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[#111111]/62 dark:text-[#F4F3EF]/62">
@@ -3084,7 +3331,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                     </div>
                   </div>
 
-                  {/* Коммерческое предложение в PDF из текущего черновика до оплаты */}
+                  {/* Коммерческое предложение в PDF и ссылка для руководителя без ПДн */}
                   <div
                     data-testid="order-draft-kp-pdf-box"
                     className="pt-3.5 border-t border-[#111111]/10 dark:border-white/10 space-y-2.5"
@@ -3098,7 +3345,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                       </span>
                     </div>
                     <p className="text-xs text-[#111111]/66 dark:text-[#F4F3EF]/66 leading-relaxed">
-                      Скачайте официальное КП в формате PDF по текущим параметрам заказа для согласования с руководством или бухгалтерией перед оплатой.
+                      Скачайте КП в PDF или отправьте руководителю защищённую карточку со сметой, аудио-примером и счётом A4 (строго 0 ПДн по 152-ФЗ).
                     </p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <button
@@ -3123,6 +3370,69 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                         <span>Бланк КП (A4)</span>
                       </button>
                     </div>
+
+                    <button
+                      type="button"
+                      disabled={isCreatingShareLink}
+                      data-testid="order-create-executive-kp-link-btn"
+                      onClick={() => void handleCreateExecutiveShareLink()}
+                      className="w-full min-h-[42px] px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap"
+                    >
+                      <Share2
+                        className="w-3.5 h-3.5 text-[#FF4820] shrink-0"
+                        aria-hidden="true"
+                      />
+                      <span>
+                        {isCreatingShareLink
+                          ? 'Формируем ссылку КП…'
+                          : 'Ссылка КП для руководителя (без ПДн)'}
+                      </span>
+                    </button>
+
+                    {shareError && (
+                      <p role="alert" className="text-[11px] font-semibold text-[#FF4820]">
+                        {shareError}
+                      </p>
+                    )}
+
+                    {executiveShareInfo && (
+                      <div
+                        data-testid="order-executive-kp-share-box"
+                        className="rounded-xl p-3 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 space-y-2 text-xs"
+                      >
+                        <p className="font-semibold text-[#111111] dark:text-[#F4F3EF] leading-snug">
+                          Готово: КП № {executiveShareInfo.kpNumber} (без телефонов, почт и ФИО)
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            data-testid="order-copy-executive-kp-link-btn"
+                            onClick={() => void handleCopyExistingShareUrl()}
+                            className="min-h-[34px] px-3 rounded-lg bg-[#111111] hover:bg-[#FF4820] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                          >
+                            <Copy className="w-3 h-3 shrink-0" aria-hidden="true" />
+                            <span>
+                              {copiedShareLink ? 'Скопировано' : 'Скопировать ссылку'}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="order-open-executive-kp-card-btn"
+                            onClick={() =>
+                              onNavigate({
+                                kind: 'proposal',
+                                shareToken: executiveShareInfo.token,
+                              })
+                            }
+                            className="min-h-[34px] px-3 rounded-lg border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                          >
+                            <span>Открыть карточку КП</span>
+                            <ExternalLink className="w-3 h-3 shrink-0" aria-hidden="true" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     {downloadedKpFeedback && (
                       <p
                         data-testid="order-draft-kp-pdf-status"

@@ -242,6 +242,12 @@ import {
 } from './src/data/clientAuthCore.ts';
 import type { ClientAccountRecord } from './src/data/clientAuthCore.ts';
 import { verifyClientAttachmentMagicBytes } from './src/data/clientCabinetArchitecture.ts';
+import {
+  createZeroPdnSharedProposalRecord,
+  sanitizeSharedProposalToken,
+  type SharedB2bProposalRecord,
+  verifySharedProposalRecordToken,
+} from './src/data/b2bSharedProposalCore.ts';
 
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
@@ -274,6 +280,7 @@ const CMS_SNAPSHOT_FILE = path.join(CMS_DATA_DIR, 'studio-cms.json');
 const CMS_BACKUP_FILE = path.join(CMS_DATA_DIR, 'studio-cms.last-reset.bak.json');
 const SECURITY_LEADS_FILE = path.join(CMS_DATA_DIR, 'studio-security-leads.json');
 const ORDERS_CRM_FILE = path.join(CMS_DATA_DIR, 'studio-orders-crm.json');
+const SHARED_PROPOSALS_FILE = path.join(CMS_DATA_DIR, 'studio-shared-proposals.json');
 const ORDER_DELIVERABLES_DIR = path.join(CMS_DATA_DIR, 'order-deliverables');
 const ORDER_UPLOADS_DIR = path.join(CMS_DATA_DIR, 'order-uploads');
 
@@ -7481,6 +7488,190 @@ async function startServer() {
     express.json({ limit: '16kb' }),
     handleSoundDropFromEmailButton
   );
+
+  const sharedProposalsCreateLimiter = new RateLimiter({
+    maxAttempts: 15,
+    windowMs: 60_000,
+    minIntervalMs: 300,
+  });
+  let cachedSharedProposals: SharedB2bProposalRecord[] | null = null;
+
+  const signSharedProposalHmac = (msg: string): string =>
+    crypto
+      .createHmac('sha256', `${getSessionSecret()}:shared_kp_v1`)
+      .update(msg, 'utf8')
+      .digest('hex');
+
+  const readSharedProposalsList = (): SharedB2bProposalRecord[] => {
+    if (cachedSharedProposals) return cachedSharedProposals;
+    try {
+      if (!fs.existsSync(SHARED_PROPOSALS_FILE)) {
+        cachedSharedProposals = [];
+        return cachedSharedProposals;
+      }
+      const raw = JSON.parse(fs.readFileSync(SHARED_PROPOSALS_FILE, 'utf8'));
+      cachedSharedProposals = Array.isArray(raw)
+        ? (raw as SharedB2bProposalRecord[])
+        : [];
+      return cachedSharedProposals;
+    } catch {
+      cachedSharedProposals = [];
+      return cachedSharedProposals;
+    }
+  };
+
+  const writeSharedProposalsList = (records: SharedB2bProposalRecord[]): void => {
+    const nowMs = Date.now();
+    const pruned = records
+      .filter((r) => {
+        const exp = Date.parse(r.expiresAtIso);
+        return !Number.isFinite(exp) || exp > nowMs;
+      })
+      .slice(-500);
+    cachedSharedProposals = pruned;
+    try {
+      fs.mkdirSync(CMS_DATA_DIR, { recursive: true });
+      const tmp = path.join(
+        CMS_DATA_DIR,
+        `.shared-kp.${Date.now()}.${Math.random().toString(36).slice(2, 7)}.tmp`
+      );
+      fs.writeFileSync(tmp, JSON.stringify(pruned, null, 2), {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
+      fs.renameSync(tmp, SHARED_PROPOSALS_FILE);
+    } catch {
+      // В контейнере только для чтения сохраняем в оперативной памяти процесса
+    }
+  };
+
+  // Публичная генерация обезличенной ссылки КП для руководителя (строго 0 ПДн по 152-ФЗ)
+  app.post(
+    '/api/public/shared-proposals',
+    express.json({ limit: '24kb' }),
+    (req, res) => {
+      if (isBlockedCrossOriginMutation(req)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Кросс-доменный запрос отклонён политикой безопасности',
+        });
+        return;
+      }
+
+      const rate = sharedProposalsCreateLimiter.consume(resolveClientIp(req));
+      if (!rate.allowed) {
+        res.setHeader('Retry-After', String(rate.retryAfterSec));
+        res.status(429).json({
+          ok: false,
+          error: 'Слишком частое создание ссылок КП. Подождите минуту.',
+        });
+        return;
+      }
+
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const crmStore = readOrdersCrmStore();
+      const shareIdHex = crypto.randomBytes(8).toString('hex');
+
+      const record = createZeroPdnSharedProposalRecord({
+        input: {
+          selectedFormatId:
+            typeof body.selectedFormatId === 'string'
+              ? body.selectedFormatId
+              : null,
+          spotDurationSec:
+            typeof body.spotDurationSec === 'number'
+              ? body.spotDurationSec
+              : Number(body.spotDurationSec) || 20,
+          selectedVoiceId:
+            typeof body.selectedVoiceId === 'string'
+              ? body.selectedVoiceId
+              : null,
+          industrySlug:
+            typeof body.industrySlug === 'string' ? body.industrySlug : null,
+          briefText: typeof body.briefText === 'string' ? body.briefText : '',
+          companyName:
+            typeof body.companyName === 'string' ? body.companyName : '',
+          existingOrderNumber:
+            typeof body.existingOrderNumber === 'string'
+              ? body.existingOrderNumber
+              : null,
+          customBudgetRub:
+            typeof body.customBudgetRub === 'number'
+              ? body.customBudgetRub
+              : null,
+        },
+        shareIdHex,
+        signHmacHex: signSharedProposalHmac,
+        legalProfiles: crmStore.legalProfiles,
+      });
+
+      const list = readSharedProposalsList();
+      list.push(record);
+      writeSharedProposalsList(list);
+
+      const sharePath = `/proposal?token=${encodeURIComponent(record.token)}`;
+      const origin = resolveSafePublicOrigin({
+        configuredOrigin: process.env.PUBLIC_ORIGIN,
+        hostHeader: req.headers.host,
+        forwardedHost: req.headers['x-forwarded-host'],
+        protocol: req.protocol,
+        forwardedProto: req.headers['x-forwarded-proto'],
+        trustProxy: process.env.TRUST_PROXY === 'true',
+        fallbackOrigin: `http://localhost:${PORT}`,
+      });
+      const { token: _secretToken, ...publicView } = record;
+      void _secretToken;
+
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(201).json({
+        ok: true,
+        token: record.token,
+        sharePath,
+        shareUrl: `${origin}${sharePath}`,
+        proposal: publicView,
+      });
+    }
+  );
+
+  app.get('/api/public/shared-proposals/:token', (req, res) => {
+    const rawToken = sanitizeSharedProposalToken(req.params.token);
+    if (!rawToken) {
+      res.status(404).json({
+        ok: false,
+        reason: 'invalid_format',
+        error: 'Ссылка коммерческого предложения недействительна или устарела.',
+      });
+      return;
+    }
+
+    const targetShareId = rawToken.split('.')[0];
+    const list = readSharedProposalsList();
+    const matched = list.find((item) => item.shareId === targetShareId) ?? null;
+
+    const verified = verifySharedProposalRecordToken({
+      rawToken,
+      record: matched,
+      signHmacHex: signSharedProposalHmac,
+    });
+
+    if (!verified.ok) {
+      res.status(verified.reason === 'expired' ? 410 : 404).json({
+        ok: false,
+        reason: verified.reason,
+        error:
+          verified.reason === 'expired'
+            ? 'Срок действия защищённой ссылки КП (14 дней) истёк. Сформируйте актуальное КП на странице заказа.'
+            : 'Карточка коммерческого предложения не найдена или ссылка повреждена.',
+      });
+      return;
+    }
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      ok: true,
+      proposal: verified.view,
+    });
+  });
 
   // Однокнопочный шлюз прямой сдачи файла для звукорежиссёра (/api/sound-drop/* — без админки и без ПДн клиента)
   app.get('/api/sound-drop/session', (req, res) => {

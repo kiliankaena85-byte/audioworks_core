@@ -2,6 +2,7 @@ import {
   Building2,
   CheckCircle2,
   Download,
+  FileCheck2,
   FileSpreadsheet,
   RefreshCw,
   Search,
@@ -79,9 +80,14 @@ import {
   normalizeTelegramContact,
   validateAdminFooterContacts,
 } from '../../utils/footerContactsFormat';
+import {
+  type PdnDestructionActContext,
+  type RknOperatorActKind,
+} from '../../security/rknOperatorActsBuilder';
 import { BrandedDocumentSuiteModal } from '../documents/BrandedDocumentSuiteModal';
 import { AdminB2bOrderDossier } from './AdminB2bOrderDossier';
 import { AdminProductionKanbanView } from './AdminProductionKanbanView';
+import { AdminRknActsModal } from './AdminRknActsModal';
 import { AdminSecurityPanel } from './AdminSecurityPanel';
 
 const LEDGER_BUCKET_IDS: readonly B2bLedgerBucketId[] = [
@@ -261,6 +267,15 @@ export function AdminOrdersCrmPanel({
   const [edoModalOrder, setEdoModalOrder] = useState<CrmOrderRecord | null>(
     null
   );
+  const [rknActsModal, setRknActsModal] = useState<{
+    isOpen: boolean;
+    initialKind: RknOperatorActKind;
+    destructionContext: PdnDestructionActContext | null;
+  }>({
+    isOpen: false,
+    initialKind: 'rkn_notification_draft',
+    destructionContext: null,
+  });
 
   // Юридические и налоговые профили студии (ИП / ООО, г. Тверь)
   const [legalProfiles, setLegalProfiles] =
@@ -952,7 +967,17 @@ export function AdminOrdersCrmPanel({
       );
       setFeedbackBanner({
         kind: 'ok',
-        text: `Персональные данные по сделке #${order.orderNumber} обезличены согласно ч. 5 ст. 21 152-ФЗ.`,
+        text: `Персональные данные по сделке #${order.orderNumber} обезличены согласно ч. 5 ст. 21 152-ФЗ. Сформирован Акт РКН № 179 (A4).`,
+      });
+      setRknActsModal({
+        isOpen: true,
+        initialKind: 'pdn_destruction_act',
+        destructionContext: {
+          orderNumber: json.order.orderNumber,
+          anonymizedAtIso: json.order.pdnAnonymizedAt ?? new Date().toISOString(),
+          destructionReason:
+            'Достижение цели обработки ПДн / завершение расчётов и обезличивание записи по ч. 5 ст. 21 152-ФЗ',
+        },
       });
     } catch (err) {
       setFeedbackBanner({
@@ -1608,6 +1633,19 @@ export function AdminOrdersCrmPanel({
               onUploadDeliverableFile={handleUploadDeliverableWithMeta}
               onRedeliverGateways={handleRedeliverOrder}
               onAnonymizePdn={handleAnonymizeOrderPdn}
+              onOpenRknDestructionAct={(targetOrder) =>
+                setRknActsModal({
+                  isOpen: true,
+                  initialKind: 'pdn_destruction_act',
+                  destructionContext: {
+                    orderNumber: targetOrder.orderNumber,
+                    anonymizedAtIso:
+                      targetOrder.pdnAnonymizedAt ?? new Date().toISOString(),
+                    destructionReason:
+                      'Обезличивание персональных данных по завершении цели обработки (ч. 5 ст. 21 152-ФЗ, Приказ РКН № 179)',
+                  },
+                })
+              }
               onOpenProductionVoiceover={onNavigateToProductionOrder}
             />
           ) : (
@@ -2864,22 +2902,43 @@ export function AdminOrdersCrmPanel({
                         </label>
                       </div>
 
-                      <button
-                        type="button"
-                        disabled={isSavingLegal}
-                        onClick={() => void handleSaveLegalProfiles()}
-                        className="w-full sm:w-auto min-h-[42px] px-5 py-2 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] disabled:opacity-55 text-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                      >
-                        <CheckCircle2
-                          className="w-4 h-4 shrink-0"
-                          aria-hidden="true"
-                        />
-                        <span>
-                          {isSavingLegal
-                            ? 'Сохранение…'
-                            : 'Сохранить контакты и реквизиты'}
-                        </span>
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <button
+                          type="button"
+                          data-testid="crm-open-rkn-acts-suite-btn"
+                          onClick={() =>
+                            setRknActsModal({
+                              isOpen: true,
+                              initialKind: 'rkn_notification_draft',
+                              destructionContext: null,
+                            })
+                          }
+                          className="w-full sm:w-auto min-h-[42px] px-4 py-2 rounded-xl bg-[#111111] hover:bg-[#26262B] dark:bg-[#F4F3EF] dark:hover:bg-white text-white dark:text-[#0D0D0F] text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                        >
+                          <FileCheck2
+                            className="w-4 h-4 shrink-0 text-[#FF4820]"
+                            aria-hidden="true"
+                          />
+                          <span>Пакет локальных актов 152-ФЗ (A4)</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={isSavingLegal}
+                          onClick={() => void handleSaveLegalProfiles()}
+                          className="w-full sm:w-auto min-h-[42px] px-5 py-2 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] disabled:opacity-55 text-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                        >
+                          <CheckCircle2
+                            className="w-4 h-4 shrink-0"
+                            aria-hidden="true"
+                          />
+                          <span>
+                            {isSavingLegal
+                              ? 'Сохранение…'
+                              : 'Сохранить контакты и реквизиты'}
+                          </span>
+                        </button>
+                      </div>
                     </div>
                   </section>
                 </div>
@@ -3490,6 +3549,18 @@ export function AdminOrdersCrmPanel({
           }}
         />
       )}
+
+      {/* Генератор внутренних локальных актов Оператора 152-ФЗ (Уведомление РКН ст. 22 · Приказ ст. 22.1 · Акт уничтожения № 179) */}
+      <AdminRknActsModal
+        isOpen={rknActsModal.isOpen}
+        onClose={() =>
+          setRknActsModal((prev) => ({ ...prev, isOpen: false }))
+        }
+        legalProfiles={legalDraft}
+        initialActKind={rknActsModal.initialKind}
+        initialEntityKind={editingEntityTab}
+        destructionContext={rknActsModal.destructionContext}
+      />
     </div>
   );
 }

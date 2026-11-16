@@ -3,8 +3,13 @@ import { lazy, Suspense, useLayoutEffect } from 'react';
 import type { CasePlayerSnapshot } from '../../audio/lazyAudioEngines';
 import { BrandCasePoster, CaseId } from '../../data/casesData';
 import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
-import { parsePlatformRoute, PlatformRoute } from '../../data/platformRouter';
+import {
+  IndustryVerticalSlug,
+  parsePlatformRoute,
+  PlatformRoute,
+} from '../../data/platformRouter';
 import { OrderFormatId } from '../../data/pricingData';
+import type { VoiceArchetypeId } from '../../data/voiceCastingCatalog';
 import { HeroFMStage } from '../HeroFMStage';
 import { HomeSectionSkeleton } from '../LazySkeletons';
 
@@ -16,6 +21,11 @@ const RealRadioBroadcastBench = lazy(() =>
 const CasesGallery = lazy(() =>
   import('../CasesGallery').then((m) => ({
     default: m.CasesGallery,
+  }))
+);
+const VoiceCastingSection = lazy(() =>
+  import('../VoiceCastingSection').then((m) => ({
+    default: m.VoiceCastingSection,
   }))
 );
 const FifteenSecDuel = lazy(() =>
@@ -44,24 +54,32 @@ interface HomePageProps {
   scrollAnchor?: string;
   navigationTick?: number;
   playerSnap: CasePlayerSnapshot;
+  selectedVoiceId?: VoiceArchetypeId | null;
   onToggleCase: (item: BrandCasePoster) => void;
   onSeekCase?: (item: BrandCasePoster, ratio: number) => void;
   onWarmCasePlayer?: () => void;
   onStopPreview: (caseId: CaseId) => void;
   onNavigate: (route: PlatformRoute) => void;
   onStartStudioOrder: (formatId?: OrderFormatId | null) => void;
+  onSelectVoiceForOrder: (payload: {
+    voiceId: VoiceArchetypeId;
+    recommendedFormatId: OrderFormatId;
+    mappedIndustrySlug: IndustryVerticalSlug | null;
+  }) => void;
 }
 
 export function HomePage({
   scrollAnchor,
   navigationTick = 0,
   playerSnap,
+  selectedVoiceId = null,
   onToggleCase,
   onSeekCase,
   onWarmCasePlayer,
   onStopPreview,
   onNavigate,
   onStartStudioOrder,
+  onSelectVoiceForOrder,
 }: HomePageProps) {
   useLayoutEffect(() => {
     if (!scrollAnchor || typeof document === 'undefined') return;
@@ -127,6 +145,17 @@ export function HomePage({
           </button>
         </div>
       </div>
+
+      {/* 2.5. Витрина «Кастинг голосов кинодубляжа» с аудио-прослушиванием и выбором тембра в заказ */}
+      <Suspense fallback={<HomeSectionSkeleton variant="cases" />}>
+        <VoiceCastingSection
+          selectedVoiceId={selectedVoiceId}
+          playerSnap={playerSnap}
+          onTogglePlayDemo={onToggleCase}
+          onWarmPlayer={onWarmCasePlayer}
+          onSelectVoiceForOrder={onSelectVoiceForOrder}
+        />
+      </Suspense>
 
       {/* 3. Слепое сравнение 15 секунд: потоковый шаблон против режиссуры FMWorks */}
       <Suspense fallback={<HomeSectionSkeleton variant="duel" />}>

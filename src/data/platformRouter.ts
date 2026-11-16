@@ -72,6 +72,10 @@ export type PlatformRoute =
       kind: 'sound-drop';
       dropToken?: string;
     }
+  | {
+      kind: 'proposal';
+      shareToken?: string;
+    }
   | { kind: 'admin' };
 
 export function resolveRouteScrollAnchor(route: PlatformRoute): string | undefined {
@@ -101,6 +105,8 @@ export function resolveRouteTransitionKey(route: PlatformRoute): string {
       return route.subroute === 'reset' ? 'cabinet:reset' : 'cabinet';
     case 'sound-drop':
       return `sound-drop:${route.dropToken ?? 'default'}`;
+    case 'proposal':
+      return `proposal:${route.shareToken ?? 'default'}`;
     default:
       return route.kind;
   }
@@ -133,6 +139,8 @@ export function resolveRouteSkeletonVariant(
     case 'hot-air':
     case 'station-detail':
       return 'hot-air';
+    case 'proposal':
+      return 'order';
     default:
       return route.kind;
   }
@@ -192,6 +200,14 @@ export function sanitizeSoundDropToken(raw: unknown): string | undefined {
   return trimmed;
 }
 
+export function sanitizeProposalShareToken(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.length < 16 || trimmed.length > 256) return undefined;
+  if (!/^kp_[A-Za-z0-9_-]+\.[A-Fa-f0-9]{16,64}$/.test(trimmed)) return undefined;
+  return trimmed;
+}
+
 /**
  * Разбирает URL браузера (включая обратную совместимость со старыми хеш-якорями и query-параметрами)
  * в строго типизированный маршрут многостраничной платформы FMWorks.
@@ -222,6 +238,20 @@ export function parsePlatformRoute(
     return {
       kind: 'sound-drop',
       ...(dropToken ? { dropToken } : {}),
+    };
+  }
+
+  if (
+    normalizedPath === '/proposal' ||
+    normalizedPath.startsWith('/proposal/') ||
+    normalizedPath === '/kp'
+  ) {
+    const shareToken = sanitizeProposalShareToken(
+      params.get('token') ?? params.get('share')
+    );
+    return {
+      kind: 'proposal',
+      ...(shareToken ? { shareToken } : {}),
     };
   }
 
@@ -317,7 +347,8 @@ export function parsePlatformRoute(
       scrollAnchor:
         normalizedHash === 'stages-24-48' ||
         normalizedHash === 'legal-clearance' ||
-        normalizedHash === 'pricing-visual-charts'
+        normalizedHash === 'pricing-visual-charts' ||
+        normalizedHash === 'script-chronometer'
           ? normalizedHash
           : undefined,
     };
@@ -410,7 +441,11 @@ export function parsePlatformRoute(
   if (normalizedHash === 'cabinet-reset') {
     return { kind: 'cabinet', subroute: 'reset' };
   }
-  if (normalizedHash === 'duel' || normalizedHash === 'testimonials') {
+  if (
+    normalizedHash === 'duel' ||
+    normalizedHash === 'testimonials' ||
+    normalizedHash === 'voice-casting'
+  ) {
     return { kind: 'home', scrollAnchor: normalizedHash };
   }
 
@@ -470,6 +505,12 @@ export function buildPlatformPath(route: PlatformRoute): string {
         ? `/sound-drop?token=${encodeURIComponent(cleanDrop)}`
         : '/sound-drop';
     }
+    case 'proposal': {
+      const cleanShare = sanitizeProposalShareToken(route.shareToken);
+      return cleanShare
+        ? `/proposal?token=${encodeURIComponent(cleanShare)}`
+        : '/proposal';
+    }
     case 'admin':
       return '/admin';
   }
@@ -502,6 +543,7 @@ export function resolveActiveTopNavSection(
     case 'order':
     case 'cabinet':
     case 'sound-drop':
+    case 'proposal':
     case 'admin':
       return null;
   }
@@ -764,6 +806,19 @@ export function resolveRouteSeoMeta(
         canonicalPath: '/sound-drop',
         schemaType: 'WebSite',
         noindex: true,
+      };
+    case 'proposal':
+      return {
+        title: 'Коммерческое предложение на согласование — Студия FMWorks',
+        description:
+          'Защищённая карточка коммерческого предложения FMWorks без персональных данных для согласования бюджета, сроков и выставления счёта A4.',
+        canonicalPath: '/proposal',
+        schemaType: 'CheckoutPage',
+        noindex: true,
+        breadcrumbs: [
+          { name: 'Главная', path: '/' },
+          { name: 'Согласование КП', path: '/proposal' },
+        ],
       };
     case 'admin':
       return airtimeEnabled

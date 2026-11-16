@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Download,
   ExternalLink,
+  FileCheck2,
   FileSpreadsheet,
   Scale,
   Send,
@@ -101,6 +102,7 @@ export interface AdminB2bOrderDossierProps {
   ) => Promise<boolean>;
   onRedeliverGateways: (orderId: string) => Promise<void>;
   onAnonymizePdn: (order: CrmOrderRecord) => Promise<void>;
+  onOpenRknDestructionAct?: (order: CrmOrderRecord) => void;
   onOpenProductionVoiceover?: (orderId: string) => void;
 }
 
@@ -155,6 +157,7 @@ export function AdminB2bOrderDossier({
   onUploadDeliverableFile,
   onRedeliverGateways,
   onAnonymizePdn,
+  onOpenRknDestructionAct,
   onOpenProductionVoiceover,
 }: AdminB2bOrderDossierProps) {
   const [dossierTab, setDossierTab] = useState<B2bDossierTabId>('contract');
@@ -1372,6 +1375,18 @@ export function AdminB2bOrderDossier({
                       ? 'ПДн обезличены (152-ФЗ)'
                       : 'Обезличить ПДн (152-ФЗ)'}
                   </span>
+                </button>
+              )}
+
+              {order.pdnAnonymizedAt && onOpenRknDestructionAct && (
+                <button
+                  type="button"
+                  data-testid="crm-download-pdn-destruction-act-btn"
+                  onClick={() => onOpenRknDestructionAct(order)}
+                  className="min-h-[36px] px-3 py-1.5 rounded-xl bg-[#111111] hover:bg-[#C83210] dark:bg-[#F4F3EF] dark:hover:bg-[#C83210] text-white dark:text-[#0D0D0F] dark:hover:text-white font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  <FileCheck2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  <span>Акт РКН № 179 (A4)</span>
                 </button>
               )}
             </div>

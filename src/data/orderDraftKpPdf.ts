@@ -20,6 +20,7 @@ import {
   type StudioEntityKind,
   type StudioLegalProfilesConfig,
 } from './studioDocumentsCore';
+import { formatVoiceSelectionSummary } from './voiceCastingCatalog';
 
 export interface DraftKpLineItem {
   index: number;
@@ -51,6 +52,7 @@ export interface DraftCommercialProposalSpec {
   paymentTermsLabel: string;
   paymentChannelLabel: string;
   deliveryChannelLabel: string;
+  selectedVoiceLabel: string | null;
   industryTitle: string | null;
   industryComplianceNote: string | null;
   customerDisplayName: string;
@@ -284,6 +286,8 @@ export function buildCommercialProposalFromDraft(
   const resolvedProfiles =
     options?.legalProfiles ?? createDefaultStudioLegalProfiles();
 
+  const selectedVoiceLabel = formatVoiceSelectionSummary(draft.selectedVoiceId);
+
   const assembledSuite = assembleProductionDocumentSuite({
     orderNumber: draftOrderNumber,
     createdAtIso: nowIso,
@@ -301,6 +305,7 @@ export function buildCommercialProposalFromDraft(
     documentMeta: {
       ...(draft.resolvedCounterpartyMeta ?? {}),
       spotExactDurationSec: effectiveDurationSec,
+      ...(selectedVoiceLabel ? { voiceTalentLine: selectedVoiceLabel } : {}),
       wantsDiadocDuplicate: draft.wantsDiadocDuplicate,
     },
   });
@@ -399,6 +404,12 @@ export function buildCommercialProposalFromDraft(
     `1 сервисный раунд финальной доводки (коррекция баланса/паузы по таймкоду или до 1 замены музыкальной подложки без доплат)`,
   ];
 
+  if (selectedVoiceLabel) {
+    includedDeliverables.unshift(
+      `Запись выбранного актёрского тембра из базы студии: ${selectedVoiceLabel}`
+    );
+  }
+
   if (draft.selectedFormat === 'cinema') {
     includedDeliverables.push(
       effectiveDurationSec > 15
@@ -442,6 +453,7 @@ export function buildCommercialProposalFromDraft(
     paymentTermsLabel: '100% предоплата по договору или банковской картой',
     paymentChannelLabel,
     deliveryChannelLabel,
+    selectedVoiceLabel,
     industryTitle: industrySpec?.shortTitle ?? null,
     industryComplianceNote: industrySpec?.legalComplianceRules[0] ?? null,
     customerDisplayName: assembledSuite.customer.displayName,
