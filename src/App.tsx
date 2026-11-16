@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { fmTunerAudioEngine } from './audio/fmTunerAudioEngine';
 import {
   type CasePlayerSnapshot,
@@ -43,81 +43,67 @@ import {
 } from './data/seoRouteLabels';
 import { orderPublishedCmsCasesForPersona } from './data/studioCmsTypes';
 import { LayaDecisionProvider, useLayaDecision } from './engine/LayaContext';
+import { lazyNamedExport } from './utils/lazyWithRetry';
 
-const AdminWorkspace = lazy(() =>
-  import('./components/admin/AdminWorkspace').then((m) => ({
-    default: m.AdminWorkspace,
-  }))
+const AdminWorkspace = lazyNamedExport(
+  () => import('./components/admin/AdminWorkspace'),
+  'AdminWorkspace'
 );
-const FloatingCasePlayer = lazy(() =>
-  import('./components/FloatingCasePlayer').then((m) => ({
-    default: m.FloatingCasePlayer,
-  }))
+const FloatingCasePlayer = lazyNamedExport(
+  () => import('./components/FloatingCasePlayer'),
+  'FloatingCasePlayer'
 );
-const BrandKitModal = lazy(() =>
-  import('./components/BrandKitModal').then((m) => ({
-    default: m.BrandKitModal,
-  }))
+const BrandKitModal = lazyNamedExport(
+  () => import('./components/BrandKitModal'),
+  'BrandKitModal'
 );
-const ApproachPage = lazy(() =>
-  import('./components/pages/ApproachPage').then((m) => ({
-    default: m.ApproachPage,
-  }))
+const ApproachPage = lazyNamedExport(
+  () => import('./components/pages/ApproachPage'),
+  'ApproachPage'
 );
-const CasesPage = lazy(() =>
-  import('./components/pages/CasesPage').then((m) => ({
-    default: m.CasesPage,
-  }))
+const CasesPage = lazyNamedExport(
+  () => import('./components/pages/CasesPage'),
+  'CasesPage'
 );
-const ClientCabinetPage = lazy(() =>
-  import('./components/pages/ClientCabinetPage').then((m) => ({
-    default: m.ClientCabinetPage,
-  }))
+const ClientCabinetPage = lazyNamedExport(
+  () => import('./components/pages/ClientCabinetPage'),
+  'ClientCabinetPage'
 );
-const FaqPage = lazy(() =>
-  import('./components/pages/FaqPage').then((m) => ({
-    default: m.FaqPage,
-  }))
+const FaqPage = lazyNamedExport(
+  () => import('./components/pages/FaqPage'),
+  'FaqPage'
 );
-const HotAirPage = lazy(() =>
-  import('./components/pages/HotAirPage').then((m) => ({
-    default: m.HotAirPage,
-  }))
+const HotAirPage = lazyNamedExport(
+  () => import('./components/pages/HotAirPage'),
+  'HotAirPage'
 );
-const OrderPage = lazy(() =>
-  import('./components/pages/OrderPage').then((m) => ({
-    default: m.OrderPage,
-  }))
+const OrderPage = lazyNamedExport(
+  () => import('./components/pages/OrderPage'),
+  'OrderPage'
 );
-const PricingPage = lazy(() =>
-  import('./components/pages/PricingPage').then((m) => ({
-    default: m.PricingPage,
-  }))
+const PricingPage = lazyNamedExport(
+  () => import('./components/pages/PricingPage'),
+  'PricingPage'
 );
-const PrivacyPolicyPage = lazy(() =>
-  import('./components/pages/PrivacyPolicyPage').then((m) => ({
-    default: m.PrivacyPolicyPage,
-  }))
+const PrivacyPolicyPage = lazyNamedExport(
+  () => import('./components/pages/PrivacyPolicyPage'),
+  'PrivacyPolicyPage'
 );
-const SharedProposalPage = lazy(() =>
-  import('./components/pages/SharedProposalPage').then((m) => ({
-    default: m.SharedProposalPage,
-  }))
+const SharedProposalPage = lazyNamedExport(
+  () => import('./components/pages/SharedProposalPage'),
+  'SharedProposalPage'
 );
-const SoundEngineerDropPage = lazy(() =>
-  import('./components/pages/SoundEngineerDropPage').then((m) => ({
-    default: m.SoundEngineerDropPage,
-  }))
+const SoundEngineerDropPage = lazyNamedExport(
+  () => import('./components/pages/SoundEngineerDropPage'),
+  'SoundEngineerDropPage'
 );
-const RadioInventoryAdmin = lazy(() =>
-  import('./components/RadioInventoryAdmin').then((m) => ({
-    default: m.RadioInventoryAdmin,
-  }))
+const RadioInventoryAdmin = lazyNamedExport(
+  () => import('./components/RadioInventoryAdmin'),
+  'RadioInventoryAdmin'
 );
-const ReservationConfirmedModal = lazy(() =>
-  import('./components/ReservationConfirmedModal').then((m) => ({
-    default: m.ReservationConfirmedModal,
-  }))
+const ReservationConfirmedModal = lazyNamedExport(
+  () => import('./components/ReservationConfirmedModal'),
+  'ReservationConfirmedModal'
 );
 
 function RouteLoadingFallback({ variant }: { variant: RouteSkeletonVariant }) {

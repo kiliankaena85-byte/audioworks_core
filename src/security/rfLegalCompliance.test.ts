@@ -60,16 +60,18 @@ test('evaluateWebhookEndpointRfSafety различает российский к
   assert.equal(bannedWebhook.isRfContourRecommended, false);
 });
 
-test('scrubPersonalDataFromText и containsDirectPersonalData маскируют телефон, email, @telegram и ИНН', () => {
-  const raw = 'Иван +7 (905) 123-45-67, почта ivan@company.ru, @ivan_studio, ИНН 6950241890';
+test('scrubPersonalDataFromText и containsDirectPersonalData маскируют телефон, email, @telegram, ИНН и ФИО', () => {
+  const raw =
+    'Иванов Иван Иванович +7 (905) 123-45-67, почта ivan@company.ru, @ivan_studio, ИНН 6950241890';
   assert.equal(containsDirectPersonalData(raw), true);
 
   const scrubbed = scrubPersonalDataFromText(raw);
+  assert.equal(scrubbed.includes('Иванов'), false);
   assert.equal(scrubbed.includes('905'), false);
   assert.equal(scrubbed.includes('ivan@company.ru'), false);
   assert.equal(scrubbed.includes('@ivan_studio'), false);
   assert.equal(scrubbed.includes('6950241890'), false);
-  assert.ok(scrubbed.includes('152-ФЗ'));
+  assert.ok(scrubbed.includes('[ФИО СКРЫТО · 152-ФЗ]'));
 
   assert.equal(containsDirectPersonalData('Ролик 20 секунд под ключ для стоматологии в Твери'), false);
   assert.ok(maskContactChannelSummary('phone').includes('152-ФЗ'));

@@ -14,6 +14,7 @@ import {
   SlidersHorizontal,
   Upload,
   X,
+  Zap,
 } from 'lucide-react';
 import {
   ChangeEvent,
@@ -339,33 +340,17 @@ export function RealRadioBroadcastBench({
     [snap.segments, snap.activeSegmentId, snap.spotMode, snap.targetPresetId]
   );
 
-  const desktopMarkerFlexWeights = useMemo(() => {
-    const raw = phaseMarkers.map((m) => {
-      if (m.id === 'phase_program') {
-        return Math.min(22.5, Math.max(15.5, m.widthPercent * 0.76));
-      }
-      if (m.id === 'phase_splice') {
-        return Math.max(8.2, m.widthPercent);
-      }
-      if (m.id === 'phase_target') {
-        return Math.max(17.5, m.widthPercent);
-      }
-      if (m.id === 'phase_return') {
-        return Math.max(14.8, m.widthPercent);
-      }
-      return Math.max(12.5, m.widthPercent * 0.88);
-    });
-    const sum = raw.reduce((acc, v) => acc + v, 0) || 100;
-    return raw.map((v) => (v / sum) * 100);
-  }, [phaseMarkers]);
-
   const activeStation =
     VERIFIED_LIVE_REGIONAL_STATIONS.find((s) => s.id === snap.selectedStationId) ??
     VERIFIED_LIVE_REGIONAL_STATIONS[0];
 
   const liveMomentHint = useMemo(() => {
     if (snap.elapsedSec < targetSegment.startSec) {
-      const secLeft = Math.max(1, Math.ceil(targetSegment.startSec - snap.elapsedSec));
+      const remaining = Math.max(0, targetSegment.startSec - snap.elapsedSec);
+      const secLeft =
+        snap.elapsedSec < 0.05
+          ? Math.max(1, Math.floor(targetSegment.startSec))
+          : Math.max(1, Math.ceil(remaining));
       return `До вашего выхода ${formatAudioTime(secLeft)}`;
     }
     if (snap.activeSegmentId === 'target_spot') {
@@ -531,46 +516,64 @@ export function RealRadioBroadcastBench({
             </div>
           )}
 
-          {/* Пропорциональные кликабельные метки этапов прямо вдоль звуковой волны */}
+          {/* Линейка этапов ровно 1:1 по реальным секундам звуковой волны */}
           <div className="space-y-1.5 min-w-0">
-            {/* Десктопная пропорциональная линейка этапов */}
+            {/* Десктопная пропорциональная линейка этапов — границы совпадают с волной */}
             <div
               role="group"
               aria-label="Этапы реального радиоэфира на звуковой волне"
-              className="hidden lg:flex items-stretch gap-1 w-full min-w-0"
+              className="hidden lg:flex items-stretch w-full min-w-0 rounded-xl border border-white/10 bg-white/[0.025] divide-x divide-white/10 overflow-hidden"
             >
-              {phaseMarkers.map((marker, idx) => {
-                const flexPct = desktopMarkerFlexWeights[idx] ?? marker.widthPercent;
+              {phaseMarkers.map((marker) => {
+                const segSpanSec = Math.max(0.5, marker.endSec - marker.startSec);
+                const isNarrowSplice = marker.id === 'phase_splice';
+                const showDurationInline = !isNarrowSplice && marker.widthPercent >= 12;
                 return (
                   <button
                     key={marker.id}
                     type="button"
                     data-testid={`aircheck-phase-${marker.id}`}
+                    title={`${marker.label} · ${marker.durationLabel}`}
+                    aria-label={`${marker.label} · ${marker.durationLabel}`}
                     onClick={() =>
                       broadcastAircheckEngine.playFromSegment(marker.targetSegmentId)
                     }
-                    style={{ width: `${flexPct.toFixed(2)}%` }}
-                    className={`min-h-[40px] px-2.5 py-1.5 rounded-xl border text-left transition-colors cursor-pointer flex items-center justify-between gap-1.5 min-w-0 ${
+                    style={{ flexBasis: 0, flexGrow: segSpanSec }}
+                    className={`min-h-[38px] py-1.5 transition-colors cursor-pointer flex items-center min-w-0 ${
+                      isNarrowSplice
+                        ? 'justify-center px-0.5'
+                        : 'justify-between gap-1 px-2 text-left'
+                    } ${
                       marker.isActive
                         ? marker.isTarget
-                          ? 'bg-[#FF4820] border-[#FF4820] text-white'
-                          : 'bg-white/14 border-white/35 text-white'
+                          ? 'bg-[#FF4820] text-white'
+                          : isNarrowSplice
+                            ? 'bg-[#FBBF24]/25 text-[#FDE68A]'
+                            : 'bg-white/14 text-white shadow-[inset_0_-2px_0_0_rgba(255,255,255,0.65)]'
                         : marker.isTarget
-                          ? 'bg-[#FF4820]/14 border-[#FF4820]/50 hover:border-[#FF4820] text-white'
-                          : 'bg-white/[0.04] border-white/10 hover:border-white/25 text-white/76 hover:text-white'
+                          ? 'bg-[#FF4820]/14 hover:bg-[#FF4820]/24 text-white shadow-[inset_0_-2px_0_0_#FF4820]'
+                          : isNarrowSplice
+                            ? 'bg-[#FBBF24]/10 hover:bg-[#FBBF24]/20 text-[#FBBF24]'
+                            : 'hover:bg-white/[0.06] text-white/74 hover:text-white'
                     }`}
                   >
-                    <span className="text-xs font-semibold truncate">
-                      {marker.label}
-                    </span>
-                    {marker.id !== 'phase_program' && marker.id !== 'phase_splice' && (
-                      <span
-                        className={`text-[11px] tabular-nums shrink-0 ${
-                          marker.isActive ? 'text-white/90' : 'text-white/46'
-                        }`}
-                      >
-                        {marker.durationLabel}
-                      </span>
+                    {isNarrowSplice ? (
+                      <Zap className="w-3 h-3 shrink-0" aria-hidden="true" />
+                    ) : (
+                      <>
+                        <span className="text-[11px] font-semibold truncate">
+                          {marker.label}
+                        </span>
+                        {showDurationInline && (
+                          <span
+                            className={`text-[11px] tabular-nums shrink-0 ${
+                              marker.isActive ? 'text-white/90' : 'text-white/46'
+                            }`}
+                          >
+                            {marker.durationLabel}
+                          </span>
+                        )}
+                      </>
                     )}
                   </button>
                 );
@@ -590,11 +593,11 @@ export function RealRadioBroadcastBench({
                   onClick={() =>
                     broadcastAircheckEngine.playFromSegment(marker.targetSegmentId)
                   }
-                  className={`min-h-[44px] px-3 py-1.5 rounded-xl border text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer tabular-nums ${
+                  className={`min-h-[44px] px-3 py-1.5 rounded-lg border text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer tabular-nums ${
                     marker.isActive
                       ? marker.isTarget
                         ? 'bg-[#FF4820] border-[#FF4820] text-white'
-                        : 'bg-white/16 border-white/38 text-white'
+                        : 'bg-white/16 border-white/35 text-white'
                       : marker.isTarget
                         ? 'bg-[#FF4820]/14 border-[#FF4820]/50 text-white'
                         : 'bg-white/[0.04] border-white/10 text-white/76'
@@ -628,29 +631,32 @@ export function RealRadioBroadcastBench({
               progressBarTestId="aircheck-waveform-scrubber"
             />
 
-            {/* Компактная строка живого эфирного статуса (1 линия) */}
+            {/* Компактная строка живого эфирного статуса (1 линия без повторов) */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs text-white/64 tabular-nums min-w-0">
               <p className="truncate">
                 <span className="text-white/90 font-medium">
-                  {activeSegment.shortStepLabel}:
+                  {activeSegment.shortStepLabel}
+                </span>{' '}
+                <span className="text-white/40" aria-hidden="true">
+                  ·
                 </span>{' '}
                 <span>{activeSegment.title}</span>
               </p>
-              <span className="text-white/52 shrink-0">{liveMomentHint}</span>
+              <span className="text-white/56 shrink-0">{liveMomentHint}</span>
             </div>
           </div>
 
-          {/* Строка конфигурации блока: позиция врезки (1–5 + случайная) и выбор кейса / шаблона */}
-          <div className="pt-3 border-t border-white/10 flex flex-col lg:flex-row lg:items-center justify-between gap-3 min-w-0">
-            {/* Позиция врезки в блоке + рандомизация */}
-            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-              <span className="text-[11px] font-medium text-white/55 mr-0.5 shrink-0">
-                Слот в блоке:
+          {/* Строка конфигурации блока: позиция врезки (1–5 + случайная) и кейсы студии vs шаблон */}
+          <div className="pt-3 border-t border-white/10 flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 min-w-0">
+            {/* Позиция врезки в блоке + компактная рандомизация */}
+            <div className="flex flex-wrap items-center gap-2 min-w-0">
+              <span className="text-xs font-medium text-white/54 shrink-0">
+                Слот в блоке
               </span>
               <div
                 role="group"
                 aria-label="Выбор позиции целевого ролика в рекламном блоке от 1 до 5"
-                className="inline-flex items-center gap-1 p-0.5 rounded-xl bg-white/[0.05] border border-white/10"
+                className="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-white/[0.04]"
               >
                 {([1, 2, 3, 4, 5] as const).map((slotNum) => {
                   const active = snap.targetSlotIndex === slotNum;
@@ -662,46 +668,45 @@ export function RealRadioBroadcastBench({
                       aria-label={`Позиция в блоке: слот ${slotNum}`}
                       aria-pressed={active}
                       onClick={() => broadcastAircheckEngine.setTargetSlotIndex(slotNum)}
-                      className={`min-h-[44px] sm:min-h-[34px] min-w-[44px] sm:min-w-[36px] px-2 rounded-lg text-xs font-semibold tabular-nums transition-colors cursor-pointer ${
+                      className={`min-h-[40px] sm:min-h-[32px] min-w-[40px] sm:min-w-[34px] px-2 rounded-md text-xs font-semibold tabular-nums transition-colors cursor-pointer ${
                         active
                           ? 'bg-[#FF4820] text-white'
-                          : 'text-white/70 hover:text-white hover:bg-white/[0.06]'
+                          : 'text-white/68 hover:text-white hover:bg-white/[0.06]'
                       }`}
                     >
                       №{slotNum}
                     </button>
                   );
                 })}
+                <span aria-hidden="true" className="w-px h-4 bg-white/12 mx-0.5" />
+                <button
+                  type="button"
+                  data-testid="aircheck-randomize-slot-btn"
+                  title="Случайное место в блоке и порядок соседей"
+                  aria-label="Случайная врезка в блоке"
+                  onClick={() => broadcastAircheckEngine.randomizeTargetSlot()}
+                  className="min-h-[40px] sm:min-h-[32px] px-2.5 rounded-md text-white/76 hover:text-white hover:bg-white/[0.06] text-xs font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <Shuffle className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
+                  <span>Случайная</span>
+                </button>
               </div>
-
-              <button
-                type="button"
-                data-testid="aircheck-randomize-slot-btn"
-                onClick={() => broadcastAircheckEngine.randomizeTargetSlot()}
-                className="min-h-[44px] sm:min-h-[36px] px-3 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/12 text-white/88 hover:text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
-              >
-                <Shuffle className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
-                <span>Случайная врезка</span>
-              </button>
             </div>
 
-            {/* Выбор ролика в целевом слоте: 3 реальных кейса студии + шаблон + загрузка */}
+            {/* Выбор ролика в целевом слоте: 3 кейса студии | анти-пример «Обычный шаблон» */}
             <div
               role="group"
               aria-label="Выбор ролика в целевом слоте"
-              className="flex flex-wrap items-center gap-1 p-1 rounded-xl bg-white/[0.05] border border-white/10 min-w-0"
+              className="flex flex-wrap items-center gap-1 p-0.5 rounded-lg bg-white/[0.04] min-w-0"
             >
-              {TARGET_SPOT_PRESETS.map((preset) => {
-                const isCliche = preset.category === 'cliche';
+              {TARGET_SPOT_PRESETS.filter((p) => p.category !== 'cliche').map((preset) => {
                 const active =
                   snap.spotMode !== 'client_upload' &&
                   snap.targetPresetId === preset.id;
                 const resolvedTestId =
                   preset.id === 'zerno_craft'
                     ? 'aircheck-spot-fmworks'
-                    : isCliche
-                      ? 'aircheck-spot-cliche'
-                      : `aircheck-preset-${preset.id}`;
+                    : `aircheck-preset-${preset.id}`;
 
                 return (
                   <button
@@ -712,15 +717,40 @@ export function RealRadioBroadcastBench({
                     onClick={() =>
                       broadcastAircheckEngine.selectTargetPreset(preset.id)
                     }
-                    className={`min-h-[44px] sm:min-h-[34px] px-2.5 sm:px-3 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                    className={`min-h-[40px] sm:min-h-[32px] px-2.5 sm:px-3 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
                       active
-                        ? isCliche
-                          ? 'bg-white text-[#111111]'
-                          : 'bg-[#FF4820] text-white'
-                        : 'text-white/72 hover:text-white hover:bg-white/[0.05]'
+                        ? 'bg-[#FF4820] text-white'
+                        : 'text-white/72 hover:text-white hover:bg-white/[0.06]'
                     }`}
                   >
                     {preset.shortTitle}
+                  </button>
+                );
+              })}
+
+              <span aria-hidden="true" className="hidden sm:inline-block w-px h-4 bg-white/14 mx-0.5" />
+
+              {TARGET_SPOT_PRESETS.filter((p) => p.category === 'cliche').map((preset) => {
+                const active =
+                  snap.spotMode !== 'client_upload' &&
+                  snap.targetPresetId === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    data-testid="aircheck-spot-cliche"
+                    aria-pressed={active}
+                    title="Сравнить звучание с типовым рекламным роликом"
+                    onClick={() =>
+                      broadcastAircheckEngine.selectTargetPreset(preset.id)
+                    }
+                    className={`min-h-[40px] sm:min-h-[32px] px-2.5 sm:px-3 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                      active
+                        ? 'bg-white text-[#111111]'
+                        : 'text-white/56 hover:text-white hover:bg-white/[0.06]'
+                    }`}
+                  >
+                    vs {preset.shortTitle}
                   </button>
                 );
               })}
@@ -731,10 +761,10 @@ export function RealRadioBroadcastBench({
                   data-testid="aircheck-spot-client"
                   aria-pressed={snap.spotMode === 'client_upload'}
                   onClick={handleSelectClientUpload}
-                  className={`min-h-[44px] sm:min-h-[34px] px-2.5 sm:px-3 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                  className={`min-h-[40px] sm:min-h-[32px] px-2.5 sm:px-3 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
                     snap.spotMode === 'client_upload'
                       ? 'bg-[#FF4820] text-white'
-                      : 'text-white/72 hover:text-white hover:bg-white/[0.05]'
+                      : 'text-white/72 hover:text-white hover:bg-white/[0.06]'
                   }`}
                 >
                   Ваш ролик
@@ -743,7 +773,7 @@ export function RealRadioBroadcastBench({
             </div>
           </div>
 
-          {/* Нижняя студийная панель транспорта и действий */}
+          {/* Нижняя панель транспорта и действий: 1 главный оранжевый акцент + сдержанные вторичные */}
           <div className="pt-2.5 border-t border-white/10 flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 min-w-0">
             <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 min-w-0">
               <button
@@ -775,7 +805,7 @@ export function RealRadioBroadcastBench({
                 type="button"
                 data-testid="aircheck-jump-splice-btn"
                 onClick={() => broadcastAircheckEngine.jumpToSpliceTransition()}
-                className="min-h-[44px] px-3.5 py-2 rounded-full bg-white/[0.08] hover:bg-white/[0.14] border border-white/14 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+                className="min-h-[44px] px-3.5 py-2 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-white/88 hover:text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
               >
                 <FastForward className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                 <span>К склейке рекламы</span>
@@ -786,10 +816,10 @@ export function RealRadioBroadcastBench({
                 data-testid="aircheck-road-noise-btn"
                 aria-pressed={snap.roadNoiseEnabled}
                 onClick={() => broadcastAircheckEngine.toggleRoadNoise()}
-                className={`min-h-[44px] px-3.5 py-2 rounded-full border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+                className={`min-h-[44px] px-3.5 py-2 rounded-full text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
                   snap.roadNoiseEnabled
-                    ? 'bg-[#FF4820]/22 border-[#FF4820] text-white'
-                    : 'bg-transparent border-white/14 text-white/74 hover:text-white hover:border-white/30'
+                    ? 'bg-[#FF4820]/22 border border-[#FF4820] text-white'
+                    : 'bg-white/[0.04] hover:bg-white/[0.1] text-white/74 hover:text-white'
                 }`}
               >
                 <Car className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
@@ -802,16 +832,17 @@ export function RealRadioBroadcastBench({
                 type="button"
                 data-testid="aircheck-upload-trigger-btn"
                 disabled={snap.isAnalyzingUpload}
+                title="Бесплатная проверка вашего MP3/WAV в слоте на громкость (LUFS) и требования ФЗ-38"
                 onClick={() => fileInputRef.current?.click()}
-                className="min-h-[44px] px-4 py-2 rounded-full bg-white text-[#111111] hover:bg-[#FF4820] hover:text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+                className="min-h-[44px] px-4 py-2 rounded-full bg-white/[0.08] hover:bg-white/[0.15] border border-white/20 hover:border-white/35 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
               >
-                <Upload className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <Upload className="w-3.5 h-3.5 text-[#FF4820] shrink-0" aria-hidden="true" />
                 <span>
                   {snap.isAnalyzingUpload
-                    ? 'Встраиваем…'
+                    ? 'Проверяем…'
                     : snap.clientAudioUrl
                       ? 'Заменить свой ролик'
-                      : 'Вставить свой ролик'}
+                      : 'Проверить свой ролик · LUFS и ФЗ-38'}
                 </span>
               </button>
 
@@ -822,8 +853,8 @@ export function RealRadioBroadcastBench({
                 onClick={() => setIsLeadDrawerOpen((prev) => !prev)}
                 className={`min-h-[44px] px-4 py-2 rounded-full border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
                   isLeadDrawerOpen || submittedLead
-                    ? 'bg-white/16 border-white/40 text-white'
-                    : 'bg-transparent border-white/18 text-white/85 hover:text-white hover:border-white/36'
+                    ? 'bg-white/14 border-white/35 text-white'
+                    : 'bg-transparent border-white/14 text-white/80 hover:text-white hover:border-white/30'
                 }`}
               >
                 <MessageSquareText className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />

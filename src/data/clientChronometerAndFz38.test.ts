@@ -54,4 +54,13 @@ test('buildChronometerBriefTransferText appends mandatory sample disclaimer when
   assert.ok(transferred.includes('Речной Парк'));
   assert.ok(transferred.includes('наш.дом.рф'));
   assert.ok(transferred.includes('Расчёт хронометра:'));
+
+  const reEvaluated = evaluateClientScriptAndFz38({
+    text: transferred,
+    tempo: sample.tempo,
+    categorySelection: 'auto',
+    targetSlotSec: sample.targetSlotSec,
+  });
+  assert.equal(reEvaluated.totalExactSec, evaluation.totalExactSec);
+  assert.equal(reEvaluated.wordCount, evaluation.wordCount);
 });

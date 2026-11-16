@@ -8938,9 +8938,9 @@ async function startServer() {
         })
       );
 
-      // Никогда не подменяем отсутствующий хэшированный JS-чанк другим билдом:
-      // переименованные минифицированные экспорты неизбежно вызывают ESM SyntaxError.
-      app.get('/assets/*.js', (_req, res) => {
+      // Никогда не подменяем отсутствующий хэшированный чанк (JS/CSS) другим билдом или HTML-заглушкой:
+      // переименованные минифицированные экспорты или MIME-несоответствие вызывают сбой ESM-загрузчика.
+      app.get('/assets/*', (_req, res) => {
         res.status(404).setHeader('Cache-Control', 'no-store').type('text/plain').send('Not Found');
       });
     }
@@ -8961,7 +8961,7 @@ async function startServer() {
 
     app.get('*', (req, res) => {
       if (isNonHtmlAssetPath(req.path)) {
-        res.status(404).type('text/plain').send('Not Found');
+        res.status(404).setHeader('Cache-Control', 'no-store').type('text/plain').send('Not Found');
         return;
       }
 

@@ -1,5 +1,5 @@
 import { ArrowRight, Mic, Radio } from 'lucide-react';
-import { lazy, Suspense, useLayoutEffect } from 'react';
+import { Suspense, useLayoutEffect } from 'react';
 import type { CasePlayerSnapshot } from '../../audio/lazyAudioEngines';
 import { BrandCasePoster, CaseId } from '../../data/casesData';
 import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
@@ -10,43 +10,37 @@ import {
 } from '../../data/platformRouter';
 import { OrderFormatId } from '../../data/pricingData';
 import type { VoiceArchetypeId } from '../../data/voiceCastingCatalog';
+import { lazyNamedExport } from '../../utils/lazyWithRetry';
 import { HeroFMStage } from '../HeroFMStage';
 import { HomeSectionSkeleton } from '../LazySkeletons';
 
-const RealRadioBroadcastBench = lazy(() =>
-  import('../RealRadioBroadcastBench').then((m) => ({
-    default: m.RealRadioBroadcastBench,
-  }))
+const RealRadioBroadcastBench = lazyNamedExport(
+  () => import('../RealRadioBroadcastBench'),
+  'RealRadioBroadcastBench'
 );
-const CasesGallery = lazy(() =>
-  import('../CasesGallery').then((m) => ({
-    default: m.CasesGallery,
-  }))
+const CasesGallery = lazyNamedExport(
+  () => import('../CasesGallery'),
+  'CasesGallery'
 );
-const VoiceCastingSection = lazy(() =>
-  import('../VoiceCastingSection').then((m) => ({
-    default: m.VoiceCastingSection,
-  }))
+const VoiceCastingSection = lazyNamedExport(
+  () => import('../VoiceCastingSection'),
+  'VoiceCastingSection'
 );
-const FifteenSecDuel = lazy(() =>
-  import('../FifteenSecDuel').then((m) => ({
-    default: m.FifteenSecDuel,
-  }))
+const FifteenSecDuel = lazyNamedExport(
+  () => import('../FifteenSecDuel'),
+  'FifteenSecDuel'
 );
-const ApproachSection = lazy(() =>
-  import('../ApproachSection').then((m) => ({
-    default: m.ApproachSection,
-  }))
+const ApproachSection = lazyNamedExport(
+  () => import('../ApproachSection'),
+  'ApproachSection'
 );
-const TestimonialsSection = lazy(() =>
-  import('../TestimonialsSection').then((m) => ({
-    default: m.TestimonialsSection,
-  }))
+const TestimonialsSection = lazyNamedExport(
+  () => import('../TestimonialsSection'),
+  'TestimonialsSection'
 );
-const PricingSection = lazy(() =>
-  import('../PricingSection').then((m) => ({
-    default: m.PricingSection,
-  }))
+const PricingSection = lazyNamedExport(
+  () => import('../PricingSection'),
+  'PricingSection'
 );
 
 

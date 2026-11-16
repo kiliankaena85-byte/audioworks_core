@@ -890,25 +890,25 @@ export function WaveformTimeline({
         </div>
       </div>
 
-      {/* Компактная шкала ключевых таймкодов и цветовой ключ сегментов (без капсул и лишней высоты) */}
+      {/* Компактная шкала ключевых таймкодов и цветовой ключ сегментов (на lg+ без дубля верхней линейки) */}
       {showTimeRuler && (
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11px] text-white/46 tabular-nums min-w-0">
           <div className="flex flex-wrap items-center gap-x-2.5 sm:gap-x-4 gap-y-1 min-w-0">
-            <span className="inline-flex items-center gap-1 whitespace-nowrap shrink-0">
+            <span className="inline-flex lg:hidden items-center gap-1 whitespace-nowrap shrink-0">
               <span
                 aria-hidden="true"
                 className="w-2 h-[2px] rounded-full bg-[#CBD5E1]"
               />
               <span>Эфир</span>
             </span>
-            <span className="inline-flex items-center gap-1 whitespace-nowrap shrink-0">
+            <span className="inline-flex lg:hidden items-center gap-1 whitespace-nowrap shrink-0">
               <span
                 aria-hidden="true"
                 className="w-2 h-[2px] rounded-full bg-[#FBBF24]"
               />
               <span>Склейка</span>
             </span>
-            <span className="inline-flex items-center gap-1 whitespace-nowrap shrink-0">
+            <span className="inline-flex lg:hidden items-center gap-1 whitespace-nowrap shrink-0">
               <span
                 aria-hidden="true"
                 className="w-2 h-[2px] rounded-full bg-[#D69E6E]"
@@ -916,7 +916,7 @@ export function WaveformTimeline({
               <span className="sm:hidden">Реклама ×4</span>
               <span className="hidden sm:inline">4 конкурента</span>
             </span>
-            <span className="inline-flex items-center gap-1 whitespace-nowrap shrink-0 text-white/82">
+            <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 text-white/82">
               <span
                 aria-hidden="true"
                 className="w-2 h-[2px] rounded-full bg-[#FF4820]"
@@ -928,9 +928,9 @@ export function WaveformTimeline({
               </span>
               <span className="hidden sm:inline">
                 {spotMode === 'client_upload'
-                  ? `Ваш ролик (№${targetSlotIndex ?? 2})`
+                  ? `Ваш ролик в слоте №${targetSlotIndex ?? 2}`
                   : spotMode === 'typical_cliche'
-                    ? `Шаблон в слоте №${targetSlotIndex ?? 2}`
+                    ? `Обычный шаблон в слоте №${targetSlotIndex ?? 2}`
                     : targetShortLabel
                       ? `${targetShortLabel} · слот №${targetSlotIndex ?? 2}`
                       : `Эталон FMWorks · слот №${targetSlotIndex ?? 2}`}
@@ -944,9 +944,9 @@ export function WaveformTimeline({
             </span>
           )}
 
-          <div className="hidden sm:flex items-center gap-2.5 text-white/42 shrink-0">
+          <div className="hidden sm:flex items-center gap-2.5 text-white/44 shrink-0">
             {hoverInfo ? (
-              <span className="text-white/78">
+              <span className="text-white/84 font-medium">
                 {formatAudioTime(hoverInfo.sec)} · {hoverInfo.label}
               </span>
             ) : (

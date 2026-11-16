@@ -7,7 +7,7 @@ import {
   Play,
   ShieldCheck,
 } from 'lucide-react';
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import type { CasePlayerSnapshot } from '../../audio/lazyAudioEngines';
 import { useStudioLegalConfig } from '../../context/StudioLegalConfigContext';
 import type { SharedB2bProposalPublicView } from '../../data/b2bSharedProposalCore';
@@ -23,12 +23,12 @@ import {
   getVoiceArchetypeById,
   toVoiceDemoCasePoster,
 } from '../../data/voiceCastingCatalog';
+import { lazyNamedExport } from '../../utils/lazyWithRetry';
 import { CompanyDetailsForm } from '../order/CompanyDetailsForm';
 
-const BrandedDocumentSuiteModal = lazy(() =>
-  import('../documents/BrandedDocumentSuiteModal').then((m) => ({
-    default: m.BrandedDocumentSuiteModal,
-  }))
+const BrandedDocumentSuiteModal = lazyNamedExport(
+  () => import('../documents/BrandedDocumentSuiteModal'),
+  'BrandedDocumentSuiteModal'
 );
 
 interface SharedProposalPageProps {

@@ -23,7 +23,7 @@ import {
   UserCheck,
   X,
 } from 'lucide-react';
-import { lazy, Suspense, useMemo, useState } from 'react';
+import { Suspense, useMemo, useState } from 'react';
 import { useSiteTextBlocks } from '../../cms/SiteTextBlocksContext';
 import { useStudioCms } from '../../cms/StudioCmsContext';
 import { BrandDomainVariant } from '../../data/brandKitData';
@@ -32,49 +32,42 @@ import {
   auditEditorialCopyGuardrails,
   BANNED_EDITORIAL_TERMS,
 } from '../../data/studioCmsTypes';
+import { lazyNamedExport } from '../../utils/lazyWithRetry';
 import { BrandLogo } from '../BrandLogo';
 import { AdminLoginScreen } from './AdminLoginScreen';
 import { AdminShowcaseScenesBar } from './AdminShowcaseScenesBar';
 
-const AdminOrdersCrmPanel = lazy(() =>
-  import('./AdminOrdersCrmPanel').then((mod) => ({
-    default: mod.AdminOrdersCrmPanel,
-  }))
+const AdminOrdersCrmPanel = lazyNamedExport(
+  () => import('./AdminOrdersCrmPanel'),
+  'AdminOrdersCrmPanel'
 );
-const LazyAdminStudioAnalyticsPanel = lazy(() =>
-  import('./AdminStudioAnalyticsPanel').then((mod) => ({
-    default: mod.AdminStudioAnalyticsPanel,
-  }))
+const LazyAdminStudioAnalyticsPanel = lazyNamedExport(
+  () => import('./AdminStudioAnalyticsPanel'),
+  'AdminStudioAnalyticsPanel'
 );
-const AdminHeroStagePanel = lazy(() =>
-  import('./AdminHeroStagePanel').then((mod) => ({
-    default: mod.AdminHeroStagePanel,
-  }))
+const AdminHeroStagePanel = lazyNamedExport(
+  () => import('./AdminHeroStagePanel'),
+  'AdminHeroStagePanel'
 );
-const AdminPortfolioPanel = lazy(() =>
-  import('./AdminPortfolioPanel').then((mod) => ({
-    default: mod.AdminPortfolioPanel,
-  }))
+const AdminPortfolioPanel = lazyNamedExport(
+  () => import('./AdminPortfolioPanel'),
+  'AdminPortfolioPanel'
 );
-const AdminDuelPanel = lazy(() =>
-  import('./AdminDuelPanel').then((mod) => ({
-    default: mod.AdminDuelPanel,
-  }))
+const AdminDuelPanel = lazyNamedExport(
+  () => import('./AdminDuelPanel'),
+  'AdminDuelPanel'
 );
-const AdminTestimonialsPanel = lazy(() =>
-  import('./AdminTestimonialsPanel').then((mod) => ({
-    default: mod.AdminTestimonialsPanel,
-  }))
+const AdminTestimonialsPanel = lazyNamedExport(
+  () => import('./AdminTestimonialsPanel'),
+  'AdminTestimonialsPanel'
 );
-const AdminSiteCopyPanel = lazy(() =>
-  import('./AdminSiteCopyPanel').then((mod) => ({
-    default: mod.AdminSiteCopyPanel,
-  }))
+const AdminSiteCopyPanel = lazyNamedExport(
+  () => import('./AdminSiteCopyPanel'),
+  'AdminSiteCopyPanel'
 );
-const LayaSimulationConsole = lazy(() =>
-  import('../LayaSimulationConsole').then((mod) => ({
-    default: mod.LayaSimulationConsole,
-  }))
+const LayaSimulationConsole = lazyNamedExport(
+  () => import('../LayaSimulationConsole'),
+  'LayaSimulationConsole'
 );
 
 function AdminTabSkeleton() {

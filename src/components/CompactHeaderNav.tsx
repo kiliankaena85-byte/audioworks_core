@@ -314,10 +314,10 @@ export function CompactHeaderNav({
             aria-current={isOrderActive ? 'page' : undefined}
             className={`min-h-[44px] sm:min-h-0 sm:h-10 px-3.5 sm:px-5 rounded-full text-xs sm:text-[13px] font-semibold tracking-tight inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
               AIRTIME_SALES_ENABLED && effectiveStatus === 'confirmed_hold'
-                ? 'bg-[#111111] text-[#F7F6F2] hover:bg-[#C83210] hover:text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white'
+                ? 'bg-[#111111] text-[#F7F6F2] hover:bg-[#FF4820] hover:text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white'
                 : isOrderActive
                   ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                  : 'bg-[#C83210] hover:bg-[#B02A0C] text-white'
+                  : 'bg-[#FF4820] hover:bg-[#E63D18] text-white'
             }`}
           >
             {AIRTIME_SALES_ENABLED && effectiveStatus === 'confirmed_hold' ? (

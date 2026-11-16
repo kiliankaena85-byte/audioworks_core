@@ -393,10 +393,10 @@ export function buildBroadcastTimelineSegments(
 
   const leadInTitle =
     params.sourceMode === 'captured_story_program'
-      ? 'Эфир радиопередачи: актёрское чтение истории до плавного ухода на рекламу'
+      ? 'Актёрское чтение истории до плавного ухода на рекламу'
       : params.sourceMode === 'live_regional_stream'
-        ? `Прямой поток: ${params.liveStationTitle || 'Региональное радио'}`
-        : 'Живой региональный эфир: рубрика ведущих с естественной паузой перед рекламой';
+        ? params.liveStationTitle || 'Региональное радио'
+        : 'Рубрика ведущих с естественной паузой перед рекламой';
 
   const leadInSubtitle =
     params.sourceMode === 'captured_story_program'
@@ -630,9 +630,9 @@ export function buildWaveformPhaseMarkers(
     {
       id: 'phase_program',
       targetSegmentId: 'program_leadin',
-      label: `Эфир · ${Math.round(leadIn.durationSec)}с`,
+      label: 'Эфир',
       shortMobileLabel: 'Эфир',
-      durationLabel: `${Math.round(leadIn.durationSec)}с`,
+      durationLabel: `${Math.floor(leadIn.endSec)}с`,
       startSec: leadIn.startSec,
       endSec: leadIn.endSec,
       isTarget: false,

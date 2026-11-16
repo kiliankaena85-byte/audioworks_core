@@ -180,6 +180,19 @@ function round1(val: number): number {
 }
 
 /**
+ * Удаляет служебные пометки переноса ([Расчёт хронометра: ...], [Кастинг голоса: ...], [Дисклеймер ...]: ...),
+ * чтобы на странице заказа хронометраж не удваивался при повторной оценке перенесённого текста.
+ */
+export function extractSpokenCreativeTextForChronometer(rawText: string): string {
+  return (rawText || '')
+    .replace(/\[Расчёт хронометра:[^\]]*\]/gi, ' ')
+    .replace(/\[Кастинг голоса:[^\]]*\]/gi, ' ')
+    .replace(/\[Дисклеймер[^\]]*\]:[^\n]*/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Комплексный клиентский расчёт хронометража сценария и обязательных сносок по 38-ФЗ «О рекламе».
  * Считает слоговую длительность чтения (включая телефоны, проценты и домены) и прибавляет нормативный метраж дисклеймера.
  */
@@ -200,8 +213,9 @@ export function evaluateClientScriptAndFz38(params: {
     : categorySelection;
   const categorySpec = CLIENT_FZ38_CATEGORY_SPECS[resolvedCategory];
 
+  const creativeOnlyText = extractSpokenCreativeTextForChronometer(params.text);
   const baseChrono = calculateScriptChronometer({
-    text: params.text,
+    text: creativeOnlyText,
     tempo,
     disclaimer: 'none',
   });

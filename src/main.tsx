@@ -12,19 +12,12 @@ import '@fontsource/jetbrains-mono/700.css';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { tryTriggerChunkReload } from './utils/lazyWithRetry';
 
 if (typeof window !== 'undefined') {
   window.addEventListener('vite:preloadError', (event) => {
-    event.preventDefault();
-    try {
-      const key = 'fmworks_chunk_reload_ts';
-      const last = Number(sessionStorage.getItem(key) || '0');
-      if (!Number.isFinite(last) || Date.now() - last > 15_000) {
-        sessionStorage.setItem(key, String(Date.now()));
-        window.location.reload();
-      }
-    } catch {
-      window.location.reload();
+    if (tryTriggerChunkReload()) {
+      event.preventDefault();
     }
   });
 }

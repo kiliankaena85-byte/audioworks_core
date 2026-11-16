@@ -1,5 +1,9 @@
 import { AlertTriangle, Home, RotateCcw } from 'lucide-react';
 import { Component, ErrorInfo, ReactNode } from 'react';
+import {
+  isChunkLoadError,
+  tryTriggerChunkReload,
+} from '../utils/lazyWithRetry';
 
 interface AppErrorBoundaryProps {
   children: ReactNode;
@@ -32,37 +36,21 @@ export class AppErrorBoundary extends Component<
   }
 
   public override componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error('[FMWorks ErrorBoundary]', error, info.componentStack);
-    const msg = error?.message || '';
-    if (
-      typeof window !== 'undefined' &&
-      /dynamically imported module|Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError/i.test(
-        msg
-      )
-    ) {
-      try {
-        const lastReload = Number(
-          window.sessionStorage.getItem('fmworks_chunk_reload_at') || '0'
-        );
-        if (Date.now() - lastReload > 10_000) {
-          window.sessionStorage.setItem(
-            'fmworks_chunk_reload_at',
-            String(Date.now())
-          );
-          window.location.reload();
-        }
-      } catch {
-        // Ignore sessionStorage errors
-      }
+    if (isChunkLoadError(error) && tryTriggerChunkReload()) {
+      console.warn(
+        '[FMWorks ErrorBoundary] Обнаружена устаревшая версия сборки — выполняем автоматическое обновление страницы.',
+        error.message
+      );
+      return;
     }
+
+    console.error('[FMWorks ErrorBoundary]', error, info.componentStack);
   }
 
   private handleRetry = () => {
     if (
       typeof window !== 'undefined' &&
-      /dynamically imported module|Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError/i.test(
-        this.state.message
-      )
+      isChunkLoadError({ message: this.state.message })
     ) {
       window.location.reload();
       return;
