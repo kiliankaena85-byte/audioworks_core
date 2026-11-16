@@ -15,6 +15,11 @@ import {
 } from '../data/studioCmsTypes';
 import { countLocalTestimonialsChanges } from '../data/testimonialsCms';
 
+import {
+  DEFAULT_STUDIO_OPERATOR_NAME,
+  sanitizeStudioOperatorName,
+} from '../security/adminSessionStandards';
+
 export interface StudioCmsState {
   snapshot: StudioCmsSnapshot;
   baselineSnapshot: StudioCmsSnapshot;
@@ -25,6 +30,7 @@ export interface StudioCmsState {
   isCustomizedOnServer: boolean;
   isHydrated: boolean;
   isAuthenticated: boolean;
+  operatorName: string;
   isAuthChecking: boolean;
   isSaving: boolean;
   editorialWarnings: string[];
@@ -232,6 +238,7 @@ class StudioCmsStore {
       isCustomizedOnServer: false,
       isHydrated: false,
       isAuthenticated: false,
+      operatorName: DEFAULT_STUDIO_OPERATOR_NAME,
       isAuthChecking: true,
       isSaving: false,
       editorialWarnings: auditEditorialCopyGuardrails(activeSnap),
@@ -383,12 +390,21 @@ class StudioCmsStore {
         this.emit({ isAuthenticated: false, isAuthChecking: false });
         return false;
       }
-      const data = (await resp.json()) as { authenticated?: boolean };
+      const data = (await resp.json()) as {
+        authenticated?: boolean;
+        operatorName?: string | null;
+      };
       const ok = Boolean(data.authenticated);
       if (!ok) {
         writeStoredToken(null);
       }
-      this.emit({ isAuthenticated: ok, isAuthChecking: false });
+      this.emit({
+        isAuthenticated: ok,
+        operatorName: ok
+          ? sanitizeStudioOperatorName(data.operatorName)
+          : DEFAULT_STUDIO_OPERATOR_NAME,
+        isAuthChecking: false,
+      });
       return ok;
     } catch {
       this.emit({ isAuthenticated: false, isAuthChecking: false });
@@ -397,18 +413,24 @@ class StudioCmsStore {
   }
 
   public async login(
-    password: string
+    password: string,
+    operatorName?: string
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     try {
+      const normalizedOperator = sanitizeStudioOperatorName(operatorName);
       const resp = await fetch('/api/cms/auth/login', {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({
+          password,
+          operatorName: normalizedOperator,
+        }),
       });
       const data = (await resp.json()) as {
         ok?: boolean;
         token?: string;
+        operatorName?: string;
         error?: string;
       };
 
@@ -420,7 +442,13 @@ class StudioCmsStore {
       }
 
       writeStoredToken(data.token ?? null);
-      this.emit({ isAuthenticated: true, isAuthChecking: false });
+      this.emit({
+        isAuthenticated: true,
+        operatorName: sanitizeStudioOperatorName(
+          data.operatorName ?? normalizedOperator
+        ),
+        isAuthChecking: false,
+      });
       return { ok: true };
     } catch {
       return {

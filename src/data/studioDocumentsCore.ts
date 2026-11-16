@@ -848,12 +848,31 @@ export function parseCustomerCounterparty(
 export function resolveProductionTierScope(
   formatLabelRaw: string,
   effectivePriceRub: number,
-  spotDurationSec: number
+  spotDurationSec: number,
+  formattedPayableRubOverride?: string
 ): ProductionTierScopeSpec {
   const lower = (formatLabelRaw || '').toLowerCase();
-  const isNegotiable = effectivePriceRub <= 0 || lower.includes('договорн') || lower.includes('индивидуальн');
+  const isNegotiable =
+    effectivePriceRub <= 0 ||
+    (!formattedPayableRubOverride && (lower.includes('договорн') || lower.includes('индивидуальн')));
+  const formattedPrice =
+    formattedPayableRubOverride || `${formatKopecksRubDecimal(effectivePriceRub * 100)}`;
 
-  if (lower.includes('игров') || lower.includes('кино') || effectivePriceRub >= 33_000) {
+  const explicitCinema = lower.includes('игров') || lower.includes('кино') || lower.includes('cinema');
+  const explicitVoice = lower.includes('голос') || lower.includes('voice');
+  const explicitAdapt = lower.includes('адаптац') || lower.includes('ресайз');
+  const explicitTurnkey =
+    lower.includes('под ключ') || lower.includes('turnkey') || lower.includes('эфирн');
+  const explicitCustom = lower.includes('индивидуальн') || lower.includes('договорн');
+
+  if (
+    explicitCinema ||
+    (!explicitVoice &&
+      !explicitAdapt &&
+      !explicitTurnkey &&
+      !explicitCustom &&
+      effectivePriceRub >= 33_000)
+  ) {
     return {
       tierTitle: 'Игровой аудиоролик / Мини-кино',
       conceptsCountLabel: 'До 3 драматургических концепций сценария с посекундным таймингом',
@@ -881,7 +900,7 @@ export function resolveProductionTierScope(
           code: '03',
           title: 'Лицензионное музыкальное оформление, интершумы (SFX) и эфирный мастеринг по Разделу 3 Договора',
           turnaround: '1–2 раб. дня',
-          priceNote: isNegotiable ? 'По оценке' : `${formatKopecksRubDecimal(effectivePriceRub * 100)}`,
+          priceNote: isNegotiable ? 'По оценке' : formattedPrice,
         },
         {
           code: '04',
@@ -893,7 +912,14 @@ export function resolveProductionTierScope(
     };
   }
 
-  if (lower.includes('голос') || (effectivePriceRub > 0 && effectivePriceRub <= 17_000)) {
+  if (
+    explicitVoice ||
+    (!explicitAdapt &&
+      !explicitTurnkey &&
+      !explicitCustom &&
+      effectivePriceRub > 0 &&
+      effectivePriceRub <= 17_000)
+  ) {
     return {
       tierTitle: 'Голос и стиль (информационный ролик)',
       conceptsCountLabel: 'До 2 лаконичных вариантов сценария под точный хронометраж',
@@ -914,7 +940,7 @@ export function resolveProductionTierScope(
           code: '02',
           title: 'Студийная запись 1 диктора, лицензионная подложка и мастеринг под эфирный стандарт РФ',
           turnaround: '24 ч',
-          priceNote: isNegotiable ? 'По оценке' : `${formatKopecksRubDecimal(effectivePriceRub * 100)}`,
+          priceNote: isNegotiable ? 'По оценке' : formattedPrice,
         },
         {
           code: '03',
@@ -926,7 +952,7 @@ export function resolveProductionTierScope(
     };
   }
 
-  if (lower.includes('адаптац') || lower.includes('ресайз')) {
+  if (explicitAdapt) {
     return {
       tierTitle: 'Эфирная адаптация и ресайз аудиоролика',
       conceptsCountLabel: 'Выверка сокращённой редакции текста и юридических дисклеймеров',
@@ -939,7 +965,7 @@ export function resolveProductionTierScope(
           code: '01',
           title: `Адаптация хронометража до ${spotDurationSec} сек, сведение и мастеринг по эфирному стандарту РФ`,
           turnaround: '1–2 раб. дня',
-          priceNote: isNegotiable ? 'По оценке' : `${formatKopecksRubDecimal(effectivePriceRub * 100)}`,
+          priceNote: isNegotiable ? 'По оценке' : formattedPrice,
         },
         {
           code: '02',
@@ -997,7 +1023,7 @@ export function resolveProductionTierScope(
         code: '02',
         title: 'Кастинг голосов, студийная запись диктора, музыкальная лицензия и мастеринг',
         turnaround: '1–2 раб. дня',
-        priceNote: `${formatKopecksRubDecimal(effectivePriceRub * 100)}`,
+        priceNote: formattedPrice,
       },
       {
         code: '03',
@@ -1114,16 +1140,17 @@ export function assembleProductionDocumentSuite(
     meta
   );
 
-  const scope = resolveProductionTierScope(
-    input.formatLabel,
-    effectivePriceRub,
-    spotDurationSec
-  );
-
   const tax = computeVatBreakdown(
     effectivePriceRub,
     studio.taxRegime,
     studio.vatMode
+  );
+
+  const scope = resolveProductionTierScope(
+    input.formatLabel,
+    effectivePriceRub,
+    spotDurationSec,
+    isNegotiablePendingPrice ? undefined : tax.formattedTotalRub
   );
 
   const autoSpotTitle =

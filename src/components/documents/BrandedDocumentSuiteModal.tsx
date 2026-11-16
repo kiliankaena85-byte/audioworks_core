@@ -8,7 +8,7 @@ import {
   SlidersHorizontal,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   counterpartyToDocumentMetaPatch,
@@ -29,6 +29,7 @@ import {
   StudioTaxRegimeId,
   TAX_REGIME_OPTIONS,
 } from '../../data/studioDocumentsCore';
+import { resolveNextTabIdOnArrowKey } from '../../security/adminSessionStandards';
 import {
   ContractViewVariant,
   SwissA4DocumentSheets,
@@ -101,6 +102,8 @@ export function BrandedDocumentSuiteModal({
   const [copiedText, setCopiedText] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
+  const modalContainerRef = useRef<HTMLDivElement | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   const resolvedProfiles = useMemo(
     () => legalProfiles ?? createDefaultStudioLegalProfiles(),
@@ -115,14 +118,72 @@ export function BrandedDocumentSuiteModal({
   }, [isOpen, initialDoc, order.orderNumber, order.documentMeta]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || typeof document === 'undefined') return;
+    previousFocusRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+
+    const focusTimer = window.setTimeout(() => {
+      const closeBtn = modalContainerRef.current?.querySelector<HTMLElement>(
+        '[data-testid="suite-close-btn"]'
+      );
+      closeBtn?.focus();
+    }, 0);
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        e.preventDefault();
         onClose();
+        return;
+      }
+      if (e.key === 'Tab' && modalContainerRef.current) {
+        const focusable = Array.from(
+          modalContainerRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
+        ).filter((el) => el.offsetParent !== null);
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const activeEl = document.activeElement as HTMLElement | null;
+
+        if (e.shiftKey) {
+          if (!activeEl || activeEl === first || !modalContainerRef.current.contains(activeEl)) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else if (!activeEl || activeEl === last || !modalContainerRef.current.contains(activeEl)) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     };
+
+    const appRoot = document.getElementById('root') as (HTMLElement & { inert?: boolean }) | null;
+    const prevAriaHidden = appRoot?.getAttribute('aria-hidden') ?? null;
+    const prevInert = Boolean(appRoot?.inert);
+    if (appRoot) {
+      appRoot.setAttribute('aria-hidden', 'true');
+      appRoot.inert = true;
+    }
+
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener('keydown', onKeyDown);
+      if (appRoot) {
+        if (prevAriaHidden === null) {
+          appRoot.removeAttribute('aria-hidden');
+        } else {
+          appRoot.setAttribute('aria-hidden', prevAriaHidden);
+        }
+        appRoot.inert = prevInert;
+      }
+      if (previousFocusRef.current && document.contains(previousFocusRef.current)) {
+        previousFocusRef.current.focus();
+      }
+    };
   }, [isOpen, onClose]);
 
   const suite = useMemo(
@@ -267,8 +328,25 @@ export function BrandedDocumentSuiteModal({
       ? metaDraft.taxRegimeOverride
       : suite.studio.taxRegime;
 
+  const handleSuiteTabKeyDown = (
+    e: ReactKeyboardEvent<HTMLButtonElement>,
+    currentId: BrandedDocumentKind
+  ) => {
+    const nextId = resolveNextTabIdOnArrowKey(
+      DOC_TABS.map((t) => t.id),
+      currentId,
+      e.key
+    );
+    if (!nextId) return;
+    e.preventDefault();
+    setActiveDoc(nextId);
+    const nextEl = document.getElementById(`suite-doc-tab-${nextId}`);
+    nextEl?.focus();
+  };
+
   return createPortal(
     <div
+      ref={modalContainerRef}
       role="dialog"
       aria-modal="true"
       aria-labelledby="branded-suite-modal-title"
@@ -284,7 +362,7 @@ export function BrandedDocumentSuiteModal({
         <div className="fmworks-no-print px-3.5 sm:px-6 py-3.5 bg-[#F7F6F2] dark:bg-[#18181E] border-b border-[#111111]/10 dark:border-white/10 space-y-3 shrink-0">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-[11px] font-medium text-[#111111]/60 dark:text-[#F4F3EF]/60">
+              <p className="text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
                 Пакет брендовых документов FMWorks® · {suite.city} · Без медиапланов (только
                 продакшн)
               </p>
@@ -304,7 +382,7 @@ export function BrandedDocumentSuiteModal({
                 className={`min-h-[42px] px-3 py-1.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
                   showEditorDrawer
                     ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                    : 'border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820]'
+                    : 'border-[#111111]/16 dark:border-white/16 hover:border-[#C83210]'
                 }`}
               >
                 <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
@@ -319,7 +397,7 @@ export function BrandedDocumentSuiteModal({
                 aria-label="Закрыть пакет документов"
                 data-testid="suite-close-btn"
                 onClick={onClose}
-                className="min-h-[42px] min-w-[42px] rounded-xl border border-[#111111]/14 dark:border-white/14 inline-flex items-center justify-center hover:border-[#FF4820] transition-colors cursor-pointer"
+                className="min-h-[42px] min-w-[42px] rounded-xl border border-[#111111]/14 dark:border-white/14 text-[#111111] dark:text-[#F4F3EF] inline-flex items-center justify-center hover:border-[#C83210] transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" aria-hidden="true" />
               </button>
@@ -338,15 +416,19 @@ export function BrandedDocumentSuiteModal({
                 return (
                   <button
                     key={tab.id}
+                    id={`suite-doc-tab-${tab.id}`}
                     type="button"
                     role="tab"
                     aria-selected={active}
+                    aria-controls="suite-doc-tabpanel"
+                    tabIndex={active ? 0 : -1}
                     data-testid={`suite-tab-${tab.id}`}
                     onClick={() => setActiveDoc(tab.id)}
+                    onKeyDown={(e) => handleSuiteTabKeyDown(e, tab.id)}
                     className={`min-h-[42px] sm:min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer text-center leading-snug ${
                       active
-                        ? 'bg-[#FF4820] text-white'
-                        : 'bg-[#EFECE5] dark:bg-[#111115] text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:text-[#111111] dark:hover:text-white'
+                        ? 'bg-[#C83210] text-white'
+                        : 'bg-[#EFECE5] dark:bg-[#111115] text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:text-[#111111] dark:hover:text-white'
                     }`}
                   >
                     <span className="sm:hidden">{tab.shortLabel}</span>
@@ -545,7 +627,7 @@ export function BrandedDocumentSuiteModal({
                     type="button"
                     data-testid="suite-autofill-inn-btn"
                     onClick={() => void handleAutoFillByInn()}
-                    className="text-[11px] font-semibold text-[#FF4820] hover:underline cursor-pointer"
+                    className="min-h-[26px] px-2 py-0.5 rounded-md text-[11px] font-semibold text-[#B82D0D] dark:text-[#FF7A5C] hover:underline cursor-pointer"
                   >
                     Заполнить по ИНН
                   </button>
@@ -748,7 +830,7 @@ export function BrandedDocumentSuiteModal({
             {saveFeedback && (
               <p
                 role="status"
-                className="text-xs font-semibold text-[#15803D] dark:text-[#4ADE80]"
+                className="text-xs font-semibold text-[#166534] dark:text-[#4ADE80]"
               >
                 {saveFeedback}
               </p>
@@ -756,8 +838,13 @@ export function BrandedDocumentSuiteModal({
           </div>
         )}
 
-        {/* Прокручиваемая область листа A4 */}
-        <div className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-8 fmworks-print-portal">
+        {/* Прокручиваемая область листа A4 (WAI-ARIA tabpanel) */}
+        <div
+          id="suite-doc-tabpanel"
+          role="tabpanel"
+          aria-labelledby={`suite-doc-tab-${activeDoc}`}
+          className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-8 fmworks-print-portal"
+        >
           <SwissA4DocumentSheets
             suite={suite}
             activeDoc={activeDoc}
@@ -768,7 +855,7 @@ export function BrandedDocumentSuiteModal({
 
         {/* Нижняя панель действий (скрывается при печати) */}
         <div className="fmworks-no-print px-3.5 sm:px-6 py-3 bg-[#F7F6F2] dark:bg-[#18181E] border-t border-[#111111]/10 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shrink-0">
-          <p className="text-[11px] text-[#111111]/60 dark:text-[#F4F3EF]/60">
+          <p className="text-[11px] text-[#111111]/72 dark:text-[#F4F3EF]/72">
             FMWorks® · {suite.city} · {suite.studio.websiteDomain} · Формат A4 (под ЭДО и печать)
           </p>
 
@@ -791,11 +878,11 @@ export function BrandedDocumentSuiteModal({
                 type="button"
                 data-testid="suite-copy-btn"
                 onClick={() => void handleCopySummary()}
-                className="min-h-[40px] sm:min-h-[42px] px-3 sm:px-3.5 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                className="min-h-[40px] sm:min-h-[42px] px-3 sm:px-3.5 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#C83210] text-[#111111] dark:text-[#F4F3EF] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
               >
                 {copiedText ? (
                   <>
-                    <Check className="w-3.5 h-3.5 text-[#16A34A] shrink-0" aria-hidden="true" />
+                    <Check className="w-3.5 h-3.5 text-[#166534] dark:text-[#4ADE80] shrink-0" aria-hidden="true" />
                     <span>Скопировано</span>
                   </>
                 ) : (
@@ -810,7 +897,7 @@ export function BrandedDocumentSuiteModal({
                 type="button"
                 data-testid="suite-download-txt-btn"
                 onClick={handleDownloadTxt}
-                className="min-h-[40px] sm:min-h-[42px] px-3 sm:px-3.5 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                className="min-h-[40px] sm:min-h-[42px] px-3 sm:px-3.5 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#C83210] text-[#111111] dark:text-[#F4F3EF] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                 <span>Скачать (.txt)</span>
@@ -822,7 +909,7 @@ export function BrandedDocumentSuiteModal({
                 type="button"
                 data-testid="suite-download-extern-csv-btn"
                 onClick={handleDownloadKonturExternCsv}
-                className="w-full sm:w-auto min-h-[40px] sm:min-h-[42px] px-3.5 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                className="w-full sm:w-auto min-h-[40px] sm:min-h-[42px] px-3.5 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#C83210] text-[#111111] dark:text-[#F4F3EF] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                 <span>CSV для Контур.Экстерна</span>
@@ -833,7 +920,7 @@ export function BrandedDocumentSuiteModal({
               type="button"
               data-testid="suite-print-pdf-btn"
               onClick={handlePrintPdf}
-              className="w-full sm:w-auto min-h-[42px] px-4 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63C17] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              className="w-full sm:w-auto min-h-[42px] px-4 py-2 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
               <span>Печать / Сохранить PDF (A4)</span>
@@ -855,7 +942,7 @@ export function SuiteTriggerBadge({
     <button
       type="button"
       onClick={onClick}
-      className="w-full sm:w-auto min-h-[44px] px-4 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63C17] text-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer text-center leading-snug"
+      className="w-full sm:w-auto min-h-[44px] px-4 py-2 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] text-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer text-center leading-snug"
     >
       <FileText className="w-4 h-4 shrink-0" aria-hidden="true" />
       <span>Фирменные бланки A4 (КП · Договор · Счёт · Паспорт)</span>

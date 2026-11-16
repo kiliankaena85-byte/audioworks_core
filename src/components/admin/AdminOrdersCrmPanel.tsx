@@ -1,98 +1,91 @@
 import {
-  ArrowRight,
-  BarChart3,
   Building2,
   CheckCircle2,
-  Clock,
   Download,
-  ExternalLink,
   FileSpreadsheet,
-  FlaskConical,
   RefreshCw,
+  Search,
   Send,
   ShieldCheck,
-  Trash2,
-  Upload,
-  UserX,
   Webhook,
 } from 'lucide-react';
 import {
-  lazy,
-  Suspense,
+  type KeyboardEvent,
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from 'react';
+import { studioCmsStore } from '../../cms/studioCmsStore';
 import {
-  formatFileSizeReadable,
-  OrderDeliverableKind,
-  resolveDeliveryChannelLabel,
-} from '../../data/clientCabinetHelpers';
-import {
-  type DeliverableVersionPreset,
-  suggestNextAudioVersionCode,
-} from '../../data/deliverableVersioning';
-import {
-  buildWebhookOrderEnvelope,
-  computeOrderHoldStatus,
-  CRM_ORDER_STAGES,
-  CrmOrderRecord,
-  CrmOrderStage,
-  DispatchAttemptLog,
-  exportCrmOrdersToCsv,
-  ExternalDeliveryState,
-  formatTelegramOrderDispatchMessage,
-  getCrmStageMetaForOrder,
-  OrderComplianceChecklist,
-} from '../../data/orderCrmTypes';
-import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
-import { formatNumberSpaced, formatRubCompact } from '../../data/radioInventory';
+  type B2bLedgerBucketId,
+  type B2bLedgerRowView,
+  buildB2bLedgerRowView,
+  computeB2bLedgerSummary,
+  matchesB2bLedgerBucket,
+  resolveOrderTargetSlotSeconds,
+} from '../../data/b2bContractLedgerCore';
+import type { OrderDeliverableKind } from '../../data/clientCabinetHelpers';
+import type { DeliverableVersionPreset } from '../../data/deliverableVersioning';
 import {
   formatKonturExternInvoiceCsv,
   type KonturIntegrationStatus,
 } from '../../data/konturIntegrationCore';
 import {
-  assembleProductionDocumentSuite,
-  createDefaultStudioLegalProfiles,
-  OrderDocumentMeta,
-  StudioEntityKind,
-  StudioLegalProfile,
-  StudioLegalProfilesConfig,
-  StudioTaxRegimeId,
-  StudioVatCalculationMode,
-  TAX_REGIME_OPTIONS,
-} from '../../data/studioDocumentsCore';
-import { BrandedDocumentSuiteModal } from '../documents/BrandedDocumentSuiteModal';
-import { evaluateWebhookEndpointRfSafety } from '../../security/rfLegalCompliance';
+  buildWebhookOrderEnvelope,
+  CRM_ORDER_STAGES,
+  type CrmOrderRecord,
+  type CrmOrderStage,
+  type DispatchAttemptLog,
+  exportCrmOrdersToCsv,
+  type ExternalDeliveryState,
+  formatTelegramOrderDispatchMessage,
+  getCrmStageMetaForOrder,
+  type OrderComplianceChecklist,
+} from '../../data/orderCrmTypes';
 import {
   createDefaultSoundEngineerRoster,
   SOUND_ENGINEER_EMAIL_CTA_LABEL,
   type SoundEngineerContact,
   type SoundEngineerEmailNotificationRecord,
 } from '../../data/productionApprovalWorkflow';
-import { studioCmsStore } from '../../cms/studioCmsStore';
+import { formatRubCompact } from '../../data/radioInventory';
+import {
+  assembleProductionDocumentSuite,
+  createDefaultStudioLegalProfiles,
+  type OrderDocumentMeta,
+  type StudioEntityKind,
+  type StudioLegalProfile,
+  type StudioLegalProfilesConfig,
+  type StudioTaxRegimeId,
+  type StudioVatCalculationMode,
+  TAX_REGIME_OPTIONS,
+} from '../../data/studioDocumentsCore';
+import { resolveNextTabIdOnArrowKey } from '../../security/adminSessionStandards';
+import { evaluateWebhookEndpointRfSafety } from '../../security/rfLegalCompliance';
+import { BrandedDocumentSuiteModal } from '../documents/BrandedDocumentSuiteModal';
+import { AdminB2bOrderDossier } from './AdminB2bOrderDossier';
 import { AdminProductionKanbanView } from './AdminProductionKanbanView';
-import { AdminScientificPlanView } from './AdminScientificPlanView';
-import { OrderStageHistoryTimeline } from './OrderStageHistoryTimeline';
+import { AdminSecurityPanel } from './AdminSecurityPanel';
 
-const LazyAdminStudioAnalyticsPanel = lazy(() =>
-  import('./AdminStudioAnalyticsPanel').then((mod) => ({
-    default: mod.AdminStudioAnalyticsPanel,
-  }))
-);
+const LEDGER_BUCKET_IDS: readonly B2bLedgerBucketId[] = [
+  'all',
+  'intake_queue',
+  'awaiting_payment',
+  'paid_in_work',
+  'closed_acts',
+];
 
-export type OrdersCrmSubView =
-  | 'funnel'
-  | 'kanban'
-  | 'analytics'
-  | 'channels'
-  | 'science'
-  | 'legal';
+const SETTINGS_TAB_IDS = ['legal', 'channels', 'security'] as const;
+
+export type AdminOperationalGroup = 'ledger' | 'production' | 'settings';
+export type AdminSettingsTabId = 'legal' | 'channels' | 'security';
 
 interface AdminOrdersCrmPanelProps {
-  initialSubView?: OrdersCrmSubView;
+  viewGroup?: AdminOperationalGroup;
+  initialSettingsTab?: AdminSettingsTabId;
+  focusedOrderId?: string;
+  onNavigateToProductionOrder?: (orderId: string) => void;
 }
 
 interface AdminDispatchSettingsResponse {
@@ -136,12 +129,6 @@ function formatDateTimeShort(iso: string): string {
   }
 }
 
-function getSourceReadableLabel(source: CrmOrderRecord['source']): string {
-  if (source === 'quick_order_drawer') return 'Быстрый заказ';
-  if (source === 'standalone_hold_modal') return 'Медиапланер';
-  return 'Страница резерва';
-}
-
 function getDeliveryStatePresentation(state: ExternalDeliveryState): {
   label: string;
   colorClass: string;
@@ -149,31 +136,48 @@ function getDeliveryStatePresentation(state: ExternalDeliveryState): {
   if (state === 'delivered') {
     return {
       label: 'Доставлено (200 OK)',
-      colorClass: 'text-[#16A34A] dark:text-[#4ADE80]',
+      colorClass: 'text-[#166534] dark:text-[#4ADE80]',
     };
   }
   if (state === 'failed') {
     return {
       label: 'Ошибка доставки',
-      colorClass: 'text-[#DC2626] dark:text-[#F87171]',
+      colorClass: 'text-[#B91C1C] dark:text-[#F87171]',
     };
   }
   if (state === 'not_configured') {
     return {
       label: 'Отключено',
-      colorClass: 'text-[#111111]/50 dark:text-[#F4F3EF]/50',
+      colorClass: 'text-[#111111]/72 dark:text-[#F4F3EF]/72',
     };
   }
   return {
-    label: 'Сформировано · ожидает шлюз',
-    colorClass: 'text-[#D97706] dark:text-[#FBBF24]',
+    label: 'Ожидает шлюз',
+    colorClass: 'text-[#92400E] dark:text-[#FBBF24]',
   };
 }
 
+function getEdoToneTextClass(tone: B2bLedgerRowView['edoStatusTone']): string {
+  if (tone === 'ready') {
+    return 'text-[#166534] dark:text-[#4ADE80]';
+  }
+  if (tone === 'active') {
+    return 'text-[#111111] dark:text-[#F4F3EF]';
+  }
+  if (tone === 'pending') {
+    return 'text-[#92400E] dark:text-[#FBBF24]';
+  }
+  return 'text-[#B82D0D] dark:text-[#FF7A5C]';
+}
+
 export function AdminOrdersCrmPanel({
-  initialSubView = 'funnel',
+  viewGroup = 'ledger',
+  initialSettingsTab = 'legal',
+  focusedOrderId,
+  onNavigateToProductionOrder,
 }: AdminOrdersCrmPanelProps) {
-  const [subView, setSubView] = useState<OrdersCrmSubView>(initialSubView);
+  const [settingsTab, setSettingsTab] =
+    useState<AdminSettingsTabId>(initialSettingsTab);
   const [orders, setOrders] = useState<CrmOrderRecord[]>([]);
   const [soundEngineers, setSoundEngineers] = useState<SoundEngineerContact[]>(
     () => createDefaultSoundEngineerRoster()
@@ -189,61 +193,70 @@ export function AdminOrdersCrmPanel({
     text: string;
   } | null>(null);
 
-  // Живой тик раз в секунду для обратного отсчёта 4-часового холда квоты
-  const [nowMs, setNowMs] = useState<number>(() => Date.now());
-  useEffect(() => {
-    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, []);
-
-  useEffect(() => {
-    setSubView(initialSubView);
-  }, [initialSubView]);
-
-  // Фильтры воронки и выбранная карточка сделки
+  // Бухгалтерские фильтры B2B-реестра и поиск
+  const [bucketFilter, setBucketFilter] = useState<B2bLedgerBucketId>('all');
   const [stageFilter, setStageFilter] = useState<'all' | CrmOrderStage>('all');
-  const [modeFilter, setModeFilter] = useState<
-    'all' | 'air_plus_production' | 'production_only'
-  >('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [selectedOrderId, setSelectedOrderId] = useState<string>('');
+  const [selectedOrderId, setSelectedOrderId] = useState<string>(
+    focusedOrderId ?? ''
+  );
 
-  // Локальный черновик заметки продюсера и файлов выдачи для выбранного заказа
-  const [notesDraft, setNotesDraft] = useState<string>('');
-  const [cloudDiskDraft, setCloudDiskDraft] = useState<string>('');
-  const [deliverableTitleDraft, setDeliverableTitleDraft] = useState<string>('');
-  const [deliverableKindDraft, setDeliverableKindDraft] =
-    useState<OrderDeliverableKind>('audio_master');
-  const [deliverableVersionDraft, setDeliverableVersionDraft] =
-    useState<DeliverableVersionPreset>('auto');
-  const [deliverableVersionNoteDraft, setDeliverableVersionNoteDraft] =
-    useState<string>('');
+  const handleBucketTabKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    currentId: B2bLedgerBucketId
+  ) => {
+    const nextId = resolveNextTabIdOnArrowKey(
+      LEDGER_BUCKET_IDS,
+      currentId,
+      event.key
+    );
+    if (!nextId) return;
+    event.preventDefault();
+    setBucketFilter(nextId);
+    document.getElementById(`b2b-bucket-tab-${nextId}`)?.focus();
+  };
+
+  const handleSettingsTabKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    currentId: AdminSettingsTabId
+  ) => {
+    const nextId = resolveNextTabIdOnArrowKey(
+      SETTINGS_TAB_IDS,
+      currentId,
+      event.key
+    );
+    if (!nextId) return;
+    event.preventDefault();
+    setSettingsTab(nextId);
+    document.getElementById(`crm-subtab-btn-${nextId}`)?.focus();
+  };
+
+  // Состояния операций по выбранному заказу
   const [isUploadingDeliverable, setIsUploadingDeliverable] =
     useState<boolean>(false);
-  const deliverableFileRef = useRef<HTMLInputElement | null>(null);
   const [isUpdatingOrder, setIsUpdatingOrder] = useState<boolean>(false);
   const [isRedelivering, setIsRedelivering] = useState<boolean>(false);
-  const [isCreatingDiadocDraft, setIsCreatingDiadocDraft] = useState<boolean>(false);
-  const [konturStatus, setKonturStatus] = useState<KonturIntegrationStatus | null>(
+  const [isCreatingDiadocDraft, setIsCreatingDiadocDraft] =
+    useState<boolean>(false);
+  const [konturStatus, setKonturStatus] =
+    useState<KonturIntegrationStatus | null>(null);
+
+  // Модальное окно фирменного пакета документов A4 (КП, Договор + Приложение, Счёт, Паспорт)
+  const [edoModalOrder, setEdoModalOrder] = useState<CrmOrderRecord | null>(
     null
   );
 
-  // Модальное окно фирменного пакета документов A4 (КП, Договор + Приложение, Счёт, Паспорт)
-  const [edoModalOrder, setEdoModalOrder] = useState<CrmOrderRecord | null>(null);
-
   // Юридические и налоговые профили студии (ИП / ООО, г. Тверь)
-  const [legalProfiles, setLegalProfiles] = useState<StudioLegalProfilesConfig>(() =>
-    createDefaultStudioLegalProfiles()
-  );
+  const [legalProfiles, setLegalProfiles] =
+    useState<StudioLegalProfilesConfig>(() =>
+      createDefaultStudioLegalProfiles()
+    );
   const [legalDraft, setLegalDraft] = useState<StudioLegalProfilesConfig>(() =>
     createDefaultStudioLegalProfiles()
   );
-  const [editingEntityTab, setEditingEntityTab] = useState<StudioEntityKind>('ip');
+  const [editingEntityTab, setEditingEntityTab] =
+    useState<StudioEntityKind>('ip');
   const [isSavingLegal, setIsSavingLegal] = useState<boolean>(false);
-
-  // Целевой заказ для передачи в «Научный план развития»
-  const [scienceTargetOrder, setScienceTargetOrder] =
-    useState<CrmOrderRecord | null>(null);
 
   // Состояние формы настроек шлюзов Telegram + Webhook
   const [tgEnabled, setTgEnabled] = useState<boolean>(false);
@@ -253,7 +266,8 @@ export function AdminOrdersCrmPanel({
     'env' | 'legacy_store' | 'none'
   >('none');
   const [tgChatId, setTgChatId] = useState<string>('');
-  const [tgDiscoveredChatTitle, setTgDiscoveredChatTitle] = useState<string>('');
+  const [tgDiscoveredChatTitle, setTgDiscoveredChatTitle] =
+    useState<string>('');
   const [tgNotifyNew, setTgNotifyNew] = useState<boolean>(true);
   const [tgNotifyStage, setTgNotifyStage] = useState<boolean>(true);
   const [tgMaskPdn, setTgMaskPdn] = useState<boolean>(true);
@@ -271,23 +285,36 @@ export function AdminOrdersCrmPanel({
   const [isSavingSettings, setIsSavingSettings] = useState<boolean>(false);
   const [isTestingDispatch, setIsTestingDispatch] = useState<boolean>(false);
 
-  const applyServerSettings = useCallback((settings: AdminDispatchSettingsResponse) => {
-    setTgEnabled(settings.telegram.enabled);
-    setTgHasToken(settings.telegram.hasBotToken);
-    setTgTokenSource(settings.telegram.botTokenSource ?? 'none');
-    setTgMaskedToken(settings.telegram.maskedBotToken || '');
-    setTgChatId(settings.telegram.chatId || '');
-    setTgDiscoveredChatTitle(settings.telegram.discoveredChatTitle || '');
-    setTgNotifyNew(settings.telegram.notifyOnNewOrder);
-    setTgNotifyStage(settings.telegram.notifyOnStageChange);
-    setTgMaskPdn(settings.telegram.maskPdnInExternalAlerts !== false);
+  useEffect(() => {
+    setSettingsTab(initialSettingsTab);
+  }, [initialSettingsTab]);
 
-    setWhEnabled(settings.webhook.enabled);
-    setWhEndpointUrl(settings.webhook.endpointUrl || '');
-    setWhSecretInput(settings.webhook.maskedHmacSecret || '');
-    setWhNotifyNew(settings.webhook.notifyOnNewOrder);
-    setWhNotifyStage(settings.webhook.notifyOnStageChange);
-  }, []);
+  useEffect(() => {
+    if (focusedOrderId) {
+      setSelectedOrderId(focusedOrderId);
+    }
+  }, [focusedOrderId]);
+
+  const applyServerSettings = useCallback(
+    (settings: AdminDispatchSettingsResponse) => {
+      setTgEnabled(settings.telegram.enabled);
+      setTgHasToken(settings.telegram.hasBotToken);
+      setTgTokenSource(settings.telegram.botTokenSource ?? 'none');
+      setTgMaskedToken(settings.telegram.maskedBotToken || '');
+      setTgChatId(settings.telegram.chatId || '');
+      setTgDiscoveredChatTitle(settings.telegram.discoveredChatTitle || '');
+      setTgNotifyNew(settings.telegram.notifyOnNewOrder);
+      setTgNotifyStage(settings.telegram.notifyOnStageChange);
+      setTgMaskPdn(settings.telegram.maskPdnInExternalAlerts !== false);
+
+      setWhEnabled(settings.webhook.enabled);
+      setWhEndpointUrl(settings.webhook.endpointUrl || '');
+      setWhSecretInput(settings.webhook.maskedHmacSecret || '');
+      setWhNotifyNew(settings.webhook.notifyOnNewOrder);
+      setWhNotifyStage(settings.webhook.notifyOnStageChange);
+    },
+    []
+  );
 
   const fetchOrdersCrm = useCallback(
     async (silent = false) => {
@@ -298,7 +325,7 @@ export function AdminOrdersCrmPanel({
           headers: studioCmsStore.getAuthHeaders(),
         });
         if (!res.ok) {
-          throw new Error('Не удалось загрузить реестр заказов CRM');
+          throw new Error('Не удалось загрузить реестр сделок студии');
         }
         const json = (await res.json()) as {
           ok: boolean;
@@ -329,6 +356,9 @@ export function AdminOrdersCrmPanel({
           setEditingEntityTab(json.legalProfiles.activeEntityKind);
         }
         setSelectedOrderId((prev) => {
+          if (focusedOrderId && json.orders.some((o) => o.id === focusedOrderId)) {
+            return focusedOrderId;
+          }
           if (prev && json.orders.some((o) => o.id === prev)) return prev;
           return json.orders[0]?.id ?? '';
         });
@@ -338,99 +368,64 @@ export function AdminOrdersCrmPanel({
           text:
             err instanceof Error
               ? err.message
-              : 'Ошибка соединения с сервером CRM',
+              : 'Ошибка соединения с сервером реестра сделок',
         });
       } finally {
         setIsLoading(false);
         setIsRefreshing(false);
       }
     },
-    [applyServerSettings]
+    [applyServerSettings, focusedOrderId]
   );
 
   useEffect(() => {
     void fetchOrdersCrm(false);
   }, [fetchOrdersCrm]);
 
-  const stageCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: orders.length };
-    for (const st of CRM_ORDER_STAGES) {
-      counts[st.id] = 0;
-    }
-    for (const ord of orders) {
-      counts[ord.stage] = (counts[ord.stage] ?? 0) + 1;
-    }
-    return counts;
-  }, [orders]);
+  const b2bSummary = useMemo(
+    () => computeB2bLedgerSummary(orders, legalProfiles),
+    [orders, legalProfiles]
+  );
 
-  const filteredOrders = useMemo(() => {
+  const ledgerEntries = useMemo(
+    () =>
+      orders.map((order) => ({
+        order,
+        row: buildB2bLedgerRowView(order, legalProfiles),
+      })),
+    [orders, legalProfiles]
+  );
+
+  const filteredEntries = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return orders.filter((ord) => {
-      if (stageFilter !== 'all' && ord.stage !== stageFilter) return false;
-      if (modeFilter !== 'all' && ord.checkoutMode !== modeFilter) return false;
+    return ledgerEntries.filter(({ order, row }) => {
+      if (!matchesB2bLedgerBucket(order, bucketFilter)) return false;
+      if (stageFilter !== 'all' && order.stage !== stageFilter) return false;
       if (!q) return true;
       const haystack = [
-        ord.orderNumber,
-        ord.contact,
-        ord.companyOrInn,
-        ord.briefText,
-        ord.mediaPlanSnapshot?.nicheLabel ?? '',
-        ...(ord.mediaPlanSnapshot?.stations.map((s) => s.stationName) ?? []),
+        order.orderNumber,
+        row.invoiceNumber,
+        row.counterpartyTitle,
+        row.inn,
+        order.contact,
+        order.companyOrInn,
+        order.formatLabel,
+        order.briefText,
       ]
         .join(' ')
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [orders, stageFilter, modeFilter, searchQuery]);
+  }, [ledgerEntries, bucketFilter, stageFilter, searchQuery]);
 
   const selectedOrder = useMemo(() => {
     return (
-      filteredOrders.find((o) => o.id === selectedOrderId) ??
+      filteredEntries.find((item) => item.order.id === selectedOrderId)?.order ??
       orders.find((o) => o.id === selectedOrderId) ??
-      filteredOrders[0] ??
+      filteredEntries[0]?.order ??
       null
     );
-  }, [filteredOrders, orders, selectedOrderId]);
-
-  useEffect(() => {
-    setNotesDraft(selectedOrder?.producerNotes ?? '');
-    setCloudDiskDraft(selectedOrder?.cloudDiskUrl ?? '');
-    setDeliverableTitleDraft('');
-  }, [
-    selectedOrder?.id,
-    selectedOrder?.producerNotes,
-    selectedOrder?.cloudDiskUrl,
-  ]);
-
-  // Агрегированные KPI верхнего ряда
-  const kpiMetrics = useMemo(() => {
-    const activeHolds = orders.filter((o) => {
-      if (o.stage !== 'new_hold') return false;
-      const hs = computeOrderHoldStatus(o, nowMs);
-      return hs.remainingSec > 0;
-    }).length;
-
-    const totalPipelineRub = orders.reduce(
-      (sum, o) => sum + (Number.isFinite(o.totalBudgetRub) ? o.totalBudgetRub : 0),
-      0
-    );
-
-    const airOrders = orders.filter((o) => o.mediaPlanSnapshot !== null);
-    const fivePlusCompliant = airOrders.filter(
-      (o) => (o.mediaPlanSnapshot?.estimatedFrequency ?? 0) >= 5.0
-    ).length;
-
-    const activeChannelsCount =
-      1 + (tgEnabled && tgHasToken && tgChatId ? 1 : 0) + (whEnabled && whEndpointUrl ? 1 : 0);
-
-    return {
-      activeHolds,
-      totalPipelineRub,
-      airOrdersCount: airOrders.length,
-      fivePlusCompliant,
-      activeChannelsCount,
-    };
-  }, [orders, nowMs, tgEnabled, tgHasToken, tgChatId, whEnabled, whEndpointUrl]);
+  }, [filteredEntries, orders, selectedOrderId]);
 
   const patchOrderOnServer = async (
     orderId: string,
@@ -448,15 +443,18 @@ export function AdminOrdersCrmPanel({
     setIsUpdatingOrder(true);
     setFeedbackBanner(null);
     try {
-      const res = await fetch(`/api/cms/orders/${encodeURIComponent(orderId)}`, {
-        method: 'PATCH',
-        credentials: 'same-origin',
-        headers: {
-          'Content-Type': 'application/json',
-          ...studioCmsStore.getAuthHeaders(),
-        },
-        body: JSON.stringify(payload),
-      });
+      const res = await fetch(
+        `/api/cms/orders/${encodeURIComponent(orderId)}`,
+        {
+          method: 'PATCH',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            ...studioCmsStore.getAuthHeaders(),
+          },
+          body: JSON.stringify(payload),
+        }
+      );
       const json = (await res.json()) as {
         ok: boolean;
         order?: CrmOrderRecord;
@@ -487,7 +485,9 @@ export function AdminOrdersCrmPanel({
           ].slice(0, 30)
         );
       }
-      setEdoModalOrder((prev) => (prev && prev.id === updated.id ? updated : prev));
+      setEdoModalOrder((prev) =>
+        prev && prev.id === updated.id ? updated : prev
+      );
       if (successMessage) {
         const tgResult = json.dispatchResult?.telegramResult;
         const tgSuffix =
@@ -510,24 +510,32 @@ export function AdminOrdersCrmPanel({
       setFeedbackBanner({
         kind: 'error',
         text:
-          err instanceof Error ? err.message : 'Ошибка сохранения сделки в CRM',
+          err instanceof Error
+            ? err.message
+            : 'Ошибка сохранения сделки в реестре',
       });
     } finally {
       setIsUpdatingOrder(false);
     }
   };
 
-  const handleUploadDeliverable = async (
+  const handleUploadDeliverableWithMeta = async (
     order: CrmOrderRecord,
-    file: File | null
-  ) => {
-    if (!file) return;
+    file: File | null,
+    meta: {
+      title: string;
+      kind: OrderDeliverableKind;
+      versionCode?: DeliverableVersionPreset;
+      versionNote?: string;
+    }
+  ): Promise<boolean> => {
+    if (!file) return false;
     if (file.size > 10 * 1024 * 1024) {
       setFeedbackBanner({
         kind: 'error',
         text: 'Файл превышает лимит 10 МБ для прямой загрузки в личный кабинет.',
       });
-      return;
+      return false;
     }
     setIsUploadingDeliverable(true);
     setFeedbackBanner(null);
@@ -553,15 +561,12 @@ export function AdminOrdersCrmPanel({
             ...studioCmsStore.getAuthHeaders(),
           },
           body: JSON.stringify({
-            title: deliverableTitleDraft.trim() || file.name,
-            kind: deliverableKindDraft,
+            title: meta.title.trim() || file.name,
+            kind: meta.kind,
             fileName: file.name,
             dataBase64,
-            versionCode:
-              deliverableKindDraft === 'audio_master'
-                ? deliverableVersionDraft
-                : undefined,
-            versionNote: deliverableVersionNoteDraft.trim() || undefined,
+            versionCode: meta.versionCode,
+            versionNote: meta.versionNote?.trim() || undefined,
           }),
         }
       );
@@ -576,24 +581,20 @@ export function AdminOrdersCrmPanel({
       setOrders((prev) =>
         prev.map((o) => (o.id === json.order!.id ? json.order! : o))
       );
-      setDeliverableTitleDraft('');
-      setDeliverableVersionDraft('auto');
-      setDeliverableVersionNoteDraft('');
       setFeedbackBanner({
         kind: 'ok',
-        text: `Файл «${file.name}» загружен в историю версий заказа #${order.orderNumber}.`,
+        text: `Файл «${file.name}» прикреплён в пакет выдачи сделки #${order.orderNumber}.`,
       });
+      return true;
     } catch (err) {
       setFeedbackBanner({
         kind: 'error',
         text:
           err instanceof Error ? err.message : 'Ошибка загрузки файла выдачи',
       });
+      return false;
     } finally {
       setIsUploadingDeliverable(false);
-      if (deliverableFileRef.current) {
-        deliverableFileRef.current.value = '';
-      }
     }
   };
 
@@ -616,13 +617,15 @@ export function AdminOrdersCrmPanel({
         error?: string;
       };
       if (!res.ok || !json.ok || !json.legalProfiles) {
-        throw new Error(json.error ?? 'Не удалось сохранить юридические профили');
+        throw new Error(
+          json.error ?? 'Не удалось сохранить юридические профили'
+        );
       }
       setLegalProfiles(json.legalProfiles);
       setLegalDraft(json.legalProfiles);
       setFeedbackBanner({
         kind: 'ok',
-        text: 'Юридические реквизиты и налоговый режим студии (г. Тверь) сохранены.',
+        text: 'Юридические реквизиты исполнителя (ИП / ООО, г. Тверь) и налоговый режим сохранены.',
       });
     } catch (err) {
       setFeedbackBanner({
@@ -812,8 +815,9 @@ export function AdminOrdersCrmPanel({
       if (!res.ok || !json.ok || !json.order) {
         throw new Error(json.error ?? 'Не удалось обезличить ПДн заказа');
       }
-      setOrders((prev) => prev.map((o) => (o.id === json.order!.id ? json.order! : o)));
-      setNotesDraft(json.order.producerNotes);
+      setOrders((prev) =>
+        prev.map((o) => (o.id === json.order!.id ? json.order! : o))
+      );
       setFeedbackBanner({
         kind: 'ok',
         text: `Персональные данные по сделке #${order.orderNumber} обезличены согласно ч. 5 ст. 21 152-ФЗ.`,
@@ -834,7 +838,6 @@ export function AdminOrdersCrmPanel({
     setIsTestingDispatch(true);
     setFeedbackBanner(null);
     try {
-      // Сначала сохраняем текущие настройки маршрутизации
       await fetch('/api/cms/orders-dispatch/settings', {
         method: 'PUT',
         credentials: 'same-origin',
@@ -909,7 +912,9 @@ export function AdminOrdersCrmPanel({
 
   const handleBindLoopbackWebhook = () => {
     const origin =
-      typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+      typeof window !== 'undefined'
+        ? window.location.origin
+        : 'http://localhost:3000';
     setWhEnabled(true);
     setWhEndpointUrl(`${origin}/api/webhooks/loopback-crm-sink`);
     if (!whSecretInput || whSecretInput.startsWith('••••')) {
@@ -918,12 +923,13 @@ export function AdminOrdersCrmPanel({
   };
 
   const handleDownloadCsv = () => {
-    const csvContent = '\uFEFF' + exportCrmOrdersToCsv(filteredOrders);
+    const targetOrders = filteredEntries.map((entry) => entry.order);
+    const csvContent = '\uFEFF' + exportCrmOrdersToCsv(targetOrders);
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `fmworks-orders-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `fmworks-b2b-ledger-${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -936,7 +942,7 @@ export function AdminOrdersCrmPanel({
       createdAtIso: order.createdAt,
       formatLabel: order.formatLabel,
       baseBudgetRub: order.totalBudgetRub,
-      defaultDurationSec: order.mediaPlanSnapshot?.spotDurationSec ?? 20,
+      defaultDurationSec: resolveOrderTargetSlotSeconds(order),
       contact: order.contact,
       companyOrInn: order.companyOrInn,
       briefText: order.briefText,
@@ -976,10 +982,13 @@ export function AdminOrdersCrmPanel({
       };
       if (!res.ok || !json.ok || !json.order) {
         throw new Error(
-          json.error ?? 'Не удалось сформировать черновик счёта для Контур.Диадока'
+          json.error ??
+            'Не удалось сформировать черновик счёта для Контур.Диадока'
         );
       }
-      setOrders((prev) => prev.map((o) => (o.id === json.order!.id ? json.order! : o)));
+      setOrders((prev) =>
+        prev.map((o) => (o.id === json.order!.id ? json.order! : o))
+      );
       if (edoModalOrder?.id === json.order.id) {
         setEdoModalOrder(json.order);
       }
@@ -1006,211 +1015,33 @@ export function AdminOrdersCrmPanel({
 
   if (isLoading) {
     return (
-      <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-6 space-y-4">
-        <div className="h-5 w-56 rounded bg-[#111111]/8 dark:bg-white/8" />
-        <div className="h-24 w-full rounded-xl bg-[#111111]/5 dark:bg-white/5" />
+      <div className="space-y-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[0, 1, 2, 3].map((idx) => (
+            <div
+              key={idx}
+              className="h-[104px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse"
+            />
+          ))}
+        </div>
+        <div className="h-[320px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse" />
       </div>
     );
   }
 
   return (
-    <div data-testid="admin-orders-crm-panel" className="space-y-6 tabular-nums">
-      {/* Верхний ряд KPI системы приёма заказов (ровно 4 показателя) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-4 sm:p-5 space-y-1">
-          <p className="text-xs font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58">
-            Активные резервы 4ч
-          </p>
-          <p
-            data-testid="crm-kpi-active-holds"
-            className="text-2xl font-bold text-[#FF4820]"
-          >
-            {kpiMetrics.activeHolds}
-          </p>
-          <p className="text-[11px] text-[#111111]/54 dark:text-[#F4F3EF]/54">
-            Всего сделок в воронке: {orders.length}
-          </p>
-        </div>
-
-        <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-4 sm:p-5 space-y-1">
-          <p className="text-xs font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58">
-            Объём портфеля сделок
-          </p>
-          <p
-            data-testid="crm-kpi-pipeline-rub"
-            className="text-2xl font-bold text-[#111111] dark:text-[#F4F3EF]"
-          >
-            {formatRubCompact(kpiMetrics.totalPipelineRub)}
-          </p>
-          <p className="text-[11px] text-[#111111]/54 dark:text-[#F4F3EF]/54">
-            Прямые договоры в ЭДО без комиссий
-          </p>
-        </div>
-
-        <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-4 sm:p-5 space-y-1">
-          <p className="text-xs font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58">
-            Норма частоты 5+ касаний
-          </p>
-          <p className="text-2xl font-bold text-[#16A34A] dark:text-[#4ADE80]">
-            {kpiMetrics.fivePlusCompliant} из {kpiMetrics.airOrdersCount || 1}
-          </p>
-          <p className="text-[11px] text-[#111111]/54 dark:text-[#F4F3EF]/54">
-            Эфирных медиапланов выше порога памяти
-          </p>
-        </div>
-
-        <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-4 sm:p-5 space-y-1">
-          <p className="text-xs font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58">
-            Куда поступают заказы
-          </p>
-          <p className="text-lg font-bold text-[#111111] dark:text-[#F4F3EF]">
-            CRM · Telegram · Webhook
-          </p>
-          <p className="text-[11px] text-[#16A34A] dark:text-[#4ADE80] font-medium">
-            Активно контуров приёма: {kpiMetrics.activeChannelsCount} из 3
-          </p>
-        </div>
-      </div>
-
-      {/* Переключатель 4 режимов: Воронка заказов / Каналы приёма / Реквизиты ИП и ООО / Научный план развития */}
-      <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center justify-between gap-3 border-b border-[#111111]/10 dark:border-white/10 pb-3 min-w-0">
-        <div
-          role="tablist"
-          aria-label="Контуры системы заказов и развития"
-          className="flex flex-wrap items-center gap-2 min-w-0"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={subView === 'funnel'}
-            data-testid="crm-subtab-funnel"
-            onClick={() => setSubView('funnel')}
-            className={`min-h-[40px] px-3.5 sm:px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 text-left ${
-              subView === 'funnel'
-                ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                : 'bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:text-[#111111] dark:hover:text-white'
-            }`}
-          >
-            <span>Воронка заказов ({orders.length})</span>
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={subView === 'kanban'}
-            data-testid="crm-subtab-kanban"
-            onClick={() => setSubView('kanban')}
-            className={`min-h-[40px] px-3.5 sm:px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 text-left ${
-              subView === 'kanban'
-                ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                : 'bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:text-[#111111] dark:hover:text-white'
-            }`}
-          >
-            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-            <span>Конвейер продакшна (Канбан)</span>
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={subView === 'analytics'}
-            data-testid="crm-subtab-analytics"
-            onClick={() => setSubView('analytics')}
-            className={`min-h-[40px] px-3.5 sm:px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 text-left ${
-              subView === 'analytics'
-                ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                : 'bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:text-[#111111] dark:hover:text-white'
-            }`}
-          >
-            <BarChart3 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-            <span>Аналитика и конверсия</span>
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={subView === 'channels'}
-            data-testid="crm-subtab-channels"
-            onClick={() => setSubView('channels')}
-            className={`min-h-[40px] px-3.5 sm:px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap text-left ${
-              subView === 'channels'
-                ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                : 'bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:text-[#111111] dark:hover:text-white'
-            }`}
-          >
-            <Webhook className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-            <span>Шлюзы Telegram и Webhook</span>
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={subView === 'legal'}
-            data-testid="crm-subtab-legal"
-            onClick={() => setSubView('legal')}
-            className={`min-h-[40px] px-3.5 sm:px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap text-left ${
-              subView === 'legal'
-                ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                : 'bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:text-[#111111] dark:hover:text-white'
-            }`}
-          >
-            <Building2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-            <span>Реквизиты ИП / ООО (г. Тверь)</span>
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={subView === 'science'}
-            data-testid="crm-subtab-science"
-            onClick={() => setSubView('science')}
-            className={`min-h-[40px] px-3.5 sm:px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap text-left ${
-              subView === 'science'
-                ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                : 'bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:text-[#111111] dark:hover:text-white'
-            }`}
-          >
-            <FlaskConical className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-            <span>Научный план (4 контура)</span>
-          </button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          {subView === 'funnel' && (
-            <button
-              type="button"
-              data-testid="crm-export-csv-btn"
-              onClick={handleDownloadCsv}
-              className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:border-[#FF4820] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
-            >
-              <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-              <span>Выгрузить реестр CSV</span>
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={() => void fetchOrdersCrm(false)}
-            disabled={isRefreshing}
-            className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:text-[#111111] dark:hover:text-white inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
-          >
-            <RefreshCw
-              className={`w-3.5 h-3.5 shrink-0 ${isRefreshing ? 'animate-spin' : ''}`}
-              aria-hidden="true"
-            />
-            <span>Обновить</span>
-          </button>
-        </div>
-      </div>
-
+    <div
+      data-testid="admin-orders-crm-panel"
+      className="space-y-6 tabular-nums"
+    >
       {feedbackBanner && (
         <div
           role="status"
           data-testid="crm-feedback-banner"
           className={`px-4 py-3 rounded-xl text-xs font-medium border ${
             feedbackBanner.kind === 'ok'
-              ? 'bg-[#16A34A]/10 border-[#16A34A]/30 text-[#15803D] dark:text-[#4ADE80]'
-              : 'bg-[#DC2626]/10 border-[#DC2626]/30 text-[#DC2626] dark:text-[#F87171]'
+              ? 'bg-[#166534]/10 border-[#166534]/30 text-[#166534] dark:text-[#4ADE80]'
+              : 'bg-[#B91C1C]/10 border-[#B91C1C]/30 text-[#B91C1C] dark:text-[#F87171]'
           }`}
         >
           {feedbackBanner.text}
@@ -1218,1890 +1049,1584 @@ export function AdminOrdersCrmPanel({
       )}
 
       {/* ===================================================================== */}
-      {/* ВКЛАДКА 1А: СТУДИЙНЫЙ КОНВЕЙЕР СОГЛАСОВАНИЯ И ШЛЮЗ ЗВУКОРЕЖИССЁРА     */}
+      {/* КОНТУР 1: КОММЕРЧЕСКИЙ И ДОГОВОРНОЙ РЕЕСТР B2B (ВАРИАНТ 3)             */}
       {/* ===================================================================== */}
-      {subView === 'kanban' && (
-        <AdminProductionKanbanView
-          orders={orders}
-          soundEngineers={soundEngineers}
-          soundEngineerEmails={soundEngineerEmails}
-          selectedOrderId={selectedOrderId}
-          onSelectOrderId={setSelectedOrderId}
-          onOrderUpdated={(updated) =>
-            setOrders((prev) =>
-              prev.map((o) => (o.id === updated.id ? updated : o))
-            )
-          }
-          onSoundEngineersUpdated={setSoundEngineers}
-          onSoundEngineerEmailsUpdated={setSoundEngineerEmails}
-          onFeedback={setFeedbackBanner}
-        />
-      )}
-
-      {subView === 'analytics' && (
-        <Suspense
-          fallback={
-            <div className="space-y-6">
-              <div className="h-[62px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse" />
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-                {[0, 1, 2, 3].map((idx) => (
-                  <div
-                    key={idx}
-                    className="h-[116px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse"
-                  />
-                ))}
-              </div>
-              <div className="h-[390px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse" />
-            </div>
-          }
-        >
-          <LazyAdminStudioAnalyticsPanel
-            orders={orders}
-            isRefreshingExternal={isRefreshing}
-            onRefreshOrders={() => fetchOrdersCrm(false)}
-            onOpenOrdersFunnel={() => setSubView('funnel')}
-          />
-        </Suspense>
-      )}
-
-      {/* ===================================================================== */}
-      {/* ВКЛАДКА 1: 6-ЭТАПНАЯ ВОРОНКА ПРИЁМА И ВЕДЕНИЯ ЗАКАЗОВ (CRM ПУЛЬТ)    */}
-      {/* ===================================================================== */}
-      {subView === 'funnel' && (
-        <div className="space-y-5">
-          {/* Фильтр по 6 этапам воронки + поиск */}
-          <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-4 space-y-4">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setStageFilter('all')}
-                className={`min-h-[34px] px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                  stageFilter === 'all'
-                    ? 'bg-[#FF4820] text-white'
-                    : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:text-[#111111] dark:hover:text-white'
-                }`}
-              >
-                Все этапы ({stageCounts.all ?? 0})
-              </button>
-
-              {CRM_ORDER_STAGES.map((st) => {
-                const filterStageMeta = getCrmStageMetaForOrder(
-                  st.id,
-                  AIRTIME_SALES_ENABLED && modeFilter !== 'production_only'
-                    ? 'air_plus_production'
-                    : 'production_only'
-                );
-                return (
-                  <button
-                    key={st.id}
-                    type="button"
-                    data-testid={`crm-stage-filter-${st.id}`}
-                    onClick={() => setStageFilter(st.id)}
-                    className={`min-h-[34px] px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                      stageFilter === st.id
-                        ? 'bg-[#FF4820] text-white'
-                        : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:text-[#111111] dark:hover:text-white'
-                    }`}
-                  >
-                    {filterStageMeta.stepCode}. {filterStageMeta.shortLabel} (
-                    {stageCounts[st.id] ?? 0})
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-[#111111]/8 dark:border-white/8">
-              <div className="sm:col-span-2">
-                <label htmlFor="crm-search-input" className="sr-only">
-                  Поиск по номеру заказа, контакту, ИНН или радиостанции
-                </label>
-                <input
-                  id="crm-search-input"
-                  type="search"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Поиск по номеру #FM-HOLD, телефону, ИНН, компании или радиостанции…"
-                  className="w-full min-h-[38px] px-3.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 text-xs text-[#111111] dark:text-[#F4F3EF]"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="crm-mode-select" className="sr-only">
-                  Тип сделки
-                </label>
-                <select
-                  id="crm-mode-select"
-                  value={modeFilter}
-                  onChange={(e) =>
-                    setModeFilter(
-                      e.target.value as
-                        | 'all'
-                        | 'air_plus_production'
-                        | 'production_only'
-                    )
-                  }
-                  className="w-full min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF]"
-                >
-                  <option value="all">Все типы заказов</option>
-                  <option value="air_plus_production">Резерв эфира + ролик</option>
-                  <option value="production_only">Только аудиопродакшн</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* Рабочий сплит: слева список заказов (5 колонок), справа инспектор сделки (7 колонок) */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Левая колонка: Очередь заказов */}
-            <div
-              data-testid="crm-orders-list"
-              className="lg:col-span-5 rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 divide-y divide-[#111111]/8 dark:divide-white/8 overflow-hidden"
-            >
-              {filteredOrders.length === 0 ? (
-                <div className="p-6 text-center space-y-2">
-                  <p className="text-sm font-semibold text-[#111111] dark:text-[#F4F3EF]">
-                    По выбранному фильтру заказов нет
-                  </p>
-                  <p className="text-xs text-[#111111]/60 dark:text-[#F4F3EF]/60">
-                    Сбросьте фильтр этапа или поисковую строку, чтобы увидеть весь реестр.
-                  </p>
-                </div>
-              ) : (
-                filteredOrders.map((ord) => {
-                  const isSelected = selectedOrder?.id === ord.id;
-                  const stageMeta = getCrmStageMetaForOrder(ord.stage, ord.checkoutMode);
-                  const holdInfo = computeOrderHoldStatus(ord, nowMs);
-                  const snap = ord.mediaPlanSnapshot;
-
-                  return (
-                    <button
-                      key={ord.id}
-                      type="button"
-                      data-testid={`crm-order-row-${ord.orderNumber}`}
-                      onClick={() => setSelectedOrderId(ord.id)}
-                      className={`w-full text-left p-4 sm:p-5 transition-colors cursor-pointer block space-y-2 ${
-                        isSelected
-                          ? 'bg-[#FF4820]/[0.06] dark:bg-[#FF4820]/[0.11]'
-                          : 'hover:bg-[#F7F6F2]/80 dark:hover:bg-white/[0.03]'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-bold text-[#111111] dark:text-[#F4F3EF]">
-                          #{ord.orderNumber}
-                          <span className="font-normal text-[#111111]/55 dark:text-[#F4F3EF]/55">
-                            {' '}
-                            · {formatDateTimeShort(ord.createdAt)}
-                          </span>
-                        </span>
-                        <span className="text-sm font-bold text-[#111111] dark:text-[#F4F3EF]">
-                          {ord.totalBudgetRub > 0
-                            ? formatRubCompact(ord.totalBudgetRub)
-                            : 'Договорная'}
-                        </span>
-                      </div>
-
-                      <p className="text-xs font-semibold text-[#111111]/88 dark:text-[#F4F3EF]/88 truncate">
-                        {ord.companyOrInn || ord.contact}
-                      </p>
-
-                      <p className="text-[11px] text-[#111111]/64 dark:text-[#F4F3EF]/64 truncate">
-                        {snap
-                          ? `${snap.stations.map((s) => s.stationName).join(', ')} · ${snap.totalSpots} вых. × ${snap.spotDurationSec}с`
-                          : ord.formatLabel}
-                      </p>
-
-                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px]">
-                        <span className="font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75">
-                          {stageMeta.stepCode}. {stageMeta.shortLabel}
-                        </span>
-
-                        <span
-                          className={`font-semibold inline-flex items-center gap-1 ${
-                            holdInfo.urgency === 'locked_safe'
-                              ? 'text-[#16A34A] dark:text-[#4ADE80]'
-                              : holdInfo.urgency === 'expiring_soon' ||
-                                  holdInfo.urgency === 'expired'
-                                ? 'text-[#DC2626] dark:text-[#F87171]'
-                                : 'text-[#FF4820]'
-                          }`}
-                        >
-                          <Clock className="w-3 h-3 shrink-0" aria-hidden="true" />
-                          <span>{holdInfo.statusLabel}</span>
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-
-            {/* Правая колонка: Детальный пульт управления выбранной сделкой */}
-            <div className="lg:col-span-7">
-              {selectedOrder ? (
-                (() => {
-                  const stageMeta = getCrmStageMetaForOrder(
-                    selectedOrder.stage,
-                    selectedOrder.checkoutMode
-                  );
-                  const holdInfo = computeOrderHoldStatus(selectedOrder, nowMs);
-                  const snap = selectedOrder.mediaPlanSnapshot;
-                  const tgPres = getDeliveryStatePresentation(
-                    selectedOrder.delivery.telegram.state
-                  );
-                  const whPres = getDeliveryStatePresentation(
-                    selectedOrder.delivery.webhook.state
-                  );
-
-                  return (
-                    <section
-                      aria-label={`Карточка заказа ${selectedOrder.orderNumber}`}
-                      data-testid="crm-order-inspector"
-                      className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-6 space-y-6"
-                    >
-                      {/* Шапка карточки заказа + главное действие перевода по воронке */}
-                      <div className="space-y-4 pb-5 border-b border-[#111111]/10 dark:border-white/10">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="space-y-1">
-                            <p className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                              Заказ #{selectedOrder.orderNumber} ·{' '}
-                              {getSourceReadableLabel(selectedOrder.source)} ·{' '}
-                              {selectedOrder.checkoutMode === 'air_plus_production'
-                                ? 'Эфир + Продакшн'
-                                : 'Аудиопродакшн'}
-                            </p>
-                            <h2 className="text-xl font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF]">
-                              {selectedOrder.companyOrInn || selectedOrder.contact}
-                            </h2>
-                            <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                              Контакт: <strong>{selectedOrder.contact}</strong>
-                              {selectedOrder.innVerified && (
-                                <span className="text-[#16A34A] dark:text-[#4ADE80] font-semibold">
-                                  {' '}
-                                  · ИНН проверен по ключу ФНС
-                                </span>
-                              )}
-                            </p>
-                          </div>
-
-                          <div className="text-left sm:text-right space-y-0.5">
-                            <p className="text-xs text-[#111111]/56 dark:text-[#F4F3EF]/56">
-                              Сумма договора ·{' '}
-                              {selectedOrder.paymentChannel === 'card_online'
-                                ? 'Карта / СБП (54-ФЗ)'
-                                : 'ЭДО / безнал'}
-                            </p>
-                            <p className="text-2xl font-bold text-[#111111] dark:text-[#F4F3EF]">
-                              {selectedOrder.totalBudgetRub > 0
-                                ? formatRubCompact(selectedOrder.totalBudgetRub)
-                                : 'Договорная цена'}
-                            </p>
-                            <p
-                              className={`text-xs font-semibold ${
-                                holdInfo.urgency === 'locked_safe'
-                                  ? 'text-[#16A34A] dark:text-[#4ADE80]'
-                                  : 'text-[#FF4820]'
-                              }`}
-                            >
-                              {holdInfo.statusLabel}
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Управление этапом сделки */}
-                        <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <label
-                              htmlFor="inspector-stage-select"
-                              className="text-xs font-semibold text-[#111111]/68 dark:text-[#F4F3EF]/68"
-                            >
-                              Этап:
-                            </label>
-                            <select
-                              id="inspector-stage-select"
-                              data-testid="crm-inspector-stage-select"
-                              disabled={isUpdatingOrder}
-                              value={selectedOrder.stage}
-                              onChange={(e) =>
-                                void patchOrderOnServer(
-                                  selectedOrder.id,
-                                  { stage: e.target.value as CrmOrderStage },
-                                  `Этап сделки #${selectedOrder.orderNumber} обновлён.`
-                                )
-                              }
-                              className="min-h-[40px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs font-bold text-[#111111] dark:text-[#F4F3EF]"
-                            >
-                              {CRM_ORDER_STAGES.map((st) => (
-                                <option key={st.id} value={st.id}>
-                                  {
-                                    getCrmStageMetaForOrder(
-                                      st.id,
-                                      selectedOrder.checkoutMode
-                                    ).fullTitle
-                                  }
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          {stageMeta.nextStage && stageMeta.nextActionLabel && (
-                            <button
-                              type="button"
-                              disabled={isUpdatingOrder}
-                              data-testid="crm-advance-stage-btn"
-                              onClick={() =>
-                                void patchOrderOnServer(
-                                  selectedOrder.id,
-                                  { stage: stageMeta.nextStage! },
-                                  `Сделка #${selectedOrder.orderNumber} переведена на следующий этап.`
-                                )
-                              }
-                              className="min-h-[40px] px-4 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] disabled:opacity-50 text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                            >
-                              <span>{stageMeta.nextActionLabel}</span>
-                            </button>
-                          )}
-                        </div>
-
-                        <p className="text-[11px] text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                          Регламент этапа: {stageMeta.slaHint}
-                        </p>
-
-                        {(() => {
-                          const latestMail = soundEngineerEmails.find(
-                            (m) => m.orderId === selectedOrder.id
-                          );
-                          if (!latestMail) return null;
-                          return (
-                            <div
-                              data-testid="crm-funnel-sound-engineer-email-card"
-                              className="p-3.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] flex flex-wrap items-center justify-between gap-3 text-xs"
-                            >
-                              <div className="space-y-0.5 min-w-0">
-                                <p className="font-bold text-[#111111] dark:text-[#F4F3EF]">
-                                  E-mail звукорежиссёру при смене статуса:{' '}
-                                  {latestMail.engineerName} ({latestMail.engineerEmail})
-                                </p>
-                                <p className="text-[11px] text-[#111111]/64 dark:text-[#F4F3EF]/64 truncate">
-                                  Тема: {latestMail.subject}
-                                </p>
-                              </div>
-                              <a
-                                href={latestMail.emailActionPath}
-                                data-testid="crm-funnel-email-submit-file-btn"
-                                className="min-h-[38px] px-4 py-1.5 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
-                              >
-                                <span>{latestMail.buttonLabel}</span>
-                                <ExternalLink className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                              </a>
-                            </div>
-                          );
-                        })()}
-                      </div>
-
-                      {/* Визуальная история перемещений заказа по этапам */}
-                      <OrderStageHistoryTimeline
-                        order={selectedOrder}
-                        assignedEngineerName={
-                          soundEngineers.find(
-                            (eng) =>
-                              eng.id ===
-                              selectedOrder.approvalWorkflow?.assignedEngineerId
-                          )?.name ?? null
-                        }
-                        isUpdating={isUpdatingOrder}
-                        onSelectStage={(targetStage) => {
-                          if (targetStage === selectedOrder.stage) return;
-                          void patchOrderOnServer(
-                            selectedOrder.id,
-                            { stage: targetStage },
-                            `Этап сделки #${selectedOrder.orderNumber} обновлён.`
-                          );
-                        }}
-                      />
-
-                      {/* Спецификация медиаплана (радиостанции, хронометраж, выходы, OTS) */}
-                      {snap ? (
-                        <div className="space-y-3 pb-5 border-b border-[#111111]/10 dark:border-white/10">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div>
-                              <h3 className="text-sm font-bold text-[#111111] dark:text-[#F4F3EF]">
-                                Медиаплан резерва · {snap.nicheLabel}
-                              </h3>
-                              <p className="text-xs text-[#111111]/62 dark:text-[#F4F3EF]/62">
-                                {snap.audienceSummary} · Хронометраж:{' '}
-                                <strong>{snap.spotDurationSec} сек</strong> · Контактов:{' '}
-                                <strong>{formatNumberSpaced(snap.totalReachOTS)} OTS</strong>{' '}
-                                (~{snap.estimatedFrequency.toFixed(1).replace('.', ',')}×)
-                              </p>
-                            </div>
-
-                            <button
-                              type="button"
-                              data-testid="crm-open-science-for-order-btn"
-                              onClick={() => {
-                                setScienceTargetOrder(selectedOrder);
-                                setSubView('science');
-                              }}
-                              className="min-h-[36px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                            >
-                              <FlaskConical className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                              <span>Научный аудит и LTV</span>
-                              <ArrowRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                            </button>
-                          </div>
-
-                          <div className="overflow-x-auto border-t border-b border-[#111111]/10 dark:border-white/10">
-                            <table className="w-full text-xs text-left border-collapse">
-                              <thead>
-                                <tr className="text-[#111111]/56 dark:text-[#F4F3EF]/56 border-b border-[#111111]/8 dark:border-white/8">
-                                  <th className="py-2 pr-3 font-semibold">Радиостанция и слот</th>
-                                  <th className="py-2 px-2 font-semibold text-right">Выходы</th>
-                                  <th className="py-2 px-2 font-semibold text-right">Охват OTS</th>
-                                  <th className="py-2 pl-2 font-semibold text-right">По квоте</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-[#111111]/6 dark:divide-white/6">
-                                {snap.stations.map((st) => (
-                                  <tr key={st.slotId}>
-                                    <td className="py-2.5 pr-3">
-                                      <div className="font-bold text-[#111111] dark:text-[#F4F3EF]">
-                                        {st.stationName}{' '}
-                                        <span className="font-normal text-[#111111]/55 dark:text-[#F4F3EF]/55">
-                                          · {st.frequencyFm}
-                                        </span>
-                                      </div>
-                                      <div className="text-[11px] text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                                        {st.slotLabel} ({st.daysPattern})
-                                      </div>
-                                    </td>
-                                    <td className="py-2.5 px-2 text-right font-semibold whitespace-nowrap">
-                                      {st.spotsCount} × {st.spotSeconds}с
-                                    </td>
-                                    <td className="py-2.5 px-2 text-right whitespace-nowrap">
-                                      {formatNumberSpaced(st.reachOTS)}
-                                    </td>
-                                    <td className="py-2.5 pl-2 text-right font-bold whitespace-nowrap">
-                                      {formatRubCompact(st.hotPriceRub)}{' '}
-                                      <span className="text-[11px] font-normal text-[#16A34A] dark:text-[#4ADE80]">
-                                        (−{st.discountPercent}%)
-                                      </span>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-
-                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                            <span className="text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                              Продакшн: <strong>{snap.productionStatusLabel}</strong>
-                            </span>
-                            <span className="text-[#16A34A] dark:text-[#4ADE80] font-semibold">
-                              Экономия квоты: −{formatRubCompact(snap.totalSavingsRub)}
-                            </span>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="pb-5 border-b border-[#111111]/10 dark:border-white/10 flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <h3 className="text-sm font-bold text-[#111111] dark:text-[#F4F3EF]">
-                              Тариф аудиопродакшна
-                            </h3>
-                            <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                              {selectedOrder.formatLabel}
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            data-testid="crm-open-science-for-order-btn"
-                            onClick={() => {
-                              setScienceTargetOrder(selectedOrder);
-                              setSubView('science');
-                            }}
-                            className="min-h-[36px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                          >
-                            <FlaskConical className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                            <span>Проверить сценарий и LTV</span>
-                          </button>
-                        </div>
-                      )}
-
-                      {/* Бриф клиента + чек-лист юридического и трафик-контроля */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-5 border-b border-[#111111]/10 dark:border-white/10">
-                        <div className="space-y-2.5">
-                          <h3 className="text-xs font-bold uppercase tracking-wider text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                            Бриф и материалы клиента
-                          </h3>
-                          <p className="text-xs leading-relaxed text-[#111111]/85 dark:text-[#F4F3EF]/85">
-                            {selectedOrder.briefText ||
-                              'Быстрый резерв эфира по контакту — детали оффера уточняет сейлз-продюсер при звонке.'}
-                          </p>
-                          {(selectedOrder.hasVoiceRecording ||
-                            selectedOrder.attachedFileName) && (
-                            <p className="text-xs font-semibold text-[#FF4820]">
-                              {selectedOrder.hasVoiceRecording
-                                ? `Голосовой бриф (${selectedOrder.voiceDurationSec || 15} сек)`
-                                : ''}
-                              {selectedOrder.hasVoiceRecording &&
-                              selectedOrder.attachedFileName
-                                ? ' · '
-                                : ''}
-                              {selectedOrder.attachedFileName
-                                ? `Файл: ${selectedOrder.attachedFileName}`
-                                : ''}
-                            </p>
-                          )}
-
-                          <div className="pt-2 space-y-2">
-                            <label
-                              htmlFor="crm-producer-notes"
-                              className="block text-xs font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72"
-                            >
-                              Рабочая заметка сейлз-продюсера:
-                            </label>
-                            <textarea
-                              id="crm-producer-notes"
-                              rows={2}
-                              value={notesDraft}
-                              onChange={(e) => setNotesDraft(e.target.value)}
-                              placeholder="Договорённости по слотам, реквизитам ЭДО или диктору…"
-                              className="w-full p-2.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs text-[#111111] dark:text-[#F4F3EF]"
-                            />
-                            <button
-                              type="button"
-                              disabled={
-                                isUpdatingOrder ||
-                                notesDraft === selectedOrder.producerNotes
-                              }
-                              onClick={() =>
-                                void patchOrderOnServer(
-                                  selectedOrder.id,
-                                  { producerNotes: notesDraft },
-                                  'Заметка продюсера сохранена.'
-                                )
-                              }
-                              className="min-h-[34px] px-3 py-1 rounded-lg border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] disabled:opacity-40 cursor-pointer whitespace-nowrap"
-                            >
-                              Сохранить заметку
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="space-y-2.5">
-                          <h3 className="text-xs font-bold uppercase tracking-wider text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                            Чек-лист допуска в эфир и ЭДО
-                          </h3>
-                          <div className="space-y-2 text-xs">
-                            {(
-                              [
-                                {
-                                  key: 'trafficConfirmed',
-                                  label:
-                                    'Сетка выходов подтверждена в трафик-службе радиостанций',
-                                },
-                                {
-                                  key: 'fz38Checked',
-                                  label:
-                                    'Пре-чек текста и дисклеймеров по ФЗ-38 «О рекламе» пройден',
-                                },
-                                {
-                                  key: 'rightsPassportIssued',
-                                  label:
-                                    'Бессрочный паспорт прав РАО/ВОИС оформлен или проверен',
-                                },
-                                {
-                                  key: 'edoAndOrdRegistered',
-                                  label:
-                                    'Договор-счёт отправлен в ЭДО (Диадок / СБИС)',
-                                },
-                              ] as const
-                            ).map((item) => (
-                              <label
-                                key={item.key}
-                                className="flex items-start gap-2.5 cursor-pointer py-1 text-[#111111]/85 dark:text-[#F4F3EF]/85"
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={selectedOrder.compliance[item.key]}
-                                  disabled={isUpdatingOrder}
-                                  onChange={(e) =>
-                                    void patchOrderOnServer(selectedOrder.id, {
-                                      compliance: {
-                                        [item.key]: e.target.checked,
-                                      },
-                                    })
-                                  }
-                                  className="mt-0.5 rounded border-[#111111]/30 accent-[#FF4820]"
-                                />
-                                <span className="leading-snug">{item.label}</span>
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Контур.Диадок (ЭДО IsDraft) и Учёт в Контур.Экстерне */}
-                      {(() => {
-                        const orderSuite = assembleProductionDocumentSuite({
-                          orderNumber: selectedOrder.orderNumber,
-                          createdAtIso: selectedOrder.createdAt,
-                          formatLabel: selectedOrder.formatLabel,
-                          baseBudgetRub: selectedOrder.totalBudgetRub,
-                          defaultDurationSec:
-                            selectedOrder.mediaPlanSnapshot?.spotDurationSec ?? 20,
-                          contact: selectedOrder.contact,
-                          companyOrInn: selectedOrder.companyOrInn,
-                          briefText: selectedOrder.briefText,
-                          legalProfiles,
-                          documentMeta: selectedOrder.documentMeta ?? null,
-                        });
-                        const draftState = selectedOrder.documentMeta?.diadocDraftState;
-                        return (
-                          <div
-                            data-testid="crm-kontur-edo-panel"
-                            className="pb-5 border-b border-[#111111]/10 dark:border-white/10 space-y-3"
-                          >
-                            <div className="flex flex-wrap items-start justify-between gap-3">
-                              <div className="space-y-1 min-w-0">
-                                <h3 className="text-xs font-bold uppercase tracking-wider text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                                  Контур.Диадок (ЭДО) и Учёт в Контур.Экстерне
-                                </h3>
-                                <p className="text-xs text-[#111111] dark:text-[#F4F3EF]">
-                                  <strong>{orderSuite.customer.displayName}</strong>
-                                  {orderSuite.customer.inn
-                                    ? ` · ИНН ${orderSuite.customer.inn}`
-                                    : ' · ИНН не указан клиентом'}
-                                  {orderSuite.customer.kpp
-                                    ? ` · КПП ${orderSuite.customer.kpp}`
-                                    : ''}
-                                  {orderSuite.customer.ogrn
-                                    ? ` · ${
-                                        orderSuite.customer.isIpByInn ? 'ОГРНИП' : 'ОГРН'
-                                      } ${orderSuite.customer.ogrn}`
-                                    : ''}
-                                </p>
-                                <p className="text-[11px] text-[#111111]/62 dark:text-[#F4F3EF]/62">
-                                  {orderSuite.customer.edoBoxId
-                                    ? `Ящик Диадока Заказчика: ${orderSuite.customer.edoBoxId}`
-                                    : 'Ящик ЭДО определяется по ИНН при отправке'}
-                                  {selectedOrder.documentMeta?.wantsDiadocDuplicate
-                                    ? ' · Клиент запросил дубликат счёта в Диадок'
-                                    : ''}
-                                  {konturStatus?.diadocConfigured
-                                    ? ' · API Диадока подключён'
-                                    : ' · Безопасный режим IsDraft (без КЭП на сайте)'}
-                                </p>
-                              </div>
-
-                              <div className="flex flex-wrap items-center gap-2 shrink-0">
-                                <button
-                                  type="button"
-                                  disabled={
-                                    isCreatingDiadocDraft ||
-                                    orderSuite.isNegotiablePendingPrice
-                                  }
-                                  data-testid="crm-create-diadoc-draft-btn"
-                                  onClick={() => void handleCreateDiadocDraft(selectedOrder)}
-                                  className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
-                                >
-                                  <Building2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                                  <span>
-                                    {isCreatingDiadocDraft
-                                      ? 'Формирование…'
-                                      : 'В черновики Диадока (IsDraft)'}
-                                  </span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  disabled={orderSuite.isNegotiablePendingPrice}
-                                  data-testid="crm-download-extern-csv-btn"
-                                  onClick={() =>
-                                    handleDownloadOrderKonturExternCsv(selectedOrder)
-                                  }
-                                  className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
-                                >
-                                  <Download className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                                  <span>CSV для Контур.Экстерна</span>
-                                </button>
-                              </div>
-                            </div>
-
-                            {draftState && draftState.status !== 'not_sent' && (
-                              <p
-                                data-testid="crm-diadoc-draft-status"
-                                className={`text-xs font-medium ${
-                                  draftState.status === 'error'
-                                    ? 'text-[#DC2626] dark:text-[#F87171]'
-                                    : 'text-[#15803D] dark:text-[#4ADE80]'
-                                }`}
-                              >
-                                {draftState.detail ||
-                                  `Черновик № ${draftState.documentNumber ?? orderSuite.invoiceNumber} сохранён (${draftState.draftMessageId ?? 'IsDraft'}).`}
-                              </p>
-                            )}
-                          </div>
-                        );
-                      })()}
-
-                      {/* Выдача материалов клиенту (Личный кабинет + Яндекс / Google Диск) */}
-                      <div
-                        data-testid="crm-client-deliverables-panel"
-                        className="pb-5 border-b border-[#111111]/10 dark:border-white/10 space-y-4"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div>
-                            <h3 className="text-xs font-bold uppercase tracking-wider text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                              Выдача материалов клиенту (Личный кабинет)
-                            </h3>
-                            <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72 mt-0.5">
-                              Предпочитаемый способ клиента:{' '}
-                              <strong>
-                                {resolveDeliveryChannelLabel(
-                                  selectedOrder.preferredDeliveryChannel,
-                                  selectedOrder.preferredDeliveryDetail
-                                )}
-                              </strong>
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Ссылка на облачное хранилище */}
-                        <div className="flex flex-col sm:flex-row gap-2">
-                          <input
-                            type="url"
-                            aria-label="Ссылка на облачное хранилище (Яндекс Диск, Google Диск, Dropbox)"
-                            data-testid="crm-cloud-disk-input"
-                            value={cloudDiskDraft}
-                            onChange={(e) => setCloudDiskDraft(e.target.value)}
-                            placeholder="https://disk.yandex.ru/d/... или https://drive.google.com/..."
-                            className="flex-1 min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
-                          />
-                          <button
-                            type="button"
-                            disabled={
-                              isUpdatingOrder ||
-                              cloudDiskDraft === (selectedOrder.cloudDiskUrl ?? '')
-                            }
-                            data-testid="crm-save-cloud-disk-btn"
-                            onClick={() =>
-                              void patchOrderOnServer(
-                                selectedOrder.id,
-                                { cloudDiskUrl: cloudDiskDraft.trim() || null },
-                                'Ссылка на облачную папку сохранена для клиента.'
-                              )
-                            }
-                            className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820] disabled:opacity-40 cursor-pointer whitespace-nowrap"
-                          >
-                            Сохранить ссылку на диск
-                          </button>
-                        </div>
-
-                        {/* Загрузка файла выдачи в Личный кабинет с поддержкой версий (v1, v2, master) */}
-                        <div className="space-y-2">
-                          <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
-                            <input
-                              type="text"
-                              aria-label="Название файла для клиента"
-                              value={deliverableTitleDraft}
-                              onChange={(e) => setDeliverableTitleDraft(e.target.value)}
-                              placeholder="Название (напр. Итерация v2 — правка паузы)"
-                              className="sm:col-span-5 min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
-                            />
-                            <select
-                              aria-label="Тип файла выдачи"
-                              value={deliverableKindDraft}
-                              onChange={(e) =>
-                                setDeliverableKindDraft(
-                                  e.target.value as OrderDeliverableKind
-                                )
-                              }
-                              className="sm:col-span-3 min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
-                            >
-                              <option value="audio_master">Аудиоролик (WAV/MP3)</option>
-                              <option value="script">Сценарий</option>
-                              <option value="passport">Паспорт прав</option>
-                              <option value="invoice">Счёт / документы</option>
-                              <option value="archive">Архив / прочее</option>
-                            </select>
-                            <div className="sm:col-span-4">
-                              <input
-                                ref={deliverableFileRef}
-                                type="file"
-                                data-testid="crm-deliverable-file-input"
-                                onChange={(e) =>
-                                  void handleUploadDeliverable(
-                                    selectedOrder,
-                                    e.target.files?.[0] ?? null
-                                  )
-                                }
-                                className="sr-only"
-                              />
-                              <button
-                                type="button"
-                                disabled={isUploadingDeliverable}
-                                data-testid="crm-upload-deliverable-btn"
-                                onClick={() => deliverableFileRef.current?.click()}
-                                className="w-full min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
-                              >
-                                <Upload className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                                <span>
-                                  {isUploadingDeliverable
-                                    ? 'Загрузка…'
-                                    : 'Загрузить файл клиенту'}
-                                </span>
-                              </button>
-                            </div>
-                          </div>
-
-                          {deliverableKindDraft === 'audio_master' && (
-                            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
-                              <select
-                                aria-label="Версия итерации аудиоролика"
-                                data-testid="crm-deliverable-version-select"
-                                value={deliverableVersionDraft}
-                                onChange={(e) =>
-                                  setDeliverableVersionDraft(
-                                    e.target.value as DeliverableVersionPreset
-                                  )
-                                }
-                                className="sm:col-span-4 min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs font-mono"
-                              >
-                                <option value="auto">
-                                  Авто ({suggestNextAudioVersionCode(selectedOrder.deliverables ?? [])})
-                                </option>
-                                <option value="v1">v1 — Черновой дубль</option>
-                                <option value="v2">v2 — Правка</option>
-                                <option value="v3">v3 — Доработка</option>
-                                <option value="v4">v4 — Доп. правка</option>
-                                <option value="master">master — Финальный мастер</option>
-                              </select>
-                              <input
-                                type="text"
-                                aria-label="Комментарий к версии ролика для клиента"
-                                data-testid="crm-deliverable-version-note-input"
-                                value={deliverableVersionNoteDraft}
-                                onChange={(e) =>
-                                  setDeliverableVersionNoteDraft(e.target.value)
-                                }
-                                placeholder="Комментарий к итерации (напр. Уплотнён финал и усилена пауза)"
-                                className="sm:col-span-8 min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
-                              />
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Список выданных файлов и вложений клиента */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                          <div className="space-y-1.5">
-                            <p className="font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                              Файлы и итерации в кабинете клиента (
-                              {selectedOrder.deliverables?.length ?? 0}):
-                            </p>
-                            {!selectedOrder.deliverables ||
-                            selectedOrder.deliverables.length === 0 ? (
-                              <p className="text-[#111111]/48 dark:text-[#F4F3EF]/48">
-                                Пока нет загруженных файлов выдачи.
-                              </p>
-                            ) : (
-                              <ul className="divide-y divide-[#111111]/8 dark:divide-white/8 border-t border-b border-[#111111]/8 dark:border-white/8">
-                                {selectedOrder.deliverables.map((d) => (
-                                  <li
-                                    key={d.id}
-                                    className="flex items-start justify-between gap-2 py-2"
-                                  >
-                                    <div className="min-w-0 flex-1 space-y-0.5">
-                                      <p className="truncate font-medium text-[#111111] dark:text-[#F4F3EF]">
-                                        {d.versionCode && (
-                                          <span className="font-mono font-bold text-[#FF4820] mr-1.5">
-                                            {d.versionCode}
-                                          </span>
-                                        )}
-                                        <span>{d.title}</span>{' '}
-                                        <span className="text-[#111111]/50 dark:text-[#F4F3EF]/50 tabular-nums">
-                                          ({formatFileSizeReadable(d.sizeBytes)})
-                                        </span>
-                                      </p>
-                                      {d.versionNote && (
-                                        <p className="text-[11px] text-[#111111]/56 dark:text-[#F4F3EF]/56 line-clamp-1">
-                                          {d.versionNote}
-                                        </p>
-                                      )}
-                                    </div>
-                                    <button
-                                      type="button"
-                                      disabled={isUpdatingOrder}
-                                      aria-label={`Удалить файл ${d.title}`}
-                                      onClick={() =>
-                                        void patchOrderOnServer(
-                                          selectedOrder.id,
-                                          { removeDeliverableId: d.id },
-                                          'Файл удалён из выдачи заказа.'
-                                        )
-                                      }
-                                      className="p-1 text-[#111111]/50 hover:text-[#DC2626] cursor-pointer shrink-0"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                                    </button>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                          </div>
-
-                          <div className="space-y-1.5">
-                            <p className="font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                              Материалы от клиента (
-                              {selectedOrder.clientUploads?.length ?? 0}):
-                            </p>
-                            {!selectedOrder.clientUploads ||
-                            selectedOrder.clientUploads.length === 0 ? (
-                              <p className="text-[#111111]/48 dark:text-[#F4F3EF]/48">
-                                Клиент не догружал файлы из кабинета.
-                              </p>
-                            ) : (
-                              <ul className="space-y-1.5">
-                                {selectedOrder.clientUploads.map((u) => (
-                                  <li
-                                    key={u.id}
-                                    className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/8 dark:border-white/8"
-                                  >
-                                    <span className="truncate">
-                                      {u.fileName}
-                                      {u.note ? ` · ${u.note}` : ''}
-                                    </span>
-                                    <a
-                                      href={`/api/orders/${encodeURIComponent(
-                                        selectedOrder.orderNumber
-                                      )}/client-uploads/${encodeURIComponent(u.id)}`}
-                                      download={u.fileName}
-                                      className="text-[#FF4820] hover:underline inline-flex items-center gap-1 shrink-0"
-                                    >
-                                      <span>Скачать</span>
-                                      <ExternalLink
-                                        className="w-3 h-3"
-                                        aria-hidden="true"
-                                      />
-                                    </a>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Нижняя панель: статус доставки по 3 каналам + генератор счёта-спецификации ЭДО */}
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                        <div className="space-y-1 text-xs">
-                          <p className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
-                            Маршрутизация заявки:
-                          </p>
-                          <p className="text-[#111111]/70 dark:text-[#F4F3EF]/70">
-                            CRM:{' '}
-                            <strong className="text-[#16A34A] dark:text-[#4ADE80]">
-                              Записано
-                            </strong>{' '}
-                            · Telegram:{' '}
-                            <strong className={tgPres.colorClass}>{tgPres.label}</strong> ·
-                            Webhook:{' '}
-                            <strong className={whPres.colorClass}>{whPres.label}</strong>
-                          </p>
-                        </div>
-
-                        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2.5 w-full sm:w-auto min-w-0">
-                          <button
-                            type="button"
-                            disabled={isUpdatingOrder || Boolean(selectedOrder.pdnAnonymizedAt)}
-                            data-testid="crm-anonymize-pdn-btn"
-                            onClick={() => void handleAnonymizeOrderPdn(selectedOrder)}
-                            className="w-full sm:w-auto min-h-[42px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:border-[#DC2626] hover:text-[#DC2626] disabled:opacity-50 inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap text-center"
-                          >
-                            <UserX className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                            <span>
-                              {selectedOrder.pdnAnonymizedAt
-                                ? 'ПДн обезличены (152-ФЗ)'
-                                : 'Обезличить ПДн (ст. 21 152-ФЗ)'}
-                            </span>
-                          </button>
-
-                          <button
-                            type="button"
-                            disabled={isRedelivering}
-                            data-testid="crm-redeliver-order-btn"
-                            onClick={() => void handleRedeliverOrder(selectedOrder.id)}
-                            className="w-full sm:w-auto min-h-[42px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820] inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap text-center"
-                          >
-                            <Send className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                            <span>
-                              {isRedelivering ? 'Отправка…' : 'Отправить в шлюзы'}
-                            </span>
-                          </button>
-
-                          <button
-                            type="button"
-                            data-testid="crm-open-edo-spec-btn"
-                            onClick={() => setEdoModalOrder(selectedOrder)}
-                            className="w-full sm:w-auto min-h-[42px] px-4 py-2 rounded-xl bg-[#111111] hover:bg-[#27272A] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-normal sm:whitespace-nowrap text-center"
-                          >
-                            <FileSpreadsheet
-                              className="w-3.5 h-3.5 shrink-0"
-                              aria-hidden="true"
-                            />
-                            <span>Документы A4 (КП · Договор · Счёт · Паспорт)</span>
-                          </button>
-                        </div>
-                      </div>
-                    </section>
-                  );
-                })()
-              ) : (
-                <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-8 text-center text-xs text-[#111111]/60 dark:text-[#F4F3EF]/60">
-                  Выберите заказ слева для просмотра медиаплана и управления сделкой.
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ===================================================================== */}
-      {/* ВКЛАДКА 2: КУДА ПОСТУПАЮТ ЗАКАЗЫ (АРХИТЕКТУРА ШЛЮЗОВ + ТЕСТ ДОСТАВКИ) */}
-      {/* ===================================================================== */}
-      {subView === 'channels' && (
-        <div data-testid="crm-channels-view" className="space-y-6">
-          {/* Архитектурная схема 3 контуров приёма без потери лидов */}
-          <section className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-6 space-y-4">
-            <div className="space-y-1 pb-3 border-b border-[#111111]/8 dark:border-white/8">
-              <p className="text-xs font-medium text-[#111111]/56 dark:text-[#F4F3EF]/56">
-                Архитектура гарантированного приёма заявок (Zero-Loss Outbox)
+      {viewGroup === 'ledger' && (
+        <div className="space-y-6">
+          {/* 4 реальных коммерческих B2B-показателя студии */}
+          <div
+            data-testid="b2b-kpi-grid"
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
+          >
+            <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-4 sm:p-5 space-y-1">
+              <p className="text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                Новые заявки в очереди
               </p>
-              <h2 className="text-lg font-bold text-[#111111] dark:text-[#F4F3EF]">
-                Куда поступают заказы и брони радиоэфира после нажатия кнопки клиентом
-              </h2>
+              <p
+                data-testid="crm-kpi-intake-queue"
+                className="text-2xl font-bold text-[#B82D0D] dark:text-[#FF7A5C]"
+              >
+                {b2bSummary.intakeQueueCount}
+              </p>
+              <p className="text-[11px] text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                Проверено ИНН: {b2bSummary.verifiedInnInQueueCount} ·{' '}
+                {formatRubCompact(b2bSummary.intakeQueueRub)}
+              </p>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 divide-y lg:divide-y-0 lg:divide-x divide-[#111111]/10 dark:divide-white/10 text-xs">
-              <div className="space-y-1.5">
-                <p className="font-bold text-[#16A34A] dark:text-[#4ADE80]">
-                  Контур 1 · Встроенный CRM-реестр студии (Активен всегда)
-                </p>
-                <p className="leading-relaxed text-[#111111]/75 dark:text-[#F4F3EF]/75">
-                  После криптографической проверки защиты от ботов и проверки ИНН заявка
-                  атомарно записывается на сервер в <code>studio-orders-crm.json</code> со
-                  слепком станций, тайм-слотов, хронометража и таймером 4ч. Ни одна сделка
-                  не теряется даже при сбое внешних мессенджеров.
-                </p>
-              </div>
-
-              <div className="pt-4 lg:pt-0 lg:pl-5 space-y-1.5">
-                <p className="font-bold text-[#111111] dark:text-[#F4F3EF]">
-                  Контур 2 · Оперативный Telegram-пульт продюсеров (SLA 15 мин)
-                </p>
-                <p className="leading-relaxed text-[#111111]/75 dark:text-[#F4F3EF]/75">
-                  Сервер мгновенно отправляет карточку резерва в закрытый чат сейлз-продюсеров
-                  и трафик-менеджеров через Telegram Bot API: номер брони, станции, число
-                  выходов, хронометраж ролика, контакт и голосовой бриф для блокировки сетки.
-                </p>
-              </div>
-
-              <div className="pt-4 lg:pt-0 lg:pl-5 space-y-1.5">
-                <p className="font-bold text-[#111111] dark:text-[#F4F3EF]">
-                  Контур 3 · Подписанный Webhook во внешние CRM и 1С / ЭДО
-                </p>
-                <p className="leading-relaxed text-[#111111]/75 dark:text-[#F4F3EF]/75">
-                  Параллельно сервер передаёт строгий JSON-пакет с заголовком подписи{' '}
-                  <code>X-FMWorks-Signature</code> (HMAC-SHA256) и ключом идемпотентности в
-                  amoCRM, Битрикс24, 1С или корпоративную шину данных.
-                </p>
-              </div>
+            <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-4 sm:p-5 space-y-1">
+              <p className="text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                Выставлено счетов (ЭДО)
+              </p>
+              <p
+                data-testid="crm-kpi-invoiced-rub"
+                className="text-2xl font-bold text-[#111111] dark:text-[#F4F3EF]"
+              >
+                {formatRubCompact(b2bSummary.invoicedPendingRub)}
+              </p>
+              <p className="text-[11px] text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                Счетов: {b2bSummary.invoicedPendingCount} · В Диадоке:{' '}
+                {b2bSummary.diadocDraftsCount}
+              </p>
             </div>
-          </section>
 
-          {/* Формы настройки Telegram и Webhook + предпросмотр реального пакета */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
-            {/* Настройка Telegram */}
-            <section className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-6 space-y-4 flex flex-col justify-between">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between gap-3 pb-3 border-b border-[#111111]/8 dark:border-white/8">
-                  <div>
-                    <h3 className="text-base font-bold text-[#111111] dark:text-[#F4F3EF]">
-                      Telegram-шлюз студии
-                    </h3>
-                    <p className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                      Мгновенные уведомления при изменении статуса и создании заказов
-                    </p>
-                  </div>
-                  <label className="inline-flex items-center gap-2 text-xs font-semibold cursor-pointer">
-                    <input
-                      type="checkbox"
-                      data-testid="crm-tg-enabled-checkbox"
-                      checked={tgEnabled}
-                      onChange={(e) => setTgEnabled(e.target.checked)}
-                      className="accent-[#FF4820]"
-                    />
-                    <span>Включён</span>
-                  </label>
-                </div>
+            <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-4 sm:p-5 space-y-1">
+              <p className="text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                Оплачено · в производстве
+              </p>
+              <p
+                data-testid="crm-kpi-production-rub"
+                className="text-2xl font-bold text-[#111111] dark:text-[#F4F3EF]"
+              >
+                {formatRubCompact(b2bSummary.paidInProductionRub)}
+              </p>
+              <p className="text-[11px] text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                Активных сделок: {b2bSummary.paidInProductionCount} · версий
+                выдачи: {b2bSummary.activeDeliverablesCount}
+              </p>
+            </div>
 
-                <div className="space-y-3 text-xs">
-                  <div
-                    data-testid="crm-tg-env-token-status"
-                    className="rounded-xl p-3 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 space-y-1"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
-                        Серверный ключ <code>TELEGRAM_ORDERS_BOT_TOKEN</code>
-                      </span>
-                      <span
-                        className={`font-semibold ${
-                          tgHasToken
-                            ? 'text-[#16A34A] dark:text-[#4ADE80]'
-                            : 'text-[#D97706] dark:text-[#FBBF24]'
+            <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-4 sm:p-5 space-y-1">
+              <p className="text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                Сдано актов и прав
+              </p>
+              <p
+                data-testid="crm-kpi-closed-rub"
+                className="text-2xl font-bold text-[#166534] dark:text-[#4ADE80]"
+              >
+                {formatRubCompact(b2bSummary.closedActsRub)}
+              </p>
+              <p className="text-[11px] text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                Закрыто сделок: {b2bSummary.closedActsCount} · паспортов прав:{' '}
+                {b2bSummary.rightsPassportsCount}
+              </p>
+            </div>
+          </div>
+
+          {/* Высокоплотный табличный реестр сделок и ЭДО */}
+          <section
+            aria-label="Коммерческий реестр сделок и договоров"
+            className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 overflow-hidden"
+          >
+            {/* Верхняя панель бухгалтерских срезов, поиска и экспорта */}
+            <div className="p-4 sm:p-5 border-b border-[#111111]/10 dark:border-white/10 space-y-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div
+                  role="tablist"
+                  aria-label="Бухгалтерские срезы реестра сделок"
+                  className="inline-flex flex-wrap items-center gap-1 p-1 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/8 dark:border-white/8"
+                >
+                  {(
+                    [
+                      {
+                        id: 'all',
+                        label: `Все сделки (${orders.length})`,
+                      },
+                      {
+                        id: 'intake_queue',
+                        label: `Новые заявки (${b2bSummary.intakeQueueCount})`,
+                      },
+                      {
+                        id: 'awaiting_payment',
+                        label: `Счёт выставлен (${b2bSummary.invoicedPendingCount})`,
+                      },
+                      {
+                        id: 'paid_in_work',
+                        label: `В производстве (${b2bSummary.paidInProductionCount})`,
+                      },
+                      {
+                        id: 'closed_acts',
+                        label: `Сдано / Акты (${b2bSummary.closedActsCount})`,
+                      },
+                    ] as const
+                  ).map((bucket) => {
+                    const isBucketActive = bucketFilter === bucket.id;
+                    return (
+                      <button
+                        id={`b2b-bucket-tab-${bucket.id}`}
+                        key={bucket.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={isBucketActive}
+                        aria-controls="b2b-ledger-tabpanel"
+                        tabIndex={isBucketActive ? 0 : -1}
+                        data-testid={`b2b-bucket-${bucket.id}`}
+                        onClick={() => setBucketFilter(bucket.id)}
+                        onKeyDown={(e) => handleBucketTabKeyDown(e, bucket.id)}
+                        className={`min-h-[34px] px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                          isBucketActive
+                            ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                            : 'text-[#111111]/74 dark:text-[#F4F3EF]/74 hover:text-[#111111] dark:hover:text-white'
                         }`}
                       >
-                        {tgHasToken
-                          ? tgTokenSource === 'env'
-                            ? `Подключён из окружения · ${tgMaskedToken}`
-                            : `Подключён на сервере · ${tgMaskedToken}`
-                          : 'Ожидает настройки на сервере'}
-                      </span>
-                    </div>
-                    <p className="text-[11px] leading-relaxed text-[#111111]/64 dark:text-[#F4F3EF]/64">
-                      {tgHasToken
-                        ? 'Секретный токен считывается напрямую на сервере и не передаётся в браузер. При отсутствии Chat ID сервер автоматически определит рабочий чат после отправки боту команды /start.'
-                        : 'Задайте переменную окружения TELEGRAM_ORDERS_BOT_TOKEN (и при необходимости TELEGRAM_ORDERS_CHAT_ID) на сервере — отправка включится автоматически.'}
-                    </p>
-                  </div>
-
-                  <div className="space-y-1">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <label
-                        htmlFor="tg-chat-id"
-                        className="font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75"
-                      >
-                        Chat ID рабочей группы студии:
-                      </label>
-                      <button
-                        type="button"
-                        disabled={isDetectingTgChat}
-                        data-testid="crm-detect-tg-chat-btn"
-                        onClick={() => void handleDetectTelegramChat()}
-                        className="text-[11px] font-semibold text-[#FF4820] hover:underline disabled:opacity-50 cursor-pointer"
-                      >
-                        {isDetectingTgChat
-                          ? 'Поиск чата…'
-                          : 'Определить Chat ID из бота'}
+                        {bucket.label}
                       </button>
-                    </div>
-                    <input
-                      id="tg-chat-id"
-                      data-testid="crm-tg-chat-id-input"
-                      type="text"
-                      value={tgChatId}
-                      onChange={(e) => setTgChatId(e.target.value)}
-                      placeholder="Автоопределение после /start или -1001987654321"
-                      className="w-full min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
-                    />
-                    {tgDiscoveredChatTitle && tgChatId && (
-                      <p className="text-[11px] text-[#16A34A] dark:text-[#4ADE80]">
-                        Привязанный чат: {tgDiscoveredChatTitle} · ID {tgChatId}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="flex flex-col gap-2 pt-1">
-                    <div className="flex flex-wrap items-center gap-4">
-                      <label className="inline-flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={tgNotifyNew}
-                          onChange={(e) => setTgNotifyNew(e.target.checked)}
-                          className="accent-[#FF4820]"
-                        />
-                        <span>Новый заказ</span>
-                      </label>
-                      <label className="inline-flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          data-testid="crm-tg-notify-stage-checkbox"
-                          checked={tgNotifyStage}
-                          onChange={(e) => setTgNotifyStage(e.target.checked)}
-                          className="accent-[#FF4820]"
-                        />
-                        <span>Изменение статуса заказа</span>
-                      </label>
-                    </div>
-
-                    <label className="inline-flex items-start gap-2 cursor-pointer rounded-xl p-2.5 bg-[#16A34A]/[0.08] border border-[#16A34A]/20">
-                      <input
-                        type="checkbox"
-                        data-testid="crm-tg-mask-pdn-checkbox"
-                        checked={tgMaskPdn}
-                        onChange={(e) => setTgMaskPdn(e.target.checked)}
-                        className="mt-0.5 accent-[#16A34A]"
-                      />
-                      <span className="leading-snug text-[#111111]/85 dark:text-[#F4F3EF]/85">
-                        <strong>Обезличивать ПДн в Telegram (ст. 12 152-ФЗ и ФЗ-41-ФЗ):</strong>{' '}
-                        отправлять только номер сделки, переход статуса и бюджет без телефона,
-                        e-mail, ИНН и текста брифа.
-                      </span>
-                    </label>
-                  </div>
+                    );
+                  })}
                 </div>
 
-                {samplePreviewOrder && (
-                  <div className="space-y-2 pt-2 border-t border-[#111111]/8 dark:border-white/8">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-[11px] font-semibold text-[#111111]/60 dark:text-[#F4F3EF]/60">
-                        Предпросмотр Telegram (#{samplePreviewOrder.orderNumber}):
-                      </p>
-                      <div className="inline-flex items-center gap-1 p-0.5 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10">
-                        <button
-                          type="button"
-                          data-testid="crm-tg-preview-stage-btn"
-                          onClick={() => setTgPreviewEvent('order.stage_changed')}
-                          className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
-                            tgPreviewEvent === 'order.stage_changed'
-                              ? 'bg-white dark:bg-[#1E1E24] text-[#111111] dark:text-[#F4F3EF] shadow-xs'
-                              : 'text-[#111111]/60 dark:text-[#F4F3EF]/60 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
-                          }`}
-                        >
-                          Смена статуса
-                        </button>
-                        <button
-                          type="button"
-                          data-testid="crm-tg-preview-created-btn"
-                          onClick={() => setTgPreviewEvent('order.created')}
-                          className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
-                            tgPreviewEvent === 'order.created'
-                              ? 'bg-white dark:bg-[#1E1E24] text-[#111111] dark:text-[#F4F3EF] shadow-xs'
-                              : 'text-[#111111]/60 dark:text-[#F4F3EF]/60 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
-                          }`}
-                        >
-                          Новый заказ
-                        </button>
-                      </div>
-                    </div>
-                    <pre
-                      data-testid="crm-tg-message-preview"
-                      className="p-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[11px] leading-relaxed whitespace-pre-wrap font-mono text-[#111111]/85 dark:text-[#F4F3EF]/85 max-h-48 overflow-y-auto"
-                    >
-                      {formatTelegramOrderDispatchMessage(
-                        samplePreviewOrder,
-                        tgPreviewEvent,
-                        {
-                          maskPdn: tgMaskPdn,
-                          statusChange:
-                            tgPreviewEvent === 'order.stage_changed'
-                              ? {
-                                  previousStage: 'new_hold',
-                                  nextStage:
-                                    samplePreviewOrder.stage === 'new_hold'
-                                      ? 'quota_locked'
-                                      : samplePreviewOrder.stage,
-                                  actor: 'producer_crm',
-                                  workflowStepLabel:
-                                    'Статус обновлён продюсером студии в CRM',
-                                  changedAtIso: samplePreviewOrder.updatedAt,
-                                }
-                              : undefined,
-                        }
-                      )}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            </section>
-
-            {/* Настройка Webhook CRM */}
-            <section className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-6 space-y-4 flex flex-col justify-between">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between gap-3 pb-3 border-b border-[#111111]/8 dark:border-white/8">
-                  <div>
-                    <h3 className="text-base font-bold text-[#111111] dark:text-[#F4F3EF]">
-                      Исходящий Webhook (amoCRM · Битрикс24 · 1С)
-                    </h3>
-                    <p className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                      POST JSON с подписью HMAC-SHA256 и полной таблицей станций
-                    </p>
-                  </div>
-                  <label className="inline-flex items-center gap-2 text-xs font-semibold cursor-pointer">
-                    <input
-                      type="checkbox"
-                      data-testid="crm-webhook-enabled-checkbox"
-                      checked={whEnabled}
-                      onChange={(e) => setWhEnabled(e.target.checked)}
-                      className="accent-[#FF4820]"
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    data-testid="crm-export-csv-btn"
+                    onClick={handleDownloadCsv}
+                    className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    <Download
+                      className="w-3.5 h-3.5 shrink-0"
+                      aria-hidden="true"
                     />
-                    <span>Включён</span>
+                    <span>Выгрузить реестр CSV</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="crm-refresh-btn"
+                    aria-label="Обновить реестр сделок"
+                    onClick={() => void fetchOrdersCrm(false)}
+                    disabled={isRefreshing}
+                    className="min-h-[38px] px-3 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] text-xs font-semibold text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:text-[#111111] dark:hover:text-white inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    <RefreshCw
+                      className={`w-3.5 h-3.5 shrink-0 ${
+                        isRefreshing ? 'animate-spin' : ''
+                      }`}
+                      aria-hidden="true"
+                    />
+                    <span>Обновить</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                <div className="sm:col-span-8 relative">
+                  <label htmlFor="crm-search-input" className="sr-only">
+                    Поиск по номеру сделки, ИНН, контрагенту или контакту
                   </label>
+                  <Search
+                    className="w-3.5 h-3.5 text-[#111111]/65 dark:text-[#F4F3EF]/65 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                    aria-hidden="true"
+                  />
+                  <input
+                    id="crm-search-input"
+                    data-testid="b2b-ledger-search-input"
+                    type="search"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Поиск по номеру #FM-..., счёту, ИНН, контрагенту, контакту или задаче…"
+                    className="w-full min-h-[38px] pl-9 pr-3.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 text-xs text-[#111111] dark:text-[#F4F3EF]"
+                  />
                 </div>
 
-                <div className="space-y-3 text-xs">
-                  <div className="space-y-1">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <label
-                        htmlFor="wh-endpoint-url"
-                        className="font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75"
-                      >
-                        URL приёмника внешней CRM:
-                      </label>
-                      <button
-                        type="button"
-                        data-testid="crm-bind-loopback-webhook-btn"
-                        onClick={handleBindLoopbackWebhook}
-                        className="text-[11px] font-semibold text-[#FF4820] hover:underline cursor-pointer"
-                      >
-                        Подставить локальный тест-контур
-                      </button>
-                    </div>
-                    <input
-                      id="wh-endpoint-url"
-                      data-testid="crm-webhook-url-input"
-                      type="url"
-                      value={whEndpointUrl}
-                      onChange={(e) => setWhEndpointUrl(e.target.value)}
-                      placeholder="https://crm.company.ru/webhooks/fmworks"
-                      className="w-full min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
-                    />
-                    {whEndpointUrl.trim() && (() => {
-                      const safety = evaluateWebhookEndpointRfSafety(whEndpointUrl);
-                      if (safety.warning) {
-                        return (
-                          <p
-                            className={`text-[11px] leading-snug pt-0.5 ${
-                              safety.isBannedForeignService
-                                ? 'text-[#DC2626] dark:text-[#F87171] font-semibold'
-                                : 'text-[#D97706] dark:text-[#FBBF24]'
-                            }`}
-                          >
-                            {safety.warning}
-                          </p>
-                        );
-                      }
-                      if (safety.isRfContourRecommended) {
-                        return (
-                          <p className="text-[11px] text-[#16A34A] dark:text-[#4ADE80] inline-flex items-center gap-1 pt-0.5">
-                            <ShieldCheck className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                            <span>Сервер находится в допустимом контуре РФ (ч. 5 ст. 18 152-ФЗ).</span>
-                          </p>
-                        );
-                      }
-                      return null;
-                    })()}
-                  </div>
-
-                  <div className="space-y-1">
-                    <label
-                      htmlFor="wh-hmac-secret"
-                      className="block font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75"
-                    >
-                      Секретный ключ подписи (X-FMWorks-Signature):
-                    </label>
-                    <input
-                      id="wh-hmac-secret"
-                      type="password"
-                      value={whSecretInput}
-                      onChange={(e) => setWhSecretInput(e.target.value)}
-                      placeholder="Секрет для проверки подлинности пакета"
-                      className="w-full min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
-                    />
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-4 pt-1">
-                    <label className="inline-flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={whNotifyNew}
-                        onChange={(e) => setWhNotifyNew(e.target.checked)}
-                        className="accent-[#FF4820]"
-                      />
-                      <span>Событие order.created</span>
-                    </label>
-                    <label className="inline-flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={whNotifyStage}
-                        onChange={(e) => setWhNotifyStage(e.target.checked)}
-                        className="accent-[#FF4820]"
-                      />
-                      <span>Событие order.stage_changed</span>
-                    </label>
-                  </div>
+                <div className="sm:col-span-4">
+                  <label htmlFor="b2b-stage-select" className="sr-only">
+                    Фильтр по этапу договора
+                  </label>
+                  <select
+                    id="b2b-stage-select"
+                    data-testid="b2b-stage-select"
+                    value={stageFilter}
+                    onChange={(e) =>
+                      setStageFilter(e.target.value as 'all' | CrmOrderStage)
+                    }
+                    className="w-full min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] cursor-pointer"
+                  >
+                    <option value="all">Все этапы договора (01–06)</option>
+                    {CRM_ORDER_STAGES.map((st) => {
+                      const meta = getCrmStageMetaForOrder(
+                        st.id,
+                        'production_only'
+                      );
+                      return (
+                        <option key={st.id} value={st.id}>
+                          {meta.stepCode}. {meta.shortLabel}
+                        </option>
+                      );
+                    })}
+                  </select>
                 </div>
-
-                {samplePreviewOrder && (
-                  <div className="space-y-1.5 pt-2 border-t border-[#111111]/8 dark:border-white/8">
-                    <p className="text-[11px] font-semibold text-[#111111]/60 dark:text-[#F4F3EF]/60">
-                      JSON-конверт Webhook (на примере #{samplePreviewOrder.orderNumber}):
-                    </p>
-                    <pre className="p-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[11px] leading-relaxed whitespace-pre-wrap font-mono text-[#111111]/85 dark:text-[#F4F3EF]/85 max-h-48 overflow-y-auto">
-                      {JSON.stringify(
-                        buildWebhookOrderEnvelope(
-                          samplePreviewOrder,
-                          tgPreviewEvent,
-                          samplePreviewOrder.updatedAt,
-                          tgPreviewEvent === 'order.stage_changed'
-                            ? {
-                                previousStage: 'new_hold',
-                                nextStage:
-                                  samplePreviewOrder.stage === 'new_hold'
-                                    ? 'quota_locked'
-                                    : samplePreviewOrder.stage,
-                                actor: 'producer_crm',
-                                workflowStepLabel:
-                                  'Статус обновлён продюсером студии в CRM',
-                              }
-                            : undefined
-                        ),
-                        null,
-                        2
-                      )}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            </section>
-          </div>
-
-          {/* Кнопки сохранения и живого теста доставки + журнал попыток */}
-          <section className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-6 space-y-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h3 className="text-base font-bold text-[#111111] dark:text-[#F4F3EF]">
-                  Журнал доставки внешних шлюзов
-                </h3>
-                <p className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58">
-                  Протокол последних отправок в Telegram и внешние CRM с кодом ответа и задержкой
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2.5">
-                <button
-                  type="button"
-                  disabled={isTestingDispatch}
-                  data-testid="crm-test-stage-dispatch-btn"
-                  onClick={() => void handleTestDispatchGateway('order.stage_changed')}
-                  className="min-h-[40px] px-4 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820] inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                >
-                  <Send className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                  <span>
-                    {isTestingDispatch
-                      ? 'Проверка связи…'
-                      : 'Проверить уведомление смены статуса'}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={isTestingDispatch}
-                  data-testid="crm-test-dispatch-btn"
-                  onClick={() => void handleTestDispatchGateway('dispatch.test')}
-                  className="min-h-[40px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:border-[#FF4820] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                >
-                  <span>Тест нового заказа</span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={isSavingSettings}
-                  data-testid="crm-save-dispatch-settings-btn"
-                  onClick={() => void handleSaveDispatchSettings()}
-                  className="min-h-[40px] px-4 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                  <span>
-                    {isSavingSettings ? 'Сохранение…' : 'Сохранить настройки шлюзов'}
-                  </span>
-                </button>
               </div>
             </div>
 
-            {dispatchLogs.length === 0 ? (
-              <p className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58 py-3 border-t border-[#111111]/8 dark:border-white/8">
-                Попыток внешней доставки в текущей сессии ещё не зафиксировано. Измените статус
-                любой сделки или нажмите «Проверить уведомление смены статуса» для проверки.
-              </p>
-            ) : (
-              <div className="overflow-x-auto border-t border-[#111111]/10 dark:border-white/10">
-                <table className="w-full text-xs text-left border-collapse">
-                  <thead>
-                    <tr className="text-[#111111]/56 dark:text-[#F4F3EF]/56 border-b border-[#111111]/8 dark:border-white/8">
-                      <th className="py-2 pr-3 font-semibold">Время</th>
-                      <th className="py-2 px-2 font-semibold">Заказ</th>
-                      <th className="py-2 px-2 font-semibold">Шлюз / Событие</th>
-                      <th className="py-2 px-2 font-semibold">Статус</th>
-                      <th className="py-2 pl-2 font-semibold text-right">Ответ</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#111111]/6 dark:divide-white/6">
-                    {dispatchLogs.map((log) => {
-                      const pres = getDeliveryStatePresentation(log.state);
-                      return (
-                        <tr key={log.id}>
-                          <td className="py-2 pr-3 whitespace-nowrap text-[#111111]/65 dark:text-[#F4F3EF]/65">
-                            {formatDateTimeShort(log.timestamp)}
-                          </td>
-                          <td className="py-2 px-2 font-bold whitespace-nowrap">
-                            #{log.orderNumber}
-                          </td>
-                          <td className="py-2 px-2 whitespace-nowrap">
-                            {log.channel === 'telegram' ? 'Telegram' : 'Webhook'} ·{' '}
-                            {log.event}
-                          </td>
-                          <td className={`py-2 px-2 font-semibold ${pres.colorClass}`}>
-                            {log.summary}
-                          </td>
-                          <td className="py-2 pl-2 text-right whitespace-nowrap text-[#111111]/65 dark:text-[#F4F3EF]/65">
-                            {log.httpStatus ? `HTTP ${log.httpStatus}` : '—'} ({log.latencyMs}{' '}
-                            мс)
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            {/* Табличный реестр сделок (компактные строки 44px, без статичных капсул) */}
+            <div
+              id="b2b-ledger-tabpanel"
+              role="tabpanel"
+              aria-labelledby={`b2b-bucket-tab-${bucketFilter}`}
+            >
+              {filteredEntries.length === 0 ? (
+                <div className="p-8 text-center space-y-3">
+                  <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    В выбранном бухгалтерском срезе не найдено сделок по текущему
+                    запросу.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBucketFilter('all');
+                      setStageFilter('all');
+                      setSearchQuery('');
+                    }}
+                    className="min-h-[36px] px-4 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    Сбросить фильтры реестра
+                  </button>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table
+                    data-testid="b2b-orders-ledger-table"
+                    className="w-full text-xs text-left border-collapse"
+                  >
+                    <thead>
+                      <tr className="border-b border-[#111111]/10 dark:border-white/10 bg-[#F7F6F2]/70 dark:bg-[#0D0D0F]/60 text-[11px] font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74">
+                        <th scope="col" className="py-2.5 pl-4 pr-2 whitespace-nowrap">
+                          Сделка · дата
+                        </th>
+                        <th scope="col" className="py-2.5 px-2 whitespace-nowrap">
+                          Контрагент и ИНН
+                        </th>
+                        <th scope="col" className="py-2.5 px-2 whitespace-nowrap">
+                          Тариф · слот
+                        </th>
+                        <th scope="col" className="py-2.5 px-2 text-right whitespace-nowrap">
+                          Сумма · профиль
+                        </th>
+                        <th scope="col" className="py-2.5 px-2 whitespace-nowrap">
+                          Счёт и ЭДО
+                        </th>
+                        <th scope="col" className="py-2.5 px-2 whitespace-nowrap">
+                          Этап · права
+                        </th>
+                        <th scope="col" className="py-2.5 pl-2 pr-4 text-right whitespace-nowrap">
+                          Документы
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#111111]/8 dark:divide-white/8">
+                      {filteredEntries.map(({ order, row }) => {
+                        const isSelected = selectedOrder?.id === order.id;
+                        return (
+                          <tr
+                            key={order.id}
+                            data-testid={`crm-order-row-${order.orderNumber}`}
+                            aria-selected={isSelected}
+                            onClick={() => setSelectedOrderId(order.id)}
+                            className={`transition-colors cursor-pointer ${
+                              isSelected
+                                ? 'bg-[#C83210]/[0.07] dark:bg-[#FF7A5C]/[0.13]'
+                                : 'hover:bg-[#F7F6F2]/80 dark:hover:bg-white/[0.03]'
+                            }`}
+                          >
+                            <td className="py-2.5 pl-4 pr-2 whitespace-nowrap align-middle">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedOrderId(order.id);
+                                }}
+                                className="min-h-[32px] py-0.5 text-left cursor-pointer focus-visible:outline-2 focus-visible:outline-[#C83210] rounded"
+                              >
+                                <span
+                                  className={`block font-mono font-bold ${
+                                    isSelected
+                                      ? 'text-[#B82D0D] dark:text-[#FF7A5C]'
+                                      : 'text-[#111111] dark:text-[#F4F3EF]'
+                                  }`}
+                                >
+                                  #{row.orderNumber}
+                                </span>
+                                <span className="block text-[11px] text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                                  {formatDateTimeShort(row.createdAtIso)}
+                                </span>
+                              </button>
+                            </td>
+
+                            <td className="py-2.5 px-2 align-middle max-w-[180px]">
+                              <p
+                                title={row.counterpartyTitle}
+                                className="font-semibold text-[#111111] dark:text-[#F4F3EF] truncate"
+                              >
+                                {row.counterpartyTitle}
+                              </p>
+                              <p className="text-[11px] text-[#111111]/72 dark:text-[#F4F3EF]/72 truncate">
+                                <span>{row.innDisplayLabel}</span>
+                                {row.innVerified && (
+                                  <span className="text-[#166534] dark:text-[#4ADE80] font-semibold">
+                                    {' '}
+                                    · ФНС ✓
+                                  </span>
+                                )}
+                              </p>
+                            </td>
+
+                            <td className="py-2.5 px-2 align-middle max-w-[148px]">
+                              <p
+                                title={row.formatSummary}
+                                className="font-medium text-[#111111] dark:text-[#F4F3EF] truncate"
+                              >
+                                {row.formatSummary}
+                              </p>
+                              <p className="text-[11px] text-[#111111]/72 dark:text-[#F4F3EF]/72 whitespace-nowrap">
+                                Слот {row.slotSeconds} сек
+                              </p>
+                            </td>
+
+                            <td className="py-2.5 px-2 text-right align-middle whitespace-nowrap">
+                              <p className="font-bold text-[#111111] dark:text-[#F4F3EF]">
+                                {row.isNegotiablePrice
+                                  ? 'Смета КП'
+                                  : formatRubCompact(row.effectivePayableRub)}
+                              </p>
+                              <p className="text-[11px] text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                                {row.executorEntityShort} · {row.taxShortLabel}
+                              </p>
+                            </td>
+
+                            <td className="py-2.5 px-2 align-middle max-w-[164px]">
+                              <p
+                                title={row.edoStatusLabel}
+                                className={`font-semibold truncate ${getEdoToneTextClass(
+                                  row.edoStatusTone
+                                )}`}
+                              >
+                                {row.edoStatusLabel}
+                              </p>
+                              <p className="text-[11px] text-[#111111]/72 dark:text-[#F4F3EF]/72 truncate">
+                                Счёт {row.invoiceNumber}
+                              </p>
+                            </td>
+
+                            <td className="py-2.5 px-2 align-middle max-w-[168px]">
+                              <p
+                                title={`${row.stageCode}. ${row.stageShortLabel}`}
+                                className="font-semibold text-[#111111] dark:text-[#F4F3EF] truncate"
+                              >
+                                {row.stageCode}. {row.stageShortLabel}
+                              </p>
+                              <p className="text-[11px] text-[#111111]/72 dark:text-[#F4F3EF]/72 truncate">
+                                {row.rightsStatusLabel}
+                              </p>
+                            </td>
+
+                            <td className="py-2.5 pl-2 pr-4 text-right align-middle whitespace-nowrap">
+                              <button
+                                type="button"
+                                data-testid={`ledger-open-a4-${order.orderNumber}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedOrderId(order.id);
+                                  setEdoModalOrder(order);
+                                }}
+                                className="min-h-[32px] px-2.5 py-1 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] text-[11px] font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                              >
+                                <FileSpreadsheet
+                                  className="w-3 h-3 shrink-0"
+                                  aria-hidden="true"
+                                />
+                                <span>Пакет A4</span>
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </section>
+
+          {/* Модульное договорное досье выбранной сделки (3 вкладки вместо простыни) */}
+          {selectedOrder ? (
+            <AdminB2bOrderDossier
+              order={selectedOrder}
+              legalProfiles={legalProfiles}
+              konturStatus={konturStatus}
+              soundEngineers={soundEngineers}
+              soundEngineerEmails={soundEngineerEmails}
+              isUpdatingOrder={isUpdatingOrder}
+              isCreatingDiadocDraft={isCreatingDiadocDraft}
+              isUploadingDeliverable={isUploadingDeliverable}
+              isRedelivering={isRedelivering}
+              onPatchOrder={patchOrderOnServer}
+              onOpenDocumentsModal={setEdoModalOrder}
+              onCreateDiadocDraft={handleCreateDiadocDraft}
+              onDownloadExternCsv={handleDownloadOrderKonturExternCsv}
+              onUploadDeliverableFile={handleUploadDeliverableWithMeta}
+              onRedeliverGateways={handleRedeliverOrder}
+              onAnonymizePdn={handleAnonymizeOrderPdn}
+              onOpenProductionVoiceover={onNavigateToProductionOrder}
+            />
+          ) : (
+            <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-8 text-center text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
+              Выберите сделку в реестре выше для работы с договором, счётом ЭДО и
+              нормативной проверкой хронометража.
+            </div>
+          )}
         </div>
       )}
 
       {/* ===================================================================== */}
-      {/* ВКЛАДКА 3: ЮРИДИЧЕСКИЕ И НАЛОГОВЫЕ РЕКВИЗИТЫ СТУДИИ (ИП / ООО)       */}
+      {/* КОНТУР 2: ПРОИЗВОДСТВО И ОЗВУЧКА (ЦЕХ СЦЕНАРИЕВ И ЗВУКОРЕЖИССЁРОВ)    */}
       {/* ===================================================================== */}
-      {subView === 'legal' && (() => {
-        const editedProfile =
-          editingEntityTab === 'ip' ? legalDraft.ipProfile : legalDraft.oooProfile;
+      {viewGroup === 'production' && (
+        <div data-testid="b2b-production-view" className="space-y-5">
+          <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-0.5">
+              <h2 className="text-sm font-bold text-[#111111] dark:text-[#F4F3EF]">
+                Производственный цех: сценарии, дикторы и сдача мастеров
+              </h2>
+              <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                Сделок в работе: {b2bSummary.paidInProductionCount} · Всего в
+                реестре: {orders.length} · Нарядов звукорежиссёрам:{' '}
+                {soundEngineerEmails.length}
+              </p>
+            </div>
 
-        return (
-          <div data-testid="crm-legal-profiles-view" className="space-y-6">
-            <section className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-6 space-y-5">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#111111]/10 dark:border-white/10">
-                <div className="space-y-1">
-                  <p className="text-xs font-medium text-[#111111]/56 dark:text-[#F4F3EF]/56">
-                    Брендированные документы A4 (КП · Договор г. Тверь · Счёт · Паспорт РАО/ВОИС)
+            <button
+              type="button"
+              onClick={() => void fetchOrdersCrm(false)}
+              disabled={isRefreshing}
+              className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 shrink-0 ${
+                  isRefreshing ? 'animate-spin' : ''
+                }`}
+                aria-hidden="true"
+              />
+              <span>Обновить цех</span>
+            </button>
+          </div>
+
+          <AdminProductionKanbanView
+            orders={orders}
+            soundEngineers={soundEngineers}
+            soundEngineerEmails={soundEngineerEmails}
+            selectedOrderId={selectedOrderId}
+            onSelectOrderId={setSelectedOrderId}
+            onOrderUpdated={(updated) =>
+              setOrders((prev) =>
+                prev.map((o) => (o.id === updated.id ? updated : o))
+              )
+            }
+            onSoundEngineersUpdated={setSoundEngineers}
+            onSoundEngineerEmailsUpdated={setSoundEngineerEmails}
+            onFeedback={setFeedbackBanner}
+          />
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* КОНТУР 3: РЕКВИЗИТЫ ИП/ООО, ШЛЮЗЫ И БЕЗОПАСНОСТЬ ЗАЯВОК               */}
+      {/* ===================================================================== */}
+      {viewGroup === 'settings' && (
+        <div data-testid="b2b-settings-view" className="space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#111111]/10 dark:border-white/10 pb-3">
+            <div
+              role="tablist"
+              aria-label="Юридические реквизиты, шлюзы и защита форм"
+              className="inline-flex flex-wrap items-center gap-1 p-1 rounded-xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10"
+            >
+              <button
+                id="crm-subtab-btn-legal"
+                type="button"
+                role="tab"
+                aria-selected={settingsTab === 'legal'}
+                aria-controls="crm-settings-tabpanel-legal"
+                tabIndex={settingsTab === 'legal' ? 0 : -1}
+                data-testid="crm-subtab-legal"
+                onClick={() => setSettingsTab('legal')}
+                onKeyDown={(e) => handleSettingsTabKeyDown(e, 'legal')}
+                className={`min-h-[38px] px-4 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  settingsTab === 'legal'
+                    ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                    : 'text-[#111111]/74 dark:text-[#F4F3EF]/74 hover:text-[#111111] dark:hover:text-white'
+                }`}
+              >
+                <Building2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>Реквизиты ИП / ООО и налоги</span>
+              </button>
+
+              <button
+                id="crm-subtab-btn-channels"
+                type="button"
+                role="tab"
+                aria-selected={settingsTab === 'channels'}
+                aria-controls="crm-settings-tabpanel-channels"
+                tabIndex={settingsTab === 'channels' ? 0 : -1}
+                data-testid="crm-subtab-channels"
+                onClick={() => setSettingsTab('channels')}
+                onKeyDown={(e) => handleSettingsTabKeyDown(e, 'channels')}
+                className={`min-h-[38px] px-4 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  settingsTab === 'channels'
+                    ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                    : 'text-[#111111]/74 dark:text-[#F4F3EF]/74 hover:text-[#111111] dark:hover:text-white'
+                }`}
+              >
+                <Webhook className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>Шлюзы Telegram и Webhook</span>
+              </button>
+
+              <button
+                id="crm-subtab-btn-security"
+                type="button"
+                role="tab"
+                aria-selected={settingsTab === 'security'}
+                aria-controls="crm-settings-tabpanel-security"
+                tabIndex={settingsTab === 'security' ? 0 : -1}
+                data-testid="crm-subtab-security"
+                onClick={() => setSettingsTab('security')}
+                onKeyDown={(e) => handleSettingsTabKeyDown(e, 'security')}
+                className={`min-h-[38px] px-4 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  settingsTab === 'security'
+                    ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                    : 'text-[#111111]/74 dark:text-[#F4F3EF]/74 hover:text-[#111111] dark:hover:text-white'
+                }`}
+              >
+                <ShieldCheck
+                  className="w-3.5 h-3.5 shrink-0"
+                  aria-hidden="true"
+                />
+                <span>Антиспам и карантин заявок</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 3.1 Юридические и налоговые реквизиты студии (ИП / ООО, г. Тверь) */}
+          {settingsTab === 'legal' &&
+            (() => {
+              const editedProfile =
+                editingEntityTab === 'ip'
+                  ? legalDraft.ipProfile
+                  : legalDraft.oooProfile;
+
+              return (
+                <div
+                  id="crm-settings-tabpanel-legal"
+                  role="tabpanel"
+                  aria-labelledby="crm-subtab-btn-legal"
+                  data-testid="crm-legal-profiles-view"
+                  className="space-y-6"
+                >
+                  <section className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-6 space-y-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#111111]/10 dark:border-white/10">
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                          Брендированные документы A4 (КП · Договор г. Тверь ·
+                          Счёт · Паспорт РАО/ВОИС)
+                        </p>
+                        <h2 className="text-lg font-bold text-[#111111] dark:text-[#F4F3EF]">
+                          Профиль исполнителя (ИП / ООО) и налоговый режим (УСН /
+                          НДС)
+                        </h2>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={isSavingLegal}
+                        data-testid="crm-save-legal-profiles-btn"
+                        onClick={() => void handleSaveLegalProfiles()}
+                        className="w-full sm:w-auto min-h-[42px] px-5 py-2 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] disabled:opacity-55 text-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                      >
+                        <CheckCircle2
+                          className="w-4 h-4 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span>
+                          {isSavingLegal
+                            ? 'Сохранение…'
+                            : 'Сохранить реквизиты студии'}
+                        </span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      <div className="rounded-xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 space-y-2.5">
+                        <p className="text-xs font-bold text-[#111111] dark:text-[#F4F3EF]">
+                          Активное юрлицо по умолчанию для новых счетов:
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            data-testid="crm-legal-active-ip"
+                            onClick={() => {
+                              setLegalDraft((prev) => ({
+                                ...prev,
+                                activeEntityKind: 'ip',
+                              }));
+                              setEditingEntityTab('ip');
+                            }}
+                            className={`min-h-[42px] px-3.5 py-2 rounded-xl border text-xs font-semibold text-left transition-colors cursor-pointer whitespace-nowrap ${
+                              legalDraft.activeEntityKind === 'ip'
+                                ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                                : 'bg-white dark:bg-[#141418] border-[#111111]/14 dark:border-white/14'
+                            }`}
+                          >
+                            ИП (без КПП · УСН / НДС)
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="crm-legal-active-ooo"
+                            onClick={() => {
+                              setLegalDraft((prev) => ({
+                                ...prev,
+                                activeEntityKind: 'ooo',
+                              }));
+                              setEditingEntityTab('ooo');
+                            }}
+                            className={`min-h-[42px] px-3.5 py-2 rounded-xl border text-xs font-semibold text-left transition-colors cursor-pointer whitespace-nowrap ${
+                              legalDraft.activeEntityKind === 'ooo'
+                                ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                                : 'bg-white dark:bg-[#141418] border-[#111111]/14 dark:border-white/14'
+                            }`}
+                          >
+                            ООО (с КПП · УСН / ОСНО)
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 space-y-2.5">
+                        <p className="text-xs font-bold text-[#111111] dark:text-[#F4F3EF]">
+                          Редактируемая карточка реквизитов:
+                        </p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            data-testid="crm-legal-edit-tab-ip"
+                            onClick={() => setEditingEntityTab('ip')}
+                            className={`min-h-[42px] px-3 py-2 rounded-xl border text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${
+                              editingEntityTab === 'ip'
+                                ? 'border-[#C83210] bg-[#C83210]/10 text-[#B82D0D] dark:text-[#FF7A5C]'
+                                : 'border-[#111111]/14 dark:border-white/14'
+                            }`}
+                          >
+                            Карточка ИП
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="crm-legal-edit-tab-ooo"
+                            onClick={() => setEditingEntityTab('ooo')}
+                            className={`min-h-[42px] px-3 py-2 rounded-xl border text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${
+                              editingEntityTab === 'ooo'
+                                ? 'border-[#C83210] bg-[#C83210]/10 text-[#B82D0D] dark:text-[#FF7A5C]'
+                                : 'border-[#111111]/14 dark:border-white/14'
+                            }`}
+                          >
+                            Карточка ООО
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+                      <div className="md:col-span-2 space-y-1">
+                        <label
+                          htmlFor="crm-legal-name"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Полное юридическое наименование
+                        </label>
+                        <input
+                          id="crm-legal-name"
+                          type="text"
+                          value={editedProfile.legalName}
+                          onChange={(e) =>
+                            updateEditingProfileField('legalName', e.target.value)
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-tax-select"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Налоговый режим и ставка НДС
+                        </label>
+                        <select
+                          id="crm-legal-tax-select"
+                          data-testid="crm-legal-tax-select"
+                          value={editedProfile.taxRegime}
+                          onChange={(e) =>
+                            updateEditingProfileField(
+                              'taxRegime',
+                              e.target.value as StudioTaxRegimeId
+                            )
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 font-semibold"
+                        >
+                          {TAX_REGIME_OPTIONS.map((opt) => (
+                            <option key={opt.id} value={opt.id}>
+                              {opt.shortLabel}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-vat-mode"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Порядок расчёта НДС в прайсе
+                        </label>
+                        <select
+                          id="crm-legal-vat-mode"
+                          value={editedProfile.vatMode}
+                          onChange={(e) =>
+                            updateEditingProfileField(
+                              'vatMode',
+                              e.target.value as StudioVatCalculationMode
+                            )
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 font-semibold"
+                        >
+                          <option value="included">
+                            НДС включён в сумму заказа
+                          </option>
+                          <option value="on_top">
+                            НДС начисляется сверху суммы заказа
+                          </option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-inn"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          ИНН
+                        </label>
+                        <input
+                          id="crm-legal-inn"
+                          type="text"
+                          value={editedProfile.inn}
+                          onChange={(e) =>
+                            updateEditingProfileField('inn', e.target.value)
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-kpp"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          {editingEntityTab === 'ip'
+                            ? 'КПП (у ИП отсутствует)'
+                            : 'КПП (9 цифр)'}
+                        </label>
+                        <input
+                          id="crm-legal-kpp"
+                          type="text"
+                          disabled={editingEntityTab === 'ip'}
+                          value={editingEntityTab === 'ip' ? '' : editedProfile.kpp}
+                          placeholder={
+                            editingEntityTab === 'ip'
+                              ? 'Не применяется для ИП'
+                              : '695001001'
+                          }
+                          onChange={(e) =>
+                            updateEditingProfileField('kpp', e.target.value)
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 disabled:opacity-55"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-ogrn"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          {editingEntityTab === 'ip' ? 'ОГРНИП' : 'ОГРН'}
+                        </label>
+                        <input
+                          id="crm-legal-ogrn"
+                          type="text"
+                          value={editedProfile.ogrnOrOgrnip}
+                          onChange={(e) =>
+                            updateEditingProfileField(
+                              'ogrnOrOgrnip',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-city"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Город (место заключения договора)
+                        </label>
+                        <input
+                          id="crm-legal-city"
+                          type="text"
+                          value={editedProfile.city}
+                          onChange={(e) =>
+                            updateEditingProfileField('city', e.target.value)
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-phone"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Телефон студии
+                        </label>
+                        <input
+                          id="crm-legal-phone"
+                          type="text"
+                          value={editedProfile.phone}
+                          onChange={(e) =>
+                            updateEditingProfileField('phone', e.target.value)
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2 lg:col-span-3 space-y-1">
+                        <label
+                          htmlFor="crm-legal-address"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Юридический адрес
+                        </label>
+                        <input
+                          id="crm-legal-address"
+                          type="text"
+                          value={editedProfile.legalAddress}
+                          onChange={(e) =>
+                            updateEditingProfileField(
+                              'legalAddress',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-bank"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Банк получателя
+                        </label>
+                        <input
+                          id="crm-legal-bank"
+                          type="text"
+                          value={editedProfile.bankName}
+                          onChange={(e) =>
+                            updateEditingProfileField('bankName', e.target.value)
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-bik"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          БИК
+                        </label>
+                        <input
+                          id="crm-legal-bik"
+                          type="text"
+                          value={editedProfile.bik}
+                          onChange={(e) =>
+                            updateEditingProfileField('bik', e.target.value)
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-checking"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Расчётный счёт (20 цифр)
+                        </label>
+                        <input
+                          id="crm-legal-checking"
+                          type="text"
+                          value={editedProfile.checkingAccount}
+                          onChange={(e) =>
+                            updateEditingProfileField(
+                              'checkingAccount',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-correspondent"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Корреспондентский счёт
+                        </label>
+                        <input
+                          id="crm-legal-correspondent"
+                          type="text"
+                          value={editedProfile.correspondentAccount}
+                          onChange={(e) =>
+                            updateEditingProfileField(
+                              'correspondentAccount',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-signatory"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Подписант (И. О. Фамилия)
+                        </label>
+                        <input
+                          id="crm-legal-signatory"
+                          type="text"
+                          value={editedProfile.signatoryShortName}
+                          onChange={(e) =>
+                            updateEditingProfileField(
+                              'signatoryShortName',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-edo-box"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          BoxId в Контур.Диадоке (Учёт в Контур.Экстерне)
+                        </label>
+                        <input
+                          id="crm-legal-edo-box"
+                          type="text"
+                          value={editedProfile.edoParticipantId}
+                          onChange={(e) =>
+                            updateEditingProfileField(
+                              'edoParticipantId',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              );
+            })()}
+
+          {/* 3.2 Шлюзы Telegram и Webhook */}
+          {settingsTab === 'channels' && (
+            <div
+              id="crm-settings-tabpanel-channels"
+              role="tabpanel"
+              aria-labelledby="crm-subtab-btn-channels"
+              data-testid="crm-channels-view"
+              className="space-y-6"
+            >
+              <section className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-6 space-y-4">
+                <div className="space-y-1 pb-3 border-b border-[#111111]/8 dark:border-white/8">
+                  <p className="text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    Архитектура гарантированного приёма заявок (Zero-Loss Outbox)
                   </p>
                   <h2 className="text-lg font-bold text-[#111111] dark:text-[#F4F3EF]">
-                    Переключаемый профиль исполнителя (ИП / ООО) и налоговый режим (УСН / НДС)
+                    Куда поступают коммерческие заявки и уведомления о смене
+                    этапа сделки
                   </h2>
                 </div>
 
-                <button
-                  type="button"
-                  disabled={isSavingLegal}
-                  data-testid="crm-save-legal-profiles-btn"
-                  onClick={() => void handleSaveLegalProfiles()}
-                  className="w-full sm:w-auto min-h-[44px] px-5 py-2.5 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] disabled:opacity-55 text-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer"
-                >
-                  <CheckCircle2 className="w-4 h-4 shrink-0" aria-hidden="true" />
-                  <span>
-                    {isSavingLegal ? 'Сохранение…' : 'Сохранить реквизиты студии'}
-                  </span>
-                </button>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 divide-y lg:divide-y-0 lg:divide-x divide-[#111111]/10 dark:divide-white/10 text-xs">
+                  <div className="space-y-1.5">
+                    <p className="font-bold text-[#166534] dark:text-[#4ADE80]">
+                      Контур 1 · Встроенный B2B-реестр студии (Активен всегда)
+                    </p>
+                    <p className="leading-relaxed text-[#111111]/76 dark:text-[#F4F3EF]/76">
+                      После криптографической фильтрации ботов и проверки ИНН
+                      заявка атомарно сохраняется на сервере со слепком тарифа,
+                      хронометража и реквизитов. Ни одна сделка не теряется даже
+                      при недоступности внешних мессенджеров.
+                    </p>
+                  </div>
+
+                  <div className="pt-4 lg:pt-0 lg:pl-5 space-y-1.5">
+                    <p className="font-bold text-[#111111] dark:text-[#F4F3EF]">
+                      Контур 2 · Оперативный Telegram-пульт продюсеров (SLA 15
+                      мин)
+                    </p>
+                    <p className="leading-relaxed text-[#111111]/76 dark:text-[#F4F3EF]/76">
+                      Сервер мгновенно отправляет карточку нового заказа и
+                      переходы этапов в закрытый чат продюсеров через Telegram
+                      Bot API с использованием ключа окружения{' '}
+                      <code>TELEGRAM_ORDERS_BOT_TOKEN</code>.
+                    </p>
+                  </div>
+
+                  <div className="pt-4 lg:pt-0 lg:pl-5 space-y-1.5">
+                    <p className="font-bold text-[#111111] dark:text-[#F4F3EF]">
+                      Контур 3 · Подписанный Webhook во внешние CRM и 1С / ЭДО
+                    </p>
+                    <p className="leading-relaxed text-[#111111]/76 dark:text-[#F4F3EF]/76">
+                      Параллельно сервер передаёт строгий JSON-пакет с заголовком
+                      подписи <code>X-FMWorks-Signature</code> (HMAC-SHA256) в
+                      amoCRM, Битрикс24, 1С или корпоративную учётную систему.
+                    </p>
+                  </div>
+                </div>
+              </section>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+                {/* Настройка Telegram */}
+                <section className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-6 space-y-4 flex flex-col justify-between">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between gap-3 pb-3 border-b border-[#111111]/8 dark:border-white/8">
+                      <div>
+                        <h3 className="text-base font-bold text-[#111111] dark:text-[#F4F3EF]">
+                          Telegram-шлюз студии
+                        </h3>
+                        <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                          Мгновенные уведомления при изменении статуса и
+                          создании сделок
+                        </p>
+                      </div>
+                      <label className="min-h-[32px] inline-flex items-center gap-2.5 text-xs font-semibold cursor-pointer">
+                        <input
+                          type="checkbox"
+                          data-testid="crm-tg-enabled-checkbox"
+                          checked={tgEnabled}
+                          onChange={(e) => setTgEnabled(e.target.checked)}
+                          className="w-6 h-6 shrink-0 accent-[#C83210] cursor-pointer"
+                        />
+                        <span>Включён</span>
+                      </label>
+                    </div>
+
+                    <div className="space-y-3 text-xs">
+                      <div
+                        data-testid="crm-tg-env-token-status"
+                        className="rounded-xl p-3 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 space-y-1"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
+                            Серверный ключ <code>TELEGRAM_ORDERS_BOT_TOKEN</code>
+                          </span>
+                          <span
+                            className={`font-semibold ${
+                              tgHasToken
+                                ? 'text-[#166534] dark:text-[#4ADE80]'
+                                : 'text-[#92400E] dark:text-[#FBBF24]'
+                            }`}
+                          >
+                            {tgHasToken
+                              ? tgTokenSource === 'env'
+                                ? `Подключён из окружения · ${tgMaskedToken}`
+                                : `Подключён на сервере · ${tgMaskedToken}`
+                              : 'Ожидает настройки на сервере'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] leading-relaxed text-[#111111]/74 dark:text-[#F4F3EF]/74">
+                          {tgHasToken
+                            ? 'Секретный токен считывается напрямую на сервере и не передаётся в браузер. При отсутствии Chat ID сервер определит рабочий чат после команды /start.'
+                            : 'Задайте переменную окружения TELEGRAM_ORDERS_BOT_TOKEN на сервере — отправка включится автоматически.'}
+                        </p>
+                      </div>
+
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <label
+                            htmlFor="tg-chat-id"
+                            className="font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78"
+                          >
+                            Chat ID рабочей группы студии:
+                          </label>
+                          <button
+                            type="button"
+                            disabled={isDetectingTgChat}
+                            data-testid="crm-detect-tg-chat-btn"
+                            onClick={() => void handleDetectTelegramChat()}
+                            className="min-h-[28px] px-2 py-1 rounded-md text-[11px] font-semibold text-[#B82D0D] dark:text-[#FF7A5C] hover:underline disabled:opacity-50 cursor-pointer"
+                          >
+                            {isDetectingTgChat
+                              ? 'Поиск чата…'
+                              : 'Определить Chat ID из бота'}
+                          </button>
+                        </div>
+                        <input
+                          id="tg-chat-id"
+                          data-testid="crm-tg-chat-id-input"
+                          type="text"
+                          value={tgChatId}
+                          onChange={(e) => setTgChatId(e.target.value)}
+                          placeholder="Автоопределение после /start или -1001987654321"
+                          className="w-full min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                        />
+                        {tgDiscoveredChatTitle && tgChatId && (
+                          <p className="text-[11px] text-[#166534] dark:text-[#4ADE80]">
+                            Привязанный чат: {tgDiscoveredChatTitle} · ID{' '}
+                            {tgChatId}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col gap-2 pt-1">
+                        <div className="flex flex-wrap items-center gap-4">
+                          <label className="min-h-[32px] inline-flex items-center gap-2.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={tgNotifyNew}
+                              onChange={(e) => setTgNotifyNew(e.target.checked)}
+                              className="w-6 h-6 shrink-0 accent-[#C83210] cursor-pointer"
+                            />
+                            <span>Новый заказ</span>
+                          </label>
+                          <label className="min-h-[32px] inline-flex items-center gap-2.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              data-testid="crm-tg-notify-stage-checkbox"
+                              checked={tgNotifyStage}
+                              onChange={(e) =>
+                                setTgNotifyStage(e.target.checked)
+                              }
+                              className="w-6 h-6 shrink-0 accent-[#C83210] cursor-pointer"
+                            />
+                            <span>Изменение статуса сделки</span>
+                          </label>
+                        </div>
+
+                        <label className="min-h-[40px] inline-flex items-start gap-2.5 cursor-pointer rounded-xl p-2.5 bg-[#166534]/[0.08] border border-[#166534]/20">
+                          <input
+                            type="checkbox"
+                            data-testid="crm-tg-mask-pdn-checkbox"
+                            checked={tgMaskPdn}
+                            onChange={(e) => setTgMaskPdn(e.target.checked)}
+                            className="mt-0.5 w-6 h-6 shrink-0 accent-[#166534] cursor-pointer"
+                          />
+                          <span className="leading-snug text-[#111111]/88 dark:text-[#F4F3EF]/88">
+                            <strong>
+                              Обезличивать ПДн в Telegram (ст. 12 152-ФЗ):
+                            </strong>{' '}
+                            отправлять только номер сделки, переход статуса и
+                            сумму договора без телефона, e-mail и ИНН.
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {samplePreviewOrder && (
+                      <div className="space-y-2 pt-2 border-t border-[#111111]/8 dark:border-white/8">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-[11px] font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                            Предпросмотр Telegram (#
+                            {samplePreviewOrder.orderNumber}):
+                          </p>
+                          <div className="inline-flex items-center gap-1 p-0.5 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10">
+                            <button
+                              type="button"
+                              data-testid="crm-tg-preview-stage-btn"
+                              onClick={() =>
+                                setTgPreviewEvent('order.stage_changed')
+                              }
+                              className={`min-h-[28px] px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                                tgPreviewEvent === 'order.stage_changed'
+                                  ? 'bg-white dark:bg-[#1E1E24] text-[#111111] dark:text-[#F4F3EF]'
+                                  : 'text-[#111111]/74 dark:text-[#F4F3EF]/74 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
+                              }`}
+                            >
+                              Смена статуса
+                            </button>
+                            <button
+                              type="button"
+                              data-testid="crm-tg-preview-created-btn"
+                              onClick={() => setTgPreviewEvent('order.created')}
+                              className={`min-h-[28px] px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                                tgPreviewEvent === 'order.created'
+                                  ? 'bg-white dark:bg-[#1E1E24] text-[#111111] dark:text-[#F4F3EF]'
+                                  : 'text-[#111111]/74 dark:text-[#F4F3EF]/74 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
+                              }`}
+                            >
+                              Новый заказ
+                            </button>
+                          </div>
+                        </div>
+                        <pre
+                          data-testid="crm-tg-message-preview"
+                          className="p-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[11px] leading-relaxed whitespace-pre-wrap font-mono text-[#111111]/85 dark:text-[#F4F3EF]/85 max-h-48 overflow-y-auto"
+                        >
+                          {formatTelegramOrderDispatchMessage(
+                            samplePreviewOrder,
+                            tgPreviewEvent,
+                            {
+                              maskPdn: tgMaskPdn,
+                              statusChange:
+                                tgPreviewEvent === 'order.stage_changed'
+                                  ? {
+                                      previousStage: 'new_hold',
+                                      nextStage:
+                                        samplePreviewOrder.stage === 'new_hold'
+                                          ? 'quota_locked'
+                                          : samplePreviewOrder.stage,
+                                      actor: 'producer_crm',
+                                      workflowStepLabel:
+                                        'Статус обновлён продюсером студии в реестре',
+                                      changedAtIso:
+                                        samplePreviewOrder.updatedAt,
+                                    }
+                                  : undefined,
+                            }
+                          )}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                {/* Настройка Webhook CRM */}
+                <section className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-6 space-y-4 flex flex-col justify-between">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between gap-3 pb-3 border-b border-[#111111]/8 dark:border-white/8">
+                      <div>
+                        <h3 className="text-base font-bold text-[#111111] dark:text-[#F4F3EF]">
+                          Исходящий Webhook (amoCRM · Битрикс24 · 1С)
+                        </h3>
+                        <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                          POST JSON с подписью HMAC-SHA256 и реквизитами сделки
+                        </p>
+                      </div>
+                      <label className="min-h-[32px] inline-flex items-center gap-2.5 text-xs font-semibold cursor-pointer">
+                        <input
+                          type="checkbox"
+                          data-testid="crm-webhook-enabled-checkbox"
+                          checked={whEnabled}
+                          onChange={(e) => setWhEnabled(e.target.checked)}
+                          className="w-6 h-6 shrink-0 accent-[#C83210] cursor-pointer"
+                        />
+                        <span>Включён</span>
+                      </label>
+                    </div>
+
+                    <div className="space-y-3 text-xs">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <label
+                            htmlFor="wh-endpoint-url"
+                            className="font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78"
+                          >
+                            URL приёмника внешней CRM:
+                          </label>
+                          <button
+                            type="button"
+                            data-testid="crm-bind-loopback-webhook-btn"
+                            onClick={handleBindLoopbackWebhook}
+                            className="min-h-[28px] px-2 py-1 rounded-md text-[11px] font-semibold text-[#B82D0D] dark:text-[#FF7A5C] hover:underline cursor-pointer"
+                          >
+                            Подставить локальный тест-контур
+                          </button>
+                        </div>
+                        <input
+                          id="wh-endpoint-url"
+                          data-testid="crm-webhook-url-input"
+                          type="url"
+                          value={whEndpointUrl}
+                          onChange={(e) => setWhEndpointUrl(e.target.value)}
+                          placeholder="https://crm.company.ru/webhooks/fmworks"
+                          className="w-full min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                        />
+                        {whEndpointUrl.trim() &&
+                          (() => {
+                            const safety =
+                              evaluateWebhookEndpointRfSafety(whEndpointUrl);
+                            if (safety.warning) {
+                              return (
+                                <p
+                                  className={`text-[11px] leading-snug pt-0.5 ${
+                                    safety.isBannedForeignService
+                                      ? 'text-[#B91C1C] dark:text-[#F87171] font-semibold'
+                                      : 'text-[#92400E] dark:text-[#FBBF24]'
+                                  }`}
+                                >
+                                  {safety.warning}
+                                </p>
+                              );
+                            }
+                            if (safety.isRfContourRecommended) {
+                              return (
+                                <p className="text-[11px] text-[#166534] dark:text-[#4ADE80] inline-flex items-center gap-1 pt-0.5">
+                                  <ShieldCheck
+                                    className="w-3.5 h-3.5 shrink-0"
+                                    aria-hidden="true"
+                                  />
+                                  <span>
+                                    Сервер находится в допустимом контуре РФ
+                                    (ч. 5 ст. 18 152-ФЗ).
+                                  </span>
+                                </p>
+                              );
+                            }
+                            return null;
+                          })()}
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="wh-hmac-secret"
+                          className="block font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78"
+                        >
+                          Секретный ключ подписи (X-FMWorks-Signature):
+                        </label>
+                        <input
+                          id="wh-hmac-secret"
+                          type="password"
+                          value={whSecretInput}
+                          onChange={(e) => setWhSecretInput(e.target.value)}
+                          placeholder="Секрет для проверки подлинности пакета"
+                          className="w-full min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-4 pt-1">
+                        <label className="min-h-[32px] inline-flex items-center gap-2.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={whNotifyNew}
+                            onChange={(e) => setWhNotifyNew(e.target.checked)}
+                            className="w-6 h-6 shrink-0 accent-[#C83210] cursor-pointer"
+                          />
+                          <span>Событие order.created</span>
+                        </label>
+                        <label className="min-h-[32px] inline-flex items-center gap-2.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={whNotifyStage}
+                            onChange={(e) => setWhNotifyStage(e.target.checked)}
+                            className="w-6 h-6 shrink-0 accent-[#C83210] cursor-pointer"
+                          />
+                          <span>Событие order.stage_changed</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {samplePreviewOrder && (
+                      <div className="space-y-1.5 pt-2 border-t border-[#111111]/8 dark:border-white/8">
+                        <p className="text-[11px] font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                          JSON-конверт Webhook (#{samplePreviewOrder.orderNumber}
+                          ):
+                        </p>
+                        <pre className="p-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[11px] leading-relaxed whitespace-pre-wrap font-mono text-[#111111]/85 dark:text-[#F4F3EF]/85 max-h-48 overflow-y-auto">
+                          {JSON.stringify(
+                            buildWebhookOrderEnvelope(
+                              samplePreviewOrder,
+                              tgPreviewEvent,
+                              samplePreviewOrder.updatedAt,
+                              tgPreviewEvent === 'order.stage_changed'
+                                ? {
+                                    previousStage: 'new_hold',
+                                    nextStage:
+                                      samplePreviewOrder.stage === 'new_hold'
+                                        ? 'quota_locked'
+                                        : samplePreviewOrder.stage,
+                                    actor: 'producer_crm',
+                                    workflowStepLabel:
+                                      'Статус обновлён продюсером студии в реестре',
+                                  }
+                                : undefined
+                            ),
+                            null,
+                            2
+                          )}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                </section>
               </div>
 
-              {/* Основной профиль по умолчанию для новых счетов и договоров */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="rounded-xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 space-y-2.5">
-                  <p className="text-xs font-bold text-[#111111] dark:text-[#F4F3EF]">
-                    Активное юрлицо по умолчанию для новых заказов:
-                  </p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <section className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-6 space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-bold text-[#111111] dark:text-[#F4F3EF]">
+                      Журнал доставки внешних шлюзов
+                    </h3>
+                    <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                      Протокол последних отправок в Telegram и внешние CRM с
+                      кодом ответа и задержкой
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2.5">
                     <button
                       type="button"
-                      data-testid="crm-legal-active-ip"
-                      onClick={() => {
-                        setLegalDraft((prev) => ({ ...prev, activeEntityKind: 'ip' }));
-                        setEditingEntityTab('ip');
-                      }}
-                      className={`min-h-[44px] px-3.5 py-2 rounded-xl border text-xs font-semibold text-left transition-colors cursor-pointer ${
-                        legalDraft.activeEntityKind === 'ip'
-                          ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                          : 'bg-white dark:bg-[#141418] border-[#111111]/14 dark:border-white/14'
-                      }`}
+                      disabled={isTestingDispatch}
+                      data-testid="crm-test-stage-dispatch-btn"
+                      onClick={() =>
+                        void handleTestDispatchGateway('order.stage_changed')
+                      }
+                      className="min-h-[40px] px-4 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#C83210] inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
                     >
-                      ИП (без КПП · УСН / НДС)
+                      <Send className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                      <span>
+                        {isTestingDispatch
+                          ? 'Проверка связи…'
+                          : 'Проверить уведомление смены статуса'}
+                      </span>
                     </button>
+
                     <button
                       type="button"
-                      data-testid="crm-legal-active-ooo"
-                      onClick={() => {
-                        setLegalDraft((prev) => ({ ...prev, activeEntityKind: 'ooo' }));
-                        setEditingEntityTab('ooo');
-                      }}
-                      className={`min-h-[44px] px-3.5 py-2 rounded-xl border text-xs font-semibold text-left transition-colors cursor-pointer ${
-                        legalDraft.activeEntityKind === 'ooo'
-                          ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                          : 'bg-white dark:bg-[#141418] border-[#111111]/14 dark:border-white/14'
-                      }`}
+                      disabled={isTestingDispatch}
+                      data-testid="crm-test-dispatch-btn"
+                      onClick={() =>
+                        void handleTestDispatchGateway('dispatch.test')
+                      }
+                      className="min-h-[40px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:border-[#C83210] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
                     >
-                      ООО (с КПП · УСН / ОСНО)
+                      <span>Тест нового заказа</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isSavingSettings}
+                      data-testid="crm-save-dispatch-settings-btn"
+                      onClick={() => void handleSaveDispatchSettings()}
+                      className="min-h-[40px] px-4 py-2 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                    >
+                      <CheckCircle2
+                        className="w-3.5 h-3.5 shrink-0"
+                        aria-hidden="true"
+                      />
+                      <span>
+                        {isSavingSettings
+                          ? 'Сохранение…'
+                          : 'Сохранить настройки шлюзов'}
+                      </span>
                     </button>
                   </div>
                 </div>
 
-                <div className="rounded-xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 space-y-2.5">
-                  <p className="text-xs font-bold text-[#111111] dark:text-[#F4F3EF]">
-                    Редактируемая карточка реквизитов:
+                {dispatchLogs.length === 0 ? (
+                  <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72 py-3 border-t border-[#111111]/8 dark:border-white/8">
+                    Попыток внешней доставки в текущей сессии ещё не
+                    зафиксировано. Измените статус любой сделки или запустите
+                    контрольную проверку.
                   </p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      data-testid="crm-legal-edit-tab-ip"
-                      onClick={() => setEditingEntityTab('ip')}
-                      className={`min-h-[44px] px-3 py-2 rounded-xl border text-xs font-semibold cursor-pointer transition-colors ${
-                        editingEntityTab === 'ip'
-                          ? 'border-[#FF4820] bg-[#FF4820]/10 text-[#FF4820]'
-                          : 'border-[#111111]/14 dark:border-white/14'
-                      }`}
-                    >
-                      Карточка ИП
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="crm-legal-edit-tab-ooo"
-                      onClick={() => setEditingEntityTab('ooo')}
-                      className={`min-h-[44px] px-3 py-2 rounded-xl border text-xs font-semibold cursor-pointer transition-colors ${
-                        editingEntityTab === 'ooo'
-                          ? 'border-[#FF4820] bg-[#FF4820]/10 text-[#FF4820]'
-                          : 'border-[#111111]/14 dark:border-white/14'
-                      }`}
-                    >
-                      Карточка ООО
-                    </button>
+                ) : (
+                  <div className="overflow-x-auto border-t border-[#111111]/10 dark:border-white/10">
+                    <table className="w-full text-xs text-left border-collapse">
+                      <thead>
+                        <tr className="text-[#111111]/72 dark:text-[#F4F3EF]/72 border-b border-[#111111]/8 dark:border-white/8">
+                          <th scope="col" className="py-2 pr-3 font-semibold">
+                            Время
+                          </th>
+                          <th scope="col" className="py-2 px-2 font-semibold">
+                            Сделка
+                          </th>
+                          <th scope="col" className="py-2 px-2 font-semibold">
+                            Шлюз / Событие
+                          </th>
+                          <th scope="col" className="py-2 px-2 font-semibold">
+                            Статус
+                          </th>
+                          <th
+                            scope="col"
+                            className="py-2 pl-2 font-semibold text-right"
+                          >
+                            Ответ
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#111111]/6 dark:divide-white/6">
+                        {dispatchLogs.map((log) => {
+                          const pres = getDeliveryStatePresentation(log.state);
+                          return (
+                            <tr key={log.id}>
+                              <td className="py-2 pr-3 whitespace-nowrap text-[#111111]/74 dark:text-[#F4F3EF]/74">
+                                {formatDateTimeShort(log.timestamp)}
+                              </td>
+                              <td className="py-2 px-2 font-bold whitespace-nowrap">
+                                #{log.orderNumber}
+                              </td>
+                              <td className="py-2 px-2 whitespace-nowrap">
+                                {log.channel === 'telegram'
+                                  ? 'Telegram'
+                                  : 'Webhook'}{' '}
+                                · {log.event}
+                              </td>
+                              <td
+                                className={`py-2 px-2 font-semibold ${pres.colorClass}`}
+                              >
+                                {log.summary}
+                              </td>
+                              <td className="py-2 pl-2 text-right whitespace-nowrap text-[#111111]/74 dark:text-[#F4F3EF]/74">
+                                {log.httpStatus
+                                  ? `HTTP ${log.httpStatus}`
+                                  : '—'}{' '}
+                                ({log.latencyMs} мс)
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
-                </div>
-              </div>
+                )}
+              </section>
+            </div>
+          )}
 
-              {/* Поля редактируемого профиля */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
-                <div className="md:col-span-2 space-y-1">
-                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                    Полное юридическое наименование
-                  </label>
-                  <input
-                    type="text"
-                    value={editedProfile.legalName}
-                    onChange={(e) => updateEditingProfileField('legalName', e.target.value)}
-                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                    Налоговый режим и ставка НДС
-                  </label>
-                  <select
-                    data-testid="crm-legal-tax-select"
-                    value={editedProfile.taxRegime}
-                    onChange={(e) =>
-                      updateEditingProfileField(
-                        'taxRegime',
-                        e.target.value as StudioTaxRegimeId
-                      )
-                    }
-                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 font-semibold"
-                  >
-                    {TAX_REGIME_OPTIONS.map((opt) => (
-                      <option key={opt.id} value={opt.id}>
-                        {opt.shortLabel}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                    Порядок расчёта НДС в прайсе
-                  </label>
-                  <select
-                    value={editedProfile.vatMode}
-                    onChange={(e) =>
-                      updateEditingProfileField(
-                        'vatMode',
-                        e.target.value as StudioVatCalculationMode
-                      )
-                    }
-                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 font-semibold"
-                  >
-                    <option value="included">НДС включён в сумму заказа</option>
-                    <option value="on_top">НДС начисляется сверху суммы заказа</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                    ИНН
-                  </label>
-                  <input
-                    type="text"
-                    value={editedProfile.inn}
-                    onChange={(e) => updateEditingProfileField('inn', e.target.value)}
-                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                    {editingEntityTab === 'ip' ? 'КПП (у ИП отсутствует)' : 'КПП (9 цифр)'}
-                  </label>
-                  <input
-                    type="text"
-                    disabled={editingEntityTab === 'ip'}
-                    value={editingEntityTab === 'ip' ? '' : editedProfile.kpp}
-                    placeholder={editingEntityTab === 'ip' ? 'Не применяется для ИП' : '695001001'}
-                    onChange={(e) => updateEditingProfileField('kpp', e.target.value)}
-                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 disabled:opacity-55"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                    {editingEntityTab === 'ip' ? 'ОГРНИП' : 'ОГРН'}
-                  </label>
-                  <input
-                    type="text"
-                    value={editedProfile.ogrnOrOgrnip}
-                    onChange={(e) =>
-                      updateEditingProfileField('ogrnOrOgrnip', e.target.value)
-                    }
-                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                    Город (место заключения договора)
-                  </label>
-                  <input
-                    type="text"
-                    value={editedProfile.city}
-                    onChange={(e) => updateEditingProfileField('city', e.target.value)}
-                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                    Телефон студии
-                  </label>
-                  <input
-                    type="text"
-                    value={editedProfile.phone}
-                    onChange={(e) => updateEditingProfileField('phone', e.target.value)}
-                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
-                  />
-                </div>
-
-                <div className="md:col-span-2 lg:col-span-3 space-y-1">
-                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                    Юридический адрес
-                  </label>
-                  <input
-                    type="text"
-                    value={editedProfile.legalAddress}
-                    onChange={(e) =>
-                      updateEditingProfileField('legalAddress', e.target.value)
-                    }
-                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                    Банк получателя
-                  </label>
-                  <input
-                    type="text"
-                    value={editedProfile.bankName}
-                    onChange={(e) => updateEditingProfileField('bankName', e.target.value)}
-                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                    БИК
-                  </label>
-                  <input
-                    type="text"
-                    value={editedProfile.bik}
-                    onChange={(e) => updateEditingProfileField('bik', e.target.value)}
-                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                    Расчётный счёт (20 цифр)
-                  </label>
-                  <input
-                    type="text"
-                    value={editedProfile.checkingAccount}
-                    onChange={(e) =>
-                      updateEditingProfileField('checkingAccount', e.target.value)
-                    }
-                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                    Корреспондентский счёт
-                  </label>
-                  <input
-                    type="text"
-                    value={editedProfile.correspondentAccount}
-                    onChange={(e) =>
-                      updateEditingProfileField('correspondentAccount', e.target.value)
-                    }
-                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                    Подписант (И. О. Фамилия)
-                  </label>
-                  <input
-                    type="text"
-                    value={editedProfile.signatoryShortName}
-                    onChange={(e) =>
-                      updateEditingProfileField('signatoryShortName', e.target.value)
-                    }
-                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                    BoxId в Контур.Диадоке (Учёт в Контур.Экстерне)
-                  </label>
-                  <input
-                    type="text"
-                    value={editedProfile.edoParticipantId}
-                    onChange={(e) =>
-                      updateEditingProfileField('edoParticipantId', e.target.value)
-                    }
-                    className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
-                  />
-                </div>
-              </div>
-            </section>
-          </div>
-        );
-      })()}
-
-      {/* ===================================================================== */}
-      {/* ВКЛАДКА 4: НАУЧНЫЙ ПЛАН РАЗВИТИЯ ПЛАТФОРМЫ И КАМПАНИЙ (4 КОНТУРА)     */}
-      {/* ===================================================================== */}
-      {subView === 'science' && (
-        <AdminScientificPlanView
-          orders={orders}
-          preselectedOrder={scienceTargetOrder}
-        />
+          {/* 3.3 Антиспам, проверка ИНН и теневой карантин */}
+          {settingsTab === 'security' && (
+            <div
+              id="crm-settings-tabpanel-security"
+              role="tabpanel"
+              aria-labelledby="crm-subtab-btn-security"
+            >
+              <AdminSecurityPanel />
+            </div>
+          )}
+        </div>
       )}
 
       {/* Фирменный пакет документов A4 FMWorks® (КП · Договор + Приложение · Счёт · Паспорт) */}
@@ -3118,8 +2643,7 @@ export function AdminOrdersCrmPanel({
             createdAtIso: edoModalOrder.createdAt,
             formatLabel: edoModalOrder.formatLabel,
             baseBudgetRub: edoModalOrder.totalBudgetRub,
-            defaultDurationSec:
-              edoModalOrder.mediaPlanSnapshot?.spotDurationSec ?? 15,
+            defaultDurationSec: resolveOrderTargetSlotSeconds(edoModalOrder),
             contact: edoModalOrder.contact,
             companyOrInn: edoModalOrder.companyOrInn,
             briefText: edoModalOrder.briefText,
@@ -3134,7 +2658,7 @@ export function AdminOrdersCrmPanel({
                   ? { totalBudgetRub: nextBudgetRub }
                   : {}),
               },
-              `Документы и реквизиты заказа #${edoModalOrder.orderNumber} сохранены.`
+              `Документы и реквизиты сделки #${edoModalOrder.orderNumber} сохранены.`
             );
           }}
         />

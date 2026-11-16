@@ -103,7 +103,7 @@ export function OrderStageHistoryTimeline({
           </h3>
           <p
             data-testid="stage-history-counter-summary"
-            className="text-xs text-[#111111]/60 dark:text-[#F4F3EF]/60 tabular-nums"
+            className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72 tabular-nums"
           >
             Текущий этап: {currentStageMeta.stepCode}.{' '}
             {currentStageMeta.shortLabel} ·{' '}
@@ -126,10 +126,10 @@ export function OrderStageHistoryTimeline({
                 onClick={() =>
                   setQuery((prev) => ({ ...prev, eventScope: 'all' }))
                 }
-                className={`min-h-[30px] cursor-pointer transition-colors border-b-2 pb-0.5 whitespace-nowrap ${
+                className={`min-h-[32px] px-1 cursor-pointer transition-colors border-b-2 pb-0.5 whitespace-nowrap ${
                   (query.eventScope ?? 'all') === 'all'
-                    ? 'border-[#FF4820] font-bold text-[#111111] dark:text-[#F4F3EF]'
-                    : 'border-transparent font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
+                    ? 'border-[#C83210] dark:border-[#FF7A5C] font-bold text-[#111111] dark:text-[#F4F3EF]'
+                    : 'border-transparent font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
                 }`}
               >
                 Все события ({chronologicalEntries.length})
@@ -140,10 +140,10 @@ export function OrderStageHistoryTimeline({
                 onClick={() =>
                   setQuery((prev) => ({ ...prev, eventScope: 'stage_only' }))
                 }
-                className={`min-h-[30px] cursor-pointer transition-colors border-b-2 pb-0.5 whitespace-nowrap ${
+                className={`min-h-[32px] px-1 cursor-pointer transition-colors border-b-2 pb-0.5 whitespace-nowrap ${
                   query.eventScope === 'stage_only'
-                    ? 'border-[#FF4820] font-bold text-[#111111] dark:text-[#F4F3EF]'
-                    : 'border-transparent font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
+                    ? 'border-[#C83210] dark:border-[#FF7A5C] font-bold text-[#111111] dark:text-[#F4F3EF]'
+                    : 'border-transparent font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
                 }`}
               >
                 Смены этапов ({facets.stageChangeCount})
@@ -156,7 +156,7 @@ export function OrderStageHistoryTimeline({
               type="button"
               data-testid="stage-history-reset-btn"
               onClick={handleResetQuery}
-              className="min-h-[30px] inline-flex items-center gap-1 font-semibold text-[#FF4820] hover:text-[#E63D18] transition-colors cursor-pointer whitespace-nowrap"
+              className="min-h-[32px] px-1.5 inline-flex items-center gap-1 font-semibold text-[#B82D0D] dark:text-[#FF7A5C] hover:underline transition-colors cursor-pointer whitespace-nowrap"
             >
               <RotateCcw className="w-3 h-3 shrink-0" aria-hidden="true" />
               <span>Сбросить параметры</span>
@@ -178,17 +178,17 @@ export function OrderStageHistoryTimeline({
 
           const barToneClass =
             stepState === 'current'
-              ? 'bg-[#FF4820]'
+              ? 'bg-[#C83210] dark:bg-[#FF6B4A]'
               : stepState === 'completed'
                 ? 'bg-[#111111] dark:bg-[#F4F3EF]'
-                : 'bg-[#111111]/14 dark:bg-white/14';
+                : 'bg-[#111111]/18 dark:bg-white/18';
 
           const textToneClass =
             stepState === 'current'
-              ? 'text-[#FF4820] font-bold'
+              ? 'text-[#B82D0D] dark:text-[#FF7A5C] font-bold'
               : stepState === 'completed'
                 ? 'text-[#111111] dark:text-[#F4F3EF] font-semibold'
-                : 'text-[#111111]/50 dark:text-[#F4F3EF]/50 font-medium';
+                : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 font-medium';
 
           const stepContent = (
             <>
@@ -220,7 +220,7 @@ export function OrderStageHistoryTimeline({
                   disabled={isUpdating}
                   onClick={() => onSelectStage?.(st.id)}
                   aria-label={`Перевести заказ #${order.orderNumber} на этап ${meta.stepCode}. ${meta.shortLabel}`}
-                  className={`w-full text-left cursor-pointer disabled:opacity-50 disabled:cursor-default group focus:outline-none ${textToneClass} hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors`}
+                  className={`w-full min-h-[28px] py-0.5 text-left cursor-pointer disabled:opacity-50 disabled:cursor-default group focus-visible:outline-2 focus-visible:outline-[#C83210] rounded ${textToneClass} hover:text-[#B82D0D] dark:hover:text-[#FF7A5C] transition-colors`}
                 >
                   {stepContent}
                 </button>
@@ -249,7 +249,7 @@ export function OrderStageHistoryTimeline({
           <div className="space-y-1">
             <label
               htmlFor={`${fieldIdPrefix}-sort`}
-              className="block text-[11px] font-semibold text-[#111111]/64 dark:text-[#F4F3EF]/64"
+              className="block text-[11px] font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
             >
               Сортировка лога
             </label>
@@ -278,7 +278,7 @@ export function OrderStageHistoryTimeline({
           <div className="space-y-1">
             <label
               htmlFor={`${fieldIdPrefix}-actor`}
-              className="block text-[11px] font-semibold text-[#111111]/64 dark:text-[#F4F3EF]/64"
+              className="block text-[11px] font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
             >
               Ответственный сотрудник
             </label>
@@ -309,7 +309,7 @@ export function OrderStageHistoryTimeline({
           <div className="space-y-1">
             <label
               htmlFor={`${fieldIdPrefix}-stage`}
-              className="block text-[11px] font-semibold text-[#111111]/64 dark:text-[#F4F3EF]/64"
+              className="block text-[11px] font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
             >
               Этап изменения
             </label>
@@ -347,7 +347,7 @@ export function OrderStageHistoryTimeline({
           <div className="space-y-1">
             <label
               htmlFor={`${fieldIdPrefix}-date-preset`}
-              className="block text-[11px] font-semibold text-[#111111]/64 dark:text-[#F4F3EF]/64"
+              className="block text-[11px] font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
             >
               Дата изменения (UTC+3)
             </label>
@@ -410,7 +410,7 @@ export function OrderStageHistoryTimeline({
           data-testid="stage-history-empty-state"
           className="py-4 border-t border-[#111111]/10 dark:border-white/10 flex flex-wrap items-center justify-between gap-3"
         >
-          <p className="text-xs text-[#111111]/66 dark:text-[#F4F3EF]/66">
+          <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
             По заданным условиям фильтрации (дата, ответственный сотрудник или
             этап) записей не найдено.
           </p>
@@ -418,7 +418,7 @@ export function OrderStageHistoryTimeline({
             type="button"
             data-testid="stage-history-empty-reset-btn"
             onClick={handleResetQuery}
-            className="min-h-[36px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            className="min-h-[36px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#C83210] transition-colors cursor-pointer whitespace-nowrap shrink-0"
           >
             Сбросить фильтры истории
           </button>
@@ -455,7 +455,7 @@ export function OrderStageHistoryTimeline({
                 >
                   <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                     <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-                      <span className="text-[11px] font-bold tabular-nums text-[#111111]/46 dark:text-[#F4F3EF]/46 shrink-0">
+                      <span className="text-[11px] font-bold tabular-nums text-[#111111]/70 dark:text-[#F4F3EF]/70 shrink-0">
                         #{ordinalCode}
                       </span>
 
@@ -463,7 +463,7 @@ export function OrderStageHistoryTimeline({
                         <span className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
                           Регистрация заказа{' '}
                           <ArrowRight
-                            className="inline w-3 h-3 mx-0.5 text-[#111111]/50 dark:text-[#F4F3EF]/50"
+                            className="inline w-3 h-3 mx-0.5 text-[#111111]/70 dark:text-[#F4F3EF]/70"
                             aria-hidden="true"
                           />{' '}
                           «{nextMeta.stepCode}. {nextMeta.shortLabel}»
@@ -477,20 +477,20 @@ export function OrderStageHistoryTimeline({
                         <span className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
                           «{prevMeta?.stepCode}. {prevMeta?.shortLabel}»{' '}
                           <ArrowRight
-                            className="inline w-3 h-3 mx-0.5 text-[#FF4820]"
+                            className="inline w-3 h-3 mx-0.5 text-[#B82D0D] dark:text-[#FF7A5C]"
                             aria-hidden="true"
                           />{' '}
                           <span
                             className={
                               stepOrdinal === chronologicalEntries.length
-                                ? 'text-[#FF4820] font-bold'
+                                ? 'text-[#B82D0D] dark:text-[#FF7A5C] font-bold'
                                 : ''
                             }
                           >
                             «{nextMeta.stepCode}. {nextMeta.shortLabel}»
                           </span>
                           {direction === 'rollback' && (
-                            <span className="ml-1.5 text-[11px] font-semibold text-[#B45309] dark:text-[#FBBF24]">
+                            <span className="ml-1.5 text-[11px] font-semibold text-[#92400E] dark:text-[#FBBF24]">
                               · возврат на предыдущий этап
                             </span>
                           )}
@@ -498,7 +498,7 @@ export function OrderStageHistoryTimeline({
                       )}
                     </div>
 
-                    <p className="text-[11px] text-[#111111]/58 dark:text-[#F4F3EF]/58 tabular-nums">
+                    <p className="text-[11px] text-[#111111]/72 dark:text-[#F4F3EF]/72 tabular-nums">
                       <span>{formattedTs}</span>
                       {dwellText && (
                         <>

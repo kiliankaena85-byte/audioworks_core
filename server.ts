@@ -110,6 +110,13 @@ import {
   STUDIO_SESSION_COOKIE_NAME,
   validateOutboundWebhookTarget,
 } from './src/security/serverSecurity.ts';
+import {
+  createStudioSessionActivityTracker,
+  DEFAULT_STUDIO_OPERATOR_NAME,
+  sanitizeStudioOperatorName,
+  STUDIO_SESSION_ABSOLUTE_TTL_MS,
+  STUDIO_SESSION_IDLE_TIMEOUT_MS,
+} from './src/security/adminSessionStandards.ts';
 import { VERIFIED_LIVE_REGIONAL_STATIONS } from './src/data/broadcastAircheckData.ts';
 import {
   assembleProductionDocumentSuite,
@@ -258,7 +265,7 @@ const MAIN_PROMO_FILENAME = 'Audioworks_75c6023f.mp3';
 const CANONICAL_RADIO_FILE = 'zerno_radio_15.mp3';
 const CANONICAL_AUDIOWORKS_FILE = 'zerno_audioworks_15.mp3';
 
-const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const SESSION_TTL_MS = STUDIO_SESSION_ABSOLUTE_TTL_MS;
 
 const SERVER_BANNED_TERMS = [
   'fm-тракт',
@@ -289,6 +296,9 @@ const SESSION_SECRET_FILE = path.join(CMS_DATA_DIR, '.cms-session-secret');
 const REVOKED_SESSIONS_FILE = path.join(CMS_DATA_DIR, '.revoked-sessions.json');
 const CLIENT_AUTH_NONCES_FILE = path.join(CMS_DATA_DIR, '.client-auth-nonces.json');
 const sessionRevocationRegistry = createSessionRevocationRegistry();
+const studioSessionActivityTracker = createStudioSessionActivityTracker(
+  STUDIO_SESSION_IDLE_TIMEOUT_MS
+);
 const clientSessionRevocationRegistry = createSessionRevocationRegistry();
 const consumedMagicLinkRegistry = createSessionRevocationRegistry();
 let cachedRandomSessionSecret: string | null = null;
@@ -414,26 +424,39 @@ function safeCompareStrings(a: string, b: string): boolean {
   return crypto.timingSafeEqual(hashA, hashB);
 }
 
-function issueAdminToken(): { token: string; expiresAt: number } {
+function issueAdminToken(rawOperatorName?: unknown): {
+  token: string;
+  expiresAt: number;
+  operatorName: string;
+} {
   const expiresAt = Date.now() + SESSION_TTL_MS;
   const nonce = crypto.randomBytes(16).toString('hex');
+  const operatorName = sanitizeStudioOperatorName(rawOperatorName);
   const payload = Buffer.from(
-    JSON.stringify({ role: 'studio_admin', exp: expiresAt, nonce }),
+    JSON.stringify({
+      role: 'studio_admin',
+      exp: expiresAt,
+      nonce,
+      operatorName,
+    }),
     'utf8'
   ).toString('base64url');
   const sig = crypto
     .createHmac('sha256', getSessionSecret())
     .update(payload)
     .digest('base64url');
+  studioSessionActivityTracker.registerSession(nonce, expiresAt, operatorName);
   return {
     token: `${payload}.${sig}`,
     expiresAt,
+    operatorName,
   };
 }
 
 function parseVerifiedAdminToken(
-  rawToken: string | undefined
-): { role: string; exp: number; nonce: string } | null {
+  rawToken: string | undefined,
+  options: { touchActivity?: boolean } = {}
+): { role: string; exp: number; nonce: string; operatorName: string } | null {
   if (!rawToken || typeof rawToken !== 'string') return null;
   const parts = rawToken.trim().split('.');
   if (parts.length !== 2) return null;
@@ -452,15 +475,36 @@ function parseVerifiedAdminToken(
   try {
     const parsed = JSON.parse(
       Buffer.from(payload, 'base64url').toString('utf8')
-    ) as { role?: string; exp?: number; nonce?: string };
+    ) as {
+      role?: string;
+      exp?: number;
+      nonce?: string;
+      operatorName?: string;
+    };
     if (parsed.role !== 'studio_admin') return null;
     if (typeof parsed.exp !== 'number' || parsed.exp < Date.now()) return null;
     const nonce = typeof parsed.nonce === 'string' ? parsed.nonce : '';
     if (nonce && sessionRevocationRegistry.isRevoked(nonce)) return null;
+    const operatorName = sanitizeStudioOperatorName(parsed.operatorName);
+    if (nonce && options.touchActivity !== false) {
+      const activity = studioSessionActivityTracker.verifyAndTouch(
+        nonce,
+        parsed.exp,
+        operatorName
+      );
+      if (!activity.active) {
+        if (activity.reason === 'expired_idle') {
+          sessionRevocationRegistry.revoke(nonce, parsed.exp);
+          persistRevocations();
+        }
+        return null;
+      }
+    }
     return {
       role: parsed.role,
       exp: parsed.exp,
       nonce,
+      operatorName,
     };
   } catch {
     return null;
@@ -468,7 +512,13 @@ function parseVerifiedAdminToken(
 }
 
 function verifyAdminToken(rawToken: string | undefined): boolean {
-  return parseVerifiedAdminToken(rawToken) !== null;
+  return parseVerifiedAdminToken(rawToken, { touchActivity: true }) !== null;
+}
+
+function resolveRequestOperatorName(req: Request): string {
+  const token = extractStudioToken(req);
+  const parsed = parseVerifiedAdminToken(token, { touchActivity: false });
+  return parsed?.operatorName ?? DEFAULT_STUDIO_OPERATOR_NAME;
 }
 
 function extractStudioToken(req: Request): string | undefined {
@@ -2488,8 +2538,10 @@ async function startServer() {
 
   app.get('/api/cms/auth/session', (req, res) => {
     const token = extractStudioToken(req);
+    const verified = parseVerifiedAdminToken(token, { touchActivity: true });
     res.json({
-      authenticated: verifyAdminToken(token),
+      authenticated: verified !== null,
+      operatorName: verified?.operatorName ?? null,
     });
   });
 
@@ -2499,6 +2551,7 @@ async function startServer() {
       req.body && typeof req.body.password === 'string'
         ? req.body.password.trim()
         : '';
+    const rawOperatorName = req.body?.operatorName;
 
     if (!rawPassword) {
       res.status(400).json({ error: 'Введите пароль студии' });
@@ -2529,17 +2582,22 @@ async function startServer() {
     }
 
     loginFailureLimiter.resetKey(clientIp);
-    const session = issueAdminToken();
+    const session = issueAdminToken(rawOperatorName);
     const maxAgeSec = Math.floor(SESSION_TTL_MS / 1000);
     res.setHeader(
       'Set-Cookie',
       buildSessionSetCookieHeader(session.token, maxAgeSec, isHttpsRequest(req))
     );
-    recordSecurityAudit('auth_login_success', req, 'Успешный вход в кабинет студии');
+    recordSecurityAudit(
+      'auth_login_success',
+      req,
+      `Успешный вход в кабинет студии (${session.operatorName})`
+    );
     res.json({
       ok: true,
       token: session.token,
       expiresAt: session.expiresAt,
+      operatorName: session.operatorName,
     });
   });
 
@@ -2558,13 +2616,18 @@ async function startServer() {
       return;
     }
     const token = extractStudioToken(req);
-    const parsed = parseVerifiedAdminToken(token);
+    const parsed = parseVerifiedAdminToken(token, { touchActivity: false });
     if (parsed?.nonce) {
+      studioSessionActivityTracker.remove(parsed.nonce);
       sessionRevocationRegistry.revoke(parsed.nonce, parsed.exp);
       persistRevocations();
     }
     res.setHeader('Set-Cookie', buildSessionClearCookieHeader(isHttpsRequest(req)));
-    recordSecurityAudit('auth_logout', req, 'Выход из кабинета студии и отзыв токена');
+    recordSecurityAudit(
+      'auth_logout',
+      req,
+      `Выход из кабинета студии и отзыв токена${parsed?.operatorName ? ` (${parsed.operatorName})` : ''}`
+    );
     res.json({ ok: true });
   });
 
@@ -5388,12 +5451,14 @@ async function startServer() {
             )
           : existing.deliverables ?? [];
 
+      const activeOperatorName = resolveRequestOperatorName(req);
       const nextStageHistory = stageChanged
         ? recordOrderStageTransition(existing, {
             timestamp: nowIso,
             previousStage: existing.stage,
             nextStage,
             actor: 'producer_crm',
+            actorName: activeOperatorName,
             workflowStepLabel: `Перевод заказа на этап «${
               getCrmStageMetaForOrder(nextStage, existing.checkoutMode).shortLabel
             }»`,
@@ -5889,10 +5954,11 @@ async function startServer() {
       writeSecurityStore(secStore);
     }
 
+    const operatorWhoAnonymized = resolveRequestOperatorName(req);
     recordSecurityAudit(
       'order_pdn_anonymized',
       req,
-      `Обезличены ПДн сделки #${anonymized.orderNumber} (ст. 21 152-ФЗ)`
+      `Обезличены ПДн сделки #${anonymized.orderNumber} (ст. 21 152-ФЗ, оператор: ${operatorWhoAnonymized})`
     );
 
     res.json({
@@ -8513,7 +8579,7 @@ async function startServer() {
           lastModified: true,
           setHeaders: (res, filePath) => {
             if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
-              res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+              res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
             } else {
               res.setHeader('Cache-Control', 'public, max-age=86400');
             }
@@ -8521,32 +8587,10 @@ async function startServer() {
         })
       );
 
-      // Если открытая вкладка со старой сборкой запрашивает переименованный или объединённый JS-чанк,
-      // подставляем актуальный чанк с тем же префиксом либо инициируем мягкую перезагрузку страницы.
-      app.get('/assets/*.js', (req, res, next) => {
-        const requestedBase = path.basename(req.path);
-        const prefixMatch = requestedBase.match(/^([A-Za-z0-9_-]+)-[A-Za-z0-9_-]+\.js$/);
-        if (prefixMatch && fs.existsSync(distAssetsPath)) {
-          const prefix = `${prefixMatch[1]}-`;
-          const replacement = fs
-            .readdirSync(distAssetsPath)
-            .find((name) => name.startsWith(prefix) && name.endsWith('.js'));
-          if (replacement) {
-            res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-            res.sendFile(path.join(distAssetsPath, replacement));
-            return;
-          }
-          res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-          res
-            .status(200)
-            .send(
-              "if (typeof window !== 'undefined') { window.location.reload(); }\nexport default {};\n"
-            );
-          return;
-        }
-        next();
+      // Никогда не подменяем отсутствующий хэшированный JS-чанк другим билдом:
+      // переименованные минифицированные экспорты неизбежно вызывают ESM SyntaxError.
+      app.get('/assets/*.js', (_req, res) => {
+        res.status(404).setHeader('Cache-Control', 'no-store').type('text/plain').send('Not Found');
       });
     }
     app.use(express.static(distPath, { index: false, maxAge: 0 }));

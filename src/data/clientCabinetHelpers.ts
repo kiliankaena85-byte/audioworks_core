@@ -173,6 +173,7 @@ export function normalizeDeliveryPreferences(
   fallbackChannel: ClientDeliveryChannel = 'messenger'
 ): { channel: ClientDeliveryChannel; detail: string } {
   const cleanDetail = sanitizeDeliveryDetail(rawDetail);
+  const lowerDetail = cleanDetail.toLowerCase();
   if (rawChannel === 'yandex_disk') {
     return { channel: 'cloud', detail: cleanDetail || 'Яндекс Диск' };
   }
@@ -181,12 +182,37 @@ export function normalizeDeliveryPreferences(
   }
   const channel = sanitizeDeliveryChannel(rawChannel, fallbackChannel);
   if (channel === 'messenger') {
-    return { channel, detail: cleanDetail || 'Telegram' };
+    if (!cleanDetail) return { channel, detail: 'Telegram' };
+    if (lowerDetail === 'telegram') return { channel, detail: 'Telegram' };
+    if (lowerDetail === 'whatsapp') return { channel, detail: 'WhatsApp' };
+    if (lowerDetail === 'max') return { channel, detail: 'Max' };
+    if (lowerDetail === 'other' || lowerDetail === 'мессенджер') {
+      return { channel, detail: '' };
+    }
+    return { channel, detail: cleanDetail };
   }
   if (channel === 'cloud') {
-    return { channel, detail: cleanDetail || 'Яндекс Диск' };
+    if (!cleanDetail) return { channel, detail: 'Яндекс Диск' };
+    if (lowerDetail === 'yandex_disk' || lowerDetail === 'яндекс диск') {
+      return { channel, detail: 'Яндекс Диск' };
+    }
+    if (lowerDetail === 'google_disk' || lowerDetail === 'google диск') {
+      return { channel, detail: 'Google Диск' };
+    }
+    if (lowerDetail === 'dropbox') return { channel, detail: 'Dropbox' };
+    if (
+      lowerDetail === 'other' ||
+      lowerDetail === 'облачное хранилище' ||
+      lowerDetail === 'облачный диск'
+    ) {
+      return { channel, detail: '' };
+    }
+    return { channel, detail: cleanDetail };
   }
   if (channel === 'email') {
+    if (lowerDetail === 'на почту' || lowerDetail === 'email') {
+      return { channel, detail: '' };
+    }
     return { channel, detail: cleanDetail };
   }
   return { channel: 'cabinet', detail: '' };

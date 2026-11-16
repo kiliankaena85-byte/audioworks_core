@@ -442,7 +442,7 @@ function FmworksExperience() {
               onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
               onSeekCase={(item, ratio) => casePlayerEngine.seekToRatio(ratio, item)}
               onWarmCasePlayer={() => void casePlayerEngine.preload()}
-              onStartPreview={(item) => casePlayerEngine.startPreview(item)}
+              onStartPreview={() => {}}
               onStopPreview={(caseId) => casePlayerEngine.stopPreview(caseId)}
               onNavigate={navigateTo}
               onStartStudioOrder={handleOpenStudioOrder}
@@ -475,7 +475,7 @@ function FmworksExperience() {
               onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
               onSeekCase={(item, ratio) => casePlayerEngine.seekToRatio(ratio, item)}
               onWarmCasePlayer={() => void casePlayerEngine.preload()}
-              onStartPreview={(item) => casePlayerEngine.startPreview(item)}
+              onStartPreview={() => {}}
               onStopPreview={(caseId) => casePlayerEngine.stopPreview(caseId)}
               onNavigate={navigateTo}
             />

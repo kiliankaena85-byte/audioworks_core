@@ -663,9 +663,10 @@ class BroadcastAircheckEngine {
       this.isAnalyzingUpload = false;
       this.uploadError = null;
       this.elapsedSec = 0;
+      this.isPlaying = false;
+      this.syncRoadNoise();
       this.emit();
 
-      this.jumpToTargetTransition();
       return true;
     } catch {
       this.isAnalyzingUpload = false;

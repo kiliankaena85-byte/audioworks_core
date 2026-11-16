@@ -543,7 +543,7 @@ class ContrastAudioEngine {
    * Подключает пользовательский аудиофайл (.mp3 / .wav через `URL.createObjectURL(file)`)
    * напрямую к главной сцене и живому анализатору спектра `AnalyserNode`.
    */
-  public loadCustomShowreel(objectUrl: string, fileName: string, autoPlay = true): void {
+  public loadCustomShowreel(objectUrl: string, fileName: string, autoPlay = false): void {
     claimExclusiveAudioFocus('contrast_hero');
     this.onStartHooks.forEach((fn) => fn());
     this.clearPlaybackOnly();
@@ -1181,16 +1181,17 @@ class ContrastAudioEngine {
 
   /**
    * Переключение режима сцены `[ Обычный эфир ] <-> [ FMWorks ]`:
-   * - `stream`: если шло воспроизведение — запускает краш-тест с 1-й фазы («Обычный эфир»); если было на паузе/в покое — возвращает свёрнутую линзу без резкого автозапуска.
-   * - `focus`: раскрывает полноцветный мир FMWorks и включает студийный шоурил.
+   * - Если воспроизведение уже активно — переключает соответствующую звуковую фазу.
+   * - Если плеер в покое или на паузе — переключает визуальную сцену без автоматического запуска звука.
    */
   public selectLens(target: 'stream' | 'focus'): void {
+    const wasActive =
+      this.isFilmPlaying ||
+      this.isSoundPlaying ||
+      this.crashPhase === 'clutter' ||
+      this.crashPhase === 'stop_pause';
+
     if (target === 'stream') {
-      const wasActive =
-        this.isFilmPlaying ||
-        this.isSoundPlaying ||
-        this.crashPhase === 'clutter' ||
-        this.crashPhase === 'stop_pause';
       if (wasActive) {
         this.restartCrashTest();
         return;
@@ -1199,7 +1200,22 @@ class ContrastAudioEngine {
       return;
     }
 
-    this.expandLensWithAudioWorks();
+    if (wasActive) {
+      this.expandLensWithAudioWorks();
+      return;
+    }
+
+    this.clearPlaybackOnly();
+    this.isFilmPlaying = false;
+    this.isSoundPlaying = false;
+    this.isLensExpanded = true;
+    this.crashPhase = 'audioworks';
+    this.mode = 'focus';
+    this.hasCompletedCrashTest = false;
+    this.isPausedMidSession = false;
+    this.pausedInClutter = false;
+    this.syncRoadNoiseNode();
+    this.emit();
   }
 
   /**

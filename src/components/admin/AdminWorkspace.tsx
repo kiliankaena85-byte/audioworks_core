@@ -3,28 +3,30 @@ import {
   ArrowUpRight,
   AudioWaveform,
   BarChart3,
+  Building2,
   CheckCircle2,
+  ChevronDown,
   ClipboardList,
   FileText,
-  FlaskConical,
   FolderKanban,
   LogOut,
+  Menu,
   MessageSquareQuote,
+  Mic2,
   Moon,
   Radio,
   RotateCcw,
   Save,
-  ShieldCheck,
   SlidersHorizontal,
   Sun,
-  Type,
+  UserCheck,
+  X,
 } from 'lucide-react';
 import { lazy, Suspense, useMemo, useState } from 'react';
 import { useSiteTextBlocks } from '../../cms/SiteTextBlocksContext';
 import { useStudioCms } from '../../cms/StudioCmsContext';
 import { BrandDomainVariant } from '../../data/brandKitData';
 import { assignPortfolioCaseToHeroStage } from '../../data/heroStageCms';
-import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
 import {
   auditEditorialCopyGuardrails,
   BANNED_EDITORIAL_TERMS,
@@ -36,11 +38,9 @@ import { AdminHeroStagePanel } from './AdminHeroStagePanel';
 import { AdminLoginScreen } from './AdminLoginScreen';
 import { AdminOrdersCrmPanel } from './AdminOrdersCrmPanel';
 import { AdminPortfolioPanel } from './AdminPortfolioPanel';
-import { AdminSecurityPanel } from './AdminSecurityPanel';
 import { AdminShowcaseScenesBar } from './AdminShowcaseScenesBar';
 import { AdminSiteCopyPanel } from './AdminSiteCopyPanel';
 import { AdminTestimonialsPanel } from './AdminTestimonialsPanel';
-import { AdminTextBlocksPanel } from './AdminTextBlocksPanel';
 
 const LazyAdminStudioAnalyticsPanel = lazy(() =>
   import('./AdminStudioAnalyticsPanel').then((mod) => ({
@@ -50,16 +50,24 @@ const LazyAdminStudioAnalyticsPanel = lazy(() =>
 
 export type AdminSectionTab =
   | 'orders_crm'
+  | 'production'
   | 'analytics'
-  | 'science_plan'
+  | 'settings'
   | 'hero_stage'
   | 'portfolio'
-  | 'text_blocks'
   | 'duel'
   | 'testimonials'
   | 'copy'
-  | 'laya_brand'
-  | 'security';
+  | 'laya_brand';
+
+const CMS_SECTION_TABS: ReadonlySet<AdminSectionTab> = new Set([
+  'hero_stage',
+  'portfolio',
+  'duel',
+  'testimonials',
+  'copy',
+  'laya_brand',
+]);
 
 interface AdminWorkspaceProps {
   brandVariant: BrandDomainVariant;
@@ -101,6 +109,7 @@ export function AdminWorkspace({
     isAuthenticated,
     isAuthChecking,
     isSaving,
+    operatorName,
     login,
     logout,
     updateLocalSnapshot,
@@ -111,13 +120,15 @@ export function AdminWorkspace({
     uploadImageFile,
   } = useStudioCms();
 
-  const {
-    blocks: liveTextBlocks,
-    modifiedCount: liveModifiedCount,
-    resetAllBlocks: resetLiveTextBlocks,
-  } = useSiteTextBlocks();
+  const { blocks: liveTextBlocks, resetAllBlocks: resetLiveTextBlocks } =
+    useSiteTextBlocks();
 
   const [activeTab, setActiveTab] = useState<AdminSectionTab>('orders_crm');
+  const [isCmsDrawerOpen, setIsCmsDrawerOpen] = useState<boolean>(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState<boolean>(false);
+  const [focusedOrderId, setFocusedOrderId] = useState<string | undefined>(
+    undefined
+  );
   const [saveBanner, setSaveBanner] = useState<{
     kind: 'ok' | 'error';
     text: string;
@@ -169,8 +180,8 @@ export function AdminWorkspace({
       kind: 'ok',
       text:
         res.warnings.length > 0
-          ? `Изменения записаны на сервер (обратите внимание на редакционные рекомендации: ${res.warnings.join(', ')}).`
-          : 'Изменения записаны на сервер и закреплены за витриной сайта.',
+          ? `Изменения записаны на сервер (редакционные рекомендации: ${res.warnings.join(', ')}).`
+          : 'Изменения записаны на сервер и опубликованы на витрине сайта.',
     });
   };
 
@@ -206,85 +217,91 @@ export function AdminWorkspace({
     }
   };
 
-  const handleNavigateToGallery = () => {
-    handleNavigateToAnchor('#work');
-  };
-
   const SECTION_META: Record<
     AdminSectionTab,
     { label: string; subtitle: string }
   > = {
     orders_crm: {
-      label: 'Заказы и воронка (CRM)',
-      subtitle: AIRTIME_SALES_ENABLED
-        ? 'Приём резервов эфира с таймером 4ч, генератор счёта-спецификации ЭДО и шлюзы доставки в Telegram и внешние CRM'
-        : 'Приём студийных заказов аудиороликов, контроль SLA ответа продюсера, генератор счёта ЭДО и шлюзы в Telegram и CRM',
+      label: 'Реестр сделок и ЭДО',
+      subtitle:
+        'Коммерческий реестр заявок B2B, счета и договоры A4, черновики Контур.Диадока и нормативная проверка хронометража ФЗ-38',
+    },
+    production: {
+      label: 'Производство и озвучка',
+      subtitle:
+        'Согласование сценариев, назначение звукорежиссёров, дубли дикторов и передача финальных WAV-мастеров',
     },
     analytics: {
-      label: 'Аналитика и конверсия',
+      label: 'Аналитика и отчёты',
       subtitle:
-        'Графики конверсии заказов по месяцам, соблюдение SLA первого ответа (≤ 15 мин), сдача роликов с 1-го дубля и скорость этапов воронки',
+        'Конверсия заказов по месяцам, соблюдение SLA первого ответа (≤ 15 мин), сдача роликов с 1-го дубля и выгрузка PDF/CSV',
     },
-    science_plan: {
-      label: 'Научный план развития',
+    settings: {
+      label: 'Реквизиты и шлюзы',
       subtitle:
-        'Когнитивный порог 5+ касаний, атрибуция Search Lift за рулём, психоакустика первых 3 секунд и LTV повторных волн',
+        'Юридические профили ИП / ООО (УСН и НДС), маршрутизация уведомлений в Telegram и Webhook, антиспам-карантин',
     },
     hero_stage: {
-      label: 'Первый экран (Hero · Краш-тест)',
+      label: 'Первый экран (Hero)',
       subtitle:
-        'Прямая загрузка аудиоролика WAV/MP3 на первый экран сайта, подключение кейса из Портфолио в 1 клик и настройка 3 фаз краш-теста',
+        'Загрузка демо-аудиоролика на главный экран сайта, привязка кейса из Портфолио и настройка фаз прослушивания',
     },
     portfolio: {
-      label: 'Портфолио и звук · Экран 3',
+      label: 'Портфолио и звук',
       subtitle:
-        'Загрузка WAV/MP3 для секции «Наши работы» (#work) и каталога /cases, заголовки кейсов и настройка 3-секундного превью',
-    },
-    text_blocks: {
-      label: 'Текстовые блоки (Live)',
-      subtitle:
-        'Мгновенное редактирование заголовков и описаний секций Hero, Approach и Pricing в памяти сессии',
+        'Управление кейсами секции «Наши работы» (#work) и каталога /cases, загрузка WAV/MP3 и 3-секундных превью',
     },
     duel: {
-      label: 'Дуэль 15 секунд · Экран 4',
+      label: 'Дуэль 15 секунд',
       subtitle:
-        'Аудиодорожки сторон А и Б для секции «Один бриф на 15 секунд» (#duel), условия брифа и синхронные реплики по таймкодам',
+        'Аудиодорожки вариантов А и Б для секции сравнения на главной (#duel), условия брифа и синхронные реплики',
     },
     testimonials: {
-      label: 'Отзывы клиентов · StudioCMS',
+      label: 'Отзывы клиентов',
       subtitle:
-        'Динамические отзывы брендов на главной (#testimonials), показатели доверия, привязка аудиороликов из портфолио и отраслевые рубрики',
+        'Отзывы заказчиков на витрине (#testimonials), показатели эффекта, привязка аудиороликов и отраслевые рубрики',
     },
     copy: {
-      label: 'Исследования, FAQ и архив',
+      label: 'Тарифы, FAQ и архив',
       subtitle:
-        'Цифры исследований ЦНС, расценки тарифов в рублях, частые вопросы и резервные копии .json',
+        'Стоимость пакетов производства в рублях, ответы на частые вопросы и резервные копии конфигурации .json',
     },
     laya_brand: {
-      label: 'Персонализация Laya AI и Brand Kit',
+      label: 'Бренд и профили витрины',
       subtitle:
-        'Симуляция профилей аудитории, маршрутизация звука под отрасль и управление фирменным стилем FMWorks без вывода на клиентскую витрину',
-    },
-    security: {
-      label: 'Защита от спама и заявки',
-      subtitle:
-        'Журнал верифицированных заявок, теневой карантин ботов, проверка ИНН ФНС и защита рекламного бюджета',
+        'Управление фирменным стилем FMWorks и отраслевыми сценариями витрины',
     },
   };
 
   const formattedTime = formatUpdatedTimestamp(snapshot.updatedAt);
-  const isLiveTextTab = activeTab === 'text_blocks';
-  const isOrdersOrScienceTab =
-    activeTab === 'orders_crm' ||
-    activeTab === 'analytics' ||
-    activeTab === 'science_plan' ||
-    activeTab === 'laya_brand';
+  const isCmsTabActive = CMS_SECTION_TABS.has(activeTab);
+  const isOperationalTab = !isCmsTabActive || activeTab === 'laya_brand';
+  const showCmsItems = isCmsDrawerOpen || isCmsTabActive;
+  const cmsUnsavedBadgesCount =
+    (hasLocalHeroChanges ? 1 : 0) +
+    localPortfolioChangeCount +
+    localTestimonialsChangeCount +
+    (hasLocalChanges &&
+    !hasLocalHeroChanges &&
+    localPortfolioChangeCount === 0 &&
+    localTestimonialsChangeCount === 0
+      ? 1
+      : 0);
+
+  const selectAdminSection = (nextTab: AdminSectionTab, keepCmsOpen = false) => {
+    setActiveTab(nextTab);
+    if (keepCmsOpen) {
+      setIsCmsDrawerOpen(true);
+    }
+    setIsMobileNavOpen(false);
+    setSaveBanner(null);
+  };
 
   return (
     <div className="min-h-screen bg-[#F7F6F2] text-[#111111] dark:bg-[#0D0D0F] dark:text-[#F4F3EF] flex flex-col lg:flex-row">
-      {/* Left Workspace Sidebar (264px sticky viewport height on desktop) */}
-      <aside className="w-full lg:w-[264px] lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto no-scrollbar shrink-0 bg-white dark:bg-[#141418] border-b lg:border-b-0 lg:border-r border-[#111111]/10 dark:border-white/10 flex flex-col justify-between p-5">
-        <div className="space-y-6">
+      {/* Канонический боковой навигатор (264px на десктопе, свёрнутая шапка на мобильном 390px) */}
+      <aside className="w-full lg:w-[264px] lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto no-scrollbar shrink-0 bg-white dark:bg-[#141418] border-b lg:border-b-0 lg:border-r border-[#111111]/10 dark:border-white/10 flex flex-col justify-between px-4 py-3 lg:p-5">
+        <div className="space-y-4 lg:space-y-6">
           <div className="flex items-center justify-between gap-3">
             <a
               href="/"
@@ -297,236 +314,273 @@ export function AdminWorkspace({
             >
               <BrandLogo variant={brandVariant} size="sm" />
             </a>
+
+            <button
+              type="button"
+              data-testid="admin-mobile-menu-toggle"
+              aria-expanded={isMobileNavOpen}
+              aria-controls="admin-sidebar-drawer"
+              aria-label={
+                isMobileNavOpen
+                  ? 'Свернуть меню разделов кабинета'
+                  : 'Открыть меню разделов кабинета'
+              }
+              onClick={() => setIsMobileNavOpen((prev) => !prev)}
+              className="lg:hidden min-h-[38px] px-3 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
+            >
+              {isMobileNavOpen ? (
+                <>
+                  <X className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span>Закрыть</span>
+                </>
+              ) : (
+                <>
+                  <Menu className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span>Разделы</span>
+                </>
+              )}
+            </button>
           </div>
 
-          <nav aria-label="Разделы кабинета студии" className="space-y-1.5">
-            <button
-              type="button"
-              data-testid="admin-nav-orders-crm"
-              onClick={() => {
-                setActiveTab('orders_crm');
-                setSaveBanner(null);
-              }}
-              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
-                activeTab === 'orders_crm'
-                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
-              }`}
-            >
-              <span className="inline-flex items-center gap-2.5">
-                <ClipboardList className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span>Заказы и воронка (CRM)</span>
-              </span>
-            </button>
-
-            <button
-              type="button"
-              data-testid="admin-nav-analytics"
-              onClick={() => {
-                setActiveTab('analytics');
-                setSaveBanner(null);
-              }}
-              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
-                activeTab === 'analytics'
-                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
-              }`}
-            >
-              <span className="inline-flex items-center gap-2.5">
-                <BarChart3 className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span>Аналитика и конверсия</span>
-              </span>
-            </button>
-
-            <button
-              type="button"
-              data-testid="admin-nav-science-plan"
-              onClick={() => {
-                setActiveTab('science_plan');
-                setSaveBanner(null);
-              }}
-              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
-                activeTab === 'science_plan'
-                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
-              }`}
-            >
-              <span className="inline-flex items-center gap-2.5">
-                <FlaskConical className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span>Научный план развития</span>
-              </span>
-            </button>
-
-            <div className="my-2 border-t border-[#111111]/8 dark:border-white/8" />
-
-            <button
-              type="button"
-              data-testid="admin-nav-hero-stage"
-              onClick={() => {
-                setActiveTab('hero_stage');
-                setSaveBanner(null);
-              }}
-              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
-                activeTab === 'hero_stage'
-                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
-              }`}
-            >
-              <span className="inline-flex items-center gap-2.5">
-                <Radio className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span>Первый экран (Hero)</span>
-              </span>
-              {hasLocalHeroChanges && (
-                <span className="text-[11px] font-bold tabular-nums text-[#FF4820]">
-                  1
+          <div
+            id="admin-sidebar-drawer"
+            className={`${isMobileNavOpen ? 'block pt-2 border-t border-[#111111]/10 dark:border-white/10 lg:pt-0 lg:border-t-0' : 'hidden'} lg:block space-y-6`}
+          >
+            <nav aria-label="Операционное управление студией" className="space-y-1.5">
+              <button
+                type="button"
+                data-testid="admin-nav-orders-crm"
+                onClick={() => selectAdminSection('orders_crm')}
+                className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
+                  activeTab === 'orders_crm'
+                    ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                    : 'text-[#111111]/76 dark:text-[#F4F3EF]/76 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+                }`}
+              >
+                <span className="inline-flex items-center gap-2.5">
+                  <ClipboardList className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span>Реестр сделок и ЭДО</span>
                 </span>
-              )}
-            </button>
+              </button>
 
-            <button
-              type="button"
-              data-testid="admin-nav-portfolio"
-              onClick={() => {
-                setActiveTab('portfolio');
-                setSaveBanner(null);
-              }}
-              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
-                activeTab === 'portfolio'
-                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
-              }`}
-            >
-              <span className="inline-flex items-center gap-2.5">
-                <FolderKanban className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span>Портфолио и звук</span>
-              </span>
-              {localPortfolioChangeCount > 0 && (
-                <span className="text-[11px] font-bold tabular-nums text-[#FF4820]">
-                  {localPortfolioChangeCount}
+              <button
+                type="button"
+                data-testid="admin-nav-production"
+                onClick={() => selectAdminSection('production')}
+                className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
+                  activeTab === 'production'
+                    ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                    : 'text-[#111111]/76 dark:text-[#F4F3EF]/76 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+                }`}
+              >
+                <span className="inline-flex items-center gap-2.5">
+                  <Mic2 className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span>Производство и озвучка</span>
                 </span>
-              )}
-            </button>
+              </button>
 
-            <button
-              type="button"
-              data-testid="admin-nav-text-blocks"
-              onClick={() => {
-                setActiveTab('text_blocks');
-                setSaveBanner(null);
-              }}
-              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
-                activeTab === 'text_blocks'
-                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
-              }`}
-            >
-              <span className="inline-flex items-center gap-2.5">
-                <Type className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span>Текстовые блоки</span>
-              </span>
-              {liveModifiedCount > 0 && (
-                <span className="text-[11px] font-bold tabular-nums text-[#FF4820]">
-                  {liveModifiedCount}
+              <button
+                type="button"
+                data-testid="admin-nav-analytics"
+                onClick={() => selectAdminSection('analytics')}
+                className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
+                  activeTab === 'analytics'
+                    ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                    : 'text-[#111111]/76 dark:text-[#F4F3EF]/76 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+                }`}
+              >
+                <span className="inline-flex items-center gap-2.5">
+                  <BarChart3 className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span>Аналитика и отчёты</span>
                 </span>
-              )}
-            </button>
+              </button>
 
-            <button
-              type="button"
-              data-testid="admin-nav-duel"
-              onClick={() => {
-                setActiveTab('duel');
-                setSaveBanner(null);
-              }}
-              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center gap-2.5 transition-colors cursor-pointer whitespace-nowrap ${
-                activeTab === 'duel'
-                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
-              }`}
-            >
-              <AudioWaveform className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span>Дуэль 15 секунд</span>
-            </button>
-
-            <button
-              type="button"
-              data-testid="admin-nav-testimonials"
-              onClick={() => {
-                setActiveTab('testimonials');
-                setSaveBanner(null);
-              }}
-              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
-                activeTab === 'testimonials'
-                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
-              }`}
-            >
-              <span className="inline-flex items-center gap-2.5">
-                <MessageSquareQuote className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span>Отзывы клиентов</span>
-              </span>
-              {localTestimonialsChangeCount > 0 && (
-                <span className="text-[11px] font-bold tabular-nums text-[#FF4820]">
-                  {localTestimonialsChangeCount}
+              <button
+                type="button"
+                data-testid="admin-nav-settings"
+                onClick={() => selectAdminSection('settings')}
+                className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
+                  activeTab === 'settings'
+                    ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                    : 'text-[#111111]/76 dark:text-[#F4F3EF]/76 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+                }`}
+              >
+                <span className="inline-flex items-center gap-2.5">
+                  <Building2 className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span>Реквизиты и шлюзы</span>
                 </span>
-              )}
-            </button>
+              </button>
 
-            <button
-              type="button"
-              data-testid="admin-nav-copy"
-              onClick={() => {
-                setActiveTab('copy');
-                setSaveBanner(null);
-              }}
-              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center gap-2.5 transition-colors cursor-pointer whitespace-nowrap ${
-                activeTab === 'copy'
-                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
-              }`}
-            >
-              <FileText className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span>Исследования, FAQ и архив</span>
-            </button>
+              {/* Вторичный свёрнутый контур управления контентом витрины сайта */}
+              <div className="pt-3 mt-3 border-t border-[#111111]/8 dark:border-white/8 space-y-1">
+                <button
+                  type="button"
+                  data-testid="admin-toggle-cms-group"
+                  aria-expanded={showCmsItems}
+                  onClick={() => setIsCmsDrawerOpen((prev) => !prev)}
+                  className="w-full min-h-[38px] px-3.5 py-1.5 rounded-xl text-left text-xs font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:text-[#111111] dark:hover:text-white hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <span>Витрина сайта (CMS)</span>
+                    {cmsUnsavedBadgesCount > 0 && (
+                      <span className="text-[11px] font-bold tabular-nums text-[#B82D0D] dark:text-[#FF7A5C]">
+                        {cmsUnsavedBadgesCount}
+                      </span>
+                    )}
+                  </span>
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 shrink-0 transition-transform duration-150 ${
+                      showCmsItems ? 'rotate-180' : ''
+                    }`}
+                    aria-hidden="true"
+                  />
+                </button>
 
-            <button
-              type="button"
-              data-testid="admin-nav-laya-brand"
-              onClick={() => {
-                setActiveTab('laya_brand');
-                setSaveBanner(null);
-              }}
-              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center gap-2.5 transition-colors cursor-pointer whitespace-nowrap ${
-                activeTab === 'laya_brand'
-                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
-              }`}
-            >
-              <SlidersHorizontal className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span>Персонализация и бренд</span>
-            </button>
+                {showCmsItems && (
+                  <div className="space-y-1 pt-1">
+                    <button
+                      type="button"
+                      data-testid="admin-nav-hero-stage"
+                      onClick={() => selectAdminSection('hero_stage', true)}
+                      className={`w-full min-h-[38px] px-3.5 py-1.5 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
+                        activeTab === 'hero_stage'
+                          ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                          : 'text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-2.5">
+                        <Radio className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                        <span>Первый экран (Hero)</span>
+                      </span>
+                      {hasLocalHeroChanges && (
+                        <span className="text-[11px] font-bold tabular-nums text-[#B82D0D] dark:text-[#FF7A5C]">
+                          1
+                        </span>
+                      )}
+                    </button>
 
-            <button
-              type="button"
-              data-testid="admin-nav-security"
-              onClick={() => {
-                setActiveTab('security');
-                setSaveBanner(null);
-              }}
-              className={`w-full min-h-[42px] px-3.5 py-2 rounded-xl text-left text-xs font-semibold flex items-center gap-2.5 transition-colors cursor-pointer whitespace-nowrap ${
-                activeTab === 'security'
-                  ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                  : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
-              }`}
-            >
-              <ShieldCheck className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span>Защита и заявки</span>
-            </button>
-          </nav>
+                    <button
+                      type="button"
+                      data-testid="admin-nav-portfolio"
+                      onClick={() => selectAdminSection('portfolio', true)}
+                      className={`w-full min-h-[38px] px-3.5 py-1.5 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
+                        activeTab === 'portfolio'
+                          ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                          : 'text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-2.5">
+                        <FolderKanban
+                          className="w-3.5 h-3.5 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span>Портфолио и звук</span>
+                      </span>
+                      {localPortfolioChangeCount > 0 && (
+                        <span className="text-[11px] font-bold tabular-nums text-[#B82D0D] dark:text-[#FF7A5C]">
+                          {localPortfolioChangeCount}
+                        </span>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="admin-nav-duel"
+                      onClick={() => selectAdminSection('duel', true)}
+                      className={`w-full min-h-[38px] px-3.5 py-1.5 rounded-xl text-left text-xs font-semibold flex items-center gap-2.5 transition-colors cursor-pointer whitespace-nowrap ${
+                        activeTab === 'duel'
+                          ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                          : 'text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+                      }`}
+                    >
+                      <AudioWaveform
+                        className="w-3.5 h-3.5 shrink-0"
+                        aria-hidden="true"
+                      />
+                      <span>Дуэль 15 секунд</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="admin-nav-testimonials"
+                      onClick={() => selectAdminSection('testimonials', true)}
+                      className={`w-full min-h-[38px] px-3.5 py-1.5 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 transition-colors cursor-pointer whitespace-nowrap ${
+                        activeTab === 'testimonials'
+                          ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                          : 'text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-2.5">
+                        <MessageSquareQuote
+                          className="w-3.5 h-3.5 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span>Отзывы клиентов</span>
+                      </span>
+                      {localTestimonialsChangeCount > 0 && (
+                        <span className="text-[11px] font-bold tabular-nums text-[#B82D0D] dark:text-[#FF7A5C]">
+                          {localTestimonialsChangeCount}
+                        </span>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="admin-nav-copy"
+                      onClick={() => selectAdminSection('copy', true)}
+                      className={`w-full min-h-[38px] px-3.5 py-1.5 rounded-xl text-left text-xs font-semibold flex items-center gap-2.5 transition-colors cursor-pointer whitespace-nowrap ${
+                        activeTab === 'copy'
+                          ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                          : 'text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+                      }`}
+                    >
+                      <FileText
+                        className="w-3.5 h-3.5 shrink-0"
+                        aria-hidden="true"
+                      />
+                      <span>Тарифы, FAQ и архив</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="admin-nav-laya-brand"
+                      onClick={() => selectAdminSection('laya_brand', true)}
+                      className={`w-full min-h-[38px] px-3.5 py-1.5 rounded-xl text-left text-xs font-semibold flex items-center gap-2.5 transition-colors cursor-pointer whitespace-nowrap ${
+                        activeTab === 'laya_brand'
+                          ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                          : 'text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+                      }`}
+                    >
+                      <SlidersHorizontal
+                        className="w-3.5 h-3.5 shrink-0"
+                        aria-hidden="true"
+                      />
+                      <span>Бренд и профили витрины</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </nav>
+          </div>
         </div>
 
-        {/* Bottom Workspace Actions */}
-        <div className="pt-6 mt-6 border-t border-[#111111]/10 dark:border-white/10 space-y-1.5">
+        {/* Нижний блок действий кабинета и активный оператор сессии */}
+        <div
+          className={`${isMobileNavOpen ? 'block' : 'hidden'} lg:block pt-5 mt-5 border-t border-[#111111]/10 dark:border-white/10 space-y-1.5`}
+        >
+          <div
+            data-testid="admin-active-operator-badge"
+            className="px-3.5 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] text-xs space-y-0.5"
+          >
+            <div className="flex items-center gap-2 font-semibold text-[#111111] dark:text-[#F4F3EF] truncate">
+              <UserCheck className="w-3.5 h-3.5 shrink-0 text-[#166534] dark:text-[#4ADE80]" aria-hidden="true" />
+              <span className="truncate">{operatorName}</span>
+            </div>
+            <p className="text-[11px] text-[#111111]/70 dark:text-[#F4F3EF]/70">
+              Сессия ASVS · 30 мин idle / 12 ч
+            </p>
+          </div>
+
           <a
             href="/"
             data-testid="admin-back-to-site"
@@ -534,7 +588,7 @@ export function AdminWorkspace({
               e.preventDefault();
               onNavigateHome();
             }}
-            className="w-full min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white flex items-center justify-between gap-2 transition-colors whitespace-nowrap"
+            className="w-full min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white flex items-center justify-between gap-2 transition-colors whitespace-nowrap"
           >
             <span>На витрину сайта</span>
             <ArrowUpRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
@@ -543,7 +597,7 @@ export function AdminWorkspace({
           <button
             type="button"
             onClick={onToggleTheme}
-            className="w-full min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-medium text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white flex items-center gap-2.5 transition-colors cursor-pointer whitespace-nowrap"
+            className="w-full min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-medium text-[#111111]/74 dark:text-[#F4F3EF]/74 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white flex items-center gap-2.5 transition-colors cursor-pointer whitespace-nowrap"
           >
             {isDark ? (
               <Sun className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
@@ -556,7 +610,7 @@ export function AdminWorkspace({
           <button
             type="button"
             onClick={() => void logout()}
-            className="w-full min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-medium text-[#111111]/62 dark:text-[#F4F3EF]/62 hover:text-[#DC2626] dark:hover:text-[#F87171] hover:bg-[#DC2626]/6 flex items-center gap-2.5 transition-colors cursor-pointer whitespace-nowrap"
+            className="w-full min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:text-[#B91C1C] dark:hover:text-[#F87171] hover:bg-[#DC2626]/6 flex items-center gap-2.5 transition-colors cursor-pointer whitespace-nowrap"
           >
             <LogOut className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
             <span>Выйти из кабинета</span>
@@ -564,66 +618,40 @@ export function AdminWorkspace({
         </div>
       </aside>
 
-      {/* Main Content Area */}
+      {/* Рабочая область кабинета */}
       <div className="flex-1 min-w-0 flex flex-col">
-        {/* Contextual Top Header */}
-        <header className="sticky top-0 z-20 bg-[#F7F6F2]/92 dark:bg-[#0D0D0F]/92 backdrop-blur-md border-b border-[#111111]/10 dark:border-white/10 px-5 sm:px-8 py-4 flex flex-wrap items-center justify-between gap-4">
+        {/* Верхняя контекстная панель (компактная на мобильном ≤ 15% высоты экрана) */}
+        <header className="sticky top-0 z-20 bg-[#F7F6F2]/94 dark:bg-[#0D0D0F]/94 backdrop-blur-md border-b border-[#111111]/10 dark:border-white/10 px-4 sm:px-8 py-2.5 sm:py-3.5 flex items-center justify-between gap-3">
           <div className="min-w-0 space-y-0.5">
-            <div className="flex flex-wrap items-center gap-2 text-xs text-[#111111]/56 dark:text-[#F4F3EF]/56">
-              <span>Кабинет студии</span>
-              <span aria-hidden="true">/</span>
-              <span className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
+              <span className="hidden sm:inline">Кабинет студии</span>
+              <span className="hidden sm:inline" aria-hidden="true">/</span>
+              <span className="font-semibold text-[#111111] dark:text-[#F4F3EF] truncate">
                 {SECTION_META[activeTab].label}
               </span>
-              <span aria-hidden="true">·</span>
-              {isOrdersOrScienceTab ? (
+              <span className="hidden md:inline" aria-hidden="true">·</span>
+              {isOperationalTab ? (
                 <span
                   data-testid="admin-crm-realtime-status"
-                  className="inline-flex items-center gap-1.5 font-medium text-[#16A34A] dark:text-[#4ADE80] tabular-nums"
+                  className="hidden md:inline-flex items-center gap-1.5 font-medium text-[#166534] dark:text-[#4ADE80] tabular-nums"
                 >
                   <CheckCircle2
                     className="w-3.5 h-3.5 shrink-0"
                     aria-hidden="true"
                   />
-                  <span>Реестр сделок на сервере · автосохранение</span>
+                  <span>Реестр на сервере · автосохранение</span>
                 </span>
-              ) : isLiveTextTab ? (
-                liveModifiedCount > 0 ? (
-                  <span
-                    data-testid="admin-live-session-status"
-                    className="inline-flex items-center gap-1.5 font-semibold text-[#16A34A] dark:text-[#4ADE80] tabular-nums"
-                  >
-                    <CheckCircle2
-                      className="w-3.5 h-3.5 shrink-0"
-                      aria-hidden="true"
-                    />
-                    <span>
-                      Обновлено в памяти сессии ({liveModifiedCount})
-                    </span>
-                  </span>
-                ) : (
-                  <span
-                    data-testid="admin-live-session-status"
-                    className="inline-flex items-center gap-1.5 font-medium text-[#16A34A] dark:text-[#4ADE80]"
-                  >
-                    <CheckCircle2
-                      className="w-3.5 h-3.5 shrink-0"
-                      aria-hidden="true"
-                    />
-                    <span>Реальное время · память сессии</span>
-                  </span>
-                )
               ) : hasLocalChanges ? (
                 <span
                   data-testid="admin-local-cms-status"
-                  className="inline-flex items-center gap-1.5 font-semibold text-[#16A34A] dark:text-[#4ADE80] tabular-nums"
+                  className="hidden md:inline-flex items-center gap-1.5 font-semibold text-[#166534] dark:text-[#4ADE80] tabular-nums"
                 >
                   <CheckCircle2
                     className="w-3.5 h-3.5 shrink-0"
                     aria-hidden="true"
                   />
                   <span>
-                    Сохранено в локальном состоянии CMS
+                    Неопубликованные правки CMS
                     {localPortfolioChangeCount > 0
                       ? ` (${localPortfolioChangeCount})`
                       : ''}
@@ -632,7 +660,7 @@ export function AdminWorkspace({
               ) : (
                 <span
                   data-testid="admin-published-status"
-                  className="inline-flex items-center gap-1.5 font-medium text-[#16A34A] dark:text-[#4ADE80] tabular-nums"
+                  className="hidden md:inline-flex items-center gap-1.5 font-medium text-[#166534] dark:text-[#4ADE80] tabular-nums"
                 >
                   <CheckCircle2
                     className="w-3.5 h-3.5 shrink-0"
@@ -641,23 +669,23 @@ export function AdminWorkspace({
                   <span>
                     {isCustomizedOnServer
                       ? `Опубликовано${formattedTime ? ` в ${formattedTime}` : ''}`
-                      : 'Локальное состояние CMS синхронизировано'}
+                      : 'Витрина синхронизирована'}
                   </span>
                 </span>
               )}
             </div>
-            <p className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58 truncate">
+            <p className="hidden sm:block text-xs text-[#111111]/70 dark:text-[#F4F3EF]/70 truncate">
               {SECTION_META[activeTab].subtitle}
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
-            {isOrdersOrScienceTab ? (
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 shrink-0">
+            {isOperationalTab ? (
               <button
                 type="button"
                 data-testid="admin-open-live-site-btn"
                 onClick={onNavigateHome}
-                className="min-h-[40px] px-4 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                className="min-h-[38px] sm:min-h-[40px] px-3.5 sm:px-4 py-1.5 sm:py-2 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
               >
                 <span>На витрину сайта</span>
                 <ArrowUpRight
@@ -665,42 +693,13 @@ export function AdminWorkspace({
                   aria-hidden="true"
                 />
               </button>
-            ) : isLiveTextTab ? (
-              <>
-                {liveModifiedCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={resetLiveTextBlocks}
-                    className="min-h-[40px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:text-[#111111] dark:hover:text-white inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                  >
-                    <RotateCcw
-                      className="w-3.5 h-3.5 shrink-0"
-                      aria-hidden="true"
-                    />
-                    <span>Сбросить правки</span>
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  data-testid="admin-open-live-site-btn"
-                  onClick={onNavigateHome}
-                  className="min-h-[40px] px-4 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                >
-                  <span>Проверить на витрине</span>
-                  <ArrowUpRight
-                    className="w-3.5 h-3.5 shrink-0"
-                    aria-hidden="true"
-                  />
-                </button>
-              </>
             ) : (
               <>
                 {hasLocalChanges && (
                   <button
                     type="button"
                     onClick={handleDiscardLocal}
-                    className="min-h-[40px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78 hover:text-[#111111] dark:hover:text-white inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                    className="min-h-[38px] sm:min-h-[40px] px-3.5 py-1.5 sm:py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:text-[#111111] dark:hover:text-white inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
                   >
                     <RotateCcw
                       className="w-3.5 h-3.5 shrink-0"
@@ -718,7 +717,7 @@ export function AdminWorkspace({
                       ? handleNavigateToAnchor('#testimonials')
                       : onNavigateHome()
                   }
-                  className="min-h-[40px] px-3.5 py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                  className="min-h-[38px] sm:min-h-[40px] px-3.5 py-1.5 sm:py-2 rounded-xl border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#C83210] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
                 >
                   <span>Проверить на витрине</span>
                   <ArrowUpRight
@@ -732,7 +731,7 @@ export function AdminWorkspace({
                   disabled={isSaving || !hasLocalChanges}
                   data-testid="admin-save-publish-btn"
                   onClick={() => void handleSavePublish()}
-                  className="min-h-[40px] px-4 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] disabled:opacity-45 text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer disabled:cursor-default whitespace-nowrap shrink-0"
+                  className="min-h-[38px] sm:min-h-[40px] px-4 py-1.5 sm:py-2 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] disabled:opacity-45 text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer disabled:cursor-default whitespace-nowrap shrink-0"
                 >
                   <Save className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                   <span>
@@ -744,16 +743,16 @@ export function AdminWorkspace({
           </div>
         </header>
 
-        {/* Main Workspace Body */}
-        <main className="flex-1 px-5 sm:px-8 py-6 sm:py-8 max-w-7xl w-full mx-auto space-y-6">
+        {/* Основной холст раздела */}
+        <main className="flex-1 px-4 sm:px-8 py-5 sm:py-8 max-w-7xl w-full mx-auto space-y-6">
           {saveBanner && (
             <div
               role="status"
               data-testid="admin-save-banner"
               className={`px-4 py-3 rounded-xl text-xs font-medium border ${
                 saveBanner.kind === 'ok'
-                  ? 'bg-[#16A34A]/10 border-[#16A34A]/30 text-[#15803D] dark:text-[#4ADE80]'
-                  : 'bg-[#DC2626]/10 border-[#DC2626]/30 text-[#DC2626] dark:text-[#F87171]'
+                  ? 'bg-[#16A34A]/10 border-[#16A34A]/30 text-[#166534] dark:text-[#4ADE80]'
+                  : 'bg-[#DC2626]/10 border-[#DC2626]/30 text-[#B91C1C] dark:text-[#F87171]'
               }`}
             >
               {saveBanner.text}
@@ -763,14 +762,17 @@ export function AdminWorkspace({
           {guardrailWarnings.length > 0 && (
             <div
               role="status"
-              className="px-4 py-3 rounded-xl text-xs font-medium bg-[#D97706]/10 border border-[#D97706]/30 text-[#B45309] dark:text-[#FBBF24] flex items-start gap-2.5"
+              className="px-4 py-3 rounded-xl text-xs font-medium bg-[#D97706]/10 border border-[#D97706]/30 text-[#92400E] dark:text-[#FBBF24] flex items-start gap-2.5"
             >
               <AlertTriangle
                 className="w-4 h-4 shrink-0 mt-0.5"
                 aria-hidden="true"
               />
               <span>
-                Редакционный контроль FMWorks: в тексте встретились нежелательные штампы или гео-привязки ({guardrailWarnings.join(', ')}). Рекомендуем заменить их на нейтральные формулировки федерального продакшна.
+                Редакционный контроль FMWorks: в тексте встретились
+                нежелательные штампы или гео-привязки (
+                {guardrailWarnings.join(', ')}). Рекомендуем заменить их на
+                нейтральные формулировки федерального продакшна.
               </span>
             </div>
           )}
@@ -783,15 +785,30 @@ export function AdminWorkspace({
               activeScene={activeTab}
               onSelectScene={(sceneId) => {
                 setActiveTab(sceneId);
+                setIsCmsDrawerOpen(true);
                 setSaveBanner(null);
               }}
               onNavigateToAnchor={handleNavigateToAnchor}
             />
           )}
 
-          {(activeTab === 'orders_crm' || activeTab === 'science_plan') && (
+          {(activeTab === 'orders_crm' ||
+            activeTab === 'production' ||
+            activeTab === 'settings') && (
             <AdminOrdersCrmPanel
-              initialSubView={activeTab === 'science_plan' ? 'science' : 'funnel'}
+              viewGroup={
+                activeTab === 'production'
+                  ? 'production'
+                  : activeTab === 'settings'
+                    ? 'settings'
+                    : 'ledger'
+              }
+              focusedOrderId={focusedOrderId}
+              onNavigateToProductionOrder={(orderId) => {
+                setFocusedOrderId(orderId);
+                setActiveTab('production');
+                setSaveBanner(null);
+              }}
             />
           )}
 
@@ -830,10 +847,12 @@ export function AdminWorkspace({
               onOpenBrandKit={onOpenBrandKit}
               onOpenHeroStageAdmin={() => {
                 setActiveTab('hero_stage');
+                setIsCmsDrawerOpen(true);
                 setSaveBanner(null);
               }}
               onOpenDuelAdmin={() => {
                 setActiveTab('duel');
+                setIsCmsDrawerOpen(true);
                 setSaveBanner(null);
               }}
             />
@@ -860,6 +879,7 @@ export function AdminWorkspace({
               onUploadAudio={uploadAudioFile}
               onOpenPortfolioTab={() => {
                 setActiveTab('portfolio');
+                setIsCmsDrawerOpen(true);
                 setSaveBanner(null);
               }}
               onNavigateToHeroOnSite={() => handleNavigateToAnchor('#top')}
@@ -896,21 +916,21 @@ export function AdminWorkspace({
               onAssignCaseToHero={(item) =>
                 updateLocalSnapshot((prev) => ({
                   ...prev,
-                  heroStage: assignPortfolioCaseToHeroStage(prev.heroStage, item),
+                  heroStage: assignPortfolioCaseToHeroStage(
+                    prev.heroStage,
+                    item
+                  ),
                 }))
               }
               onOpenHeroStageTab={() => {
                 setActiveTab('hero_stage');
+                setIsCmsDrawerOpen(true);
                 setSaveBanner(null);
               }}
               onUploadAudio={uploadAudioFile}
               onUploadImage={uploadImageFile}
-              onNavigateToGallery={handleNavigateToGallery}
+              onNavigateToGallery={() => handleNavigateToAnchor('#work')}
             />
-          )}
-
-          {activeTab === 'text_blocks' && (
-            <AdminTextBlocksPanel onNavigateHome={onNavigateHome} />
           )}
 
           {activeTab === 'duel' && (
@@ -957,8 +977,6 @@ export function AdminWorkspace({
               onUploadImage={uploadImageFile}
             />
           )}
-
-          {activeTab === 'security' && <AdminSecurityPanel />}
         </main>
       </div>
     </div>

@@ -376,7 +376,7 @@ class LazyContrastAudioEngine {
   public loadCustomShowreel(
     objectUrl: string,
     fileName: string,
-    autoPlay = true
+    autoPlay = false
   ): void {
     void this.preload().then((engine) => {
       engine.loadCustomShowreel(objectUrl, fileName, autoPlay);

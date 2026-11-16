@@ -86,7 +86,7 @@ export function LayaSimulationConsole({
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    contrastAudioEngine.loadCustomShowreel(objectUrl, file.name, mode === 'floating');
+    contrastAudioEngine.loadCustomShowreel(objectUrl, file.name, false);
     event.target.value = '';
   };
 

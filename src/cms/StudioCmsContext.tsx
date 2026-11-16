@@ -8,7 +8,10 @@ import {
 } from './studioCmsStore';
 
 export interface StudioCmsContextValue extends StudioCmsState {
-  login: (password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  login: (
+    password: string,
+    operatorName?: string
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
   logout: () => Promise<void>;
   updateLocalSnapshot: (
     updater:
@@ -51,7 +54,8 @@ export function StudioCmsProvider({ children }: { children: ReactNode }) {
 
   const value: StudioCmsContextValue = {
     ...cmsState,
-    login: (password) => studioCmsStore.login(password),
+    login: (password, operatorName) =>
+      studioCmsStore.login(password, operatorName),
     logout: () => studioCmsStore.logout(),
     updateLocalSnapshot: (updater) => studioCmsStore.updateLocalSnapshot(updater),
     discardLocalChanges: () => studioCmsStore.discardLocalChanges(),

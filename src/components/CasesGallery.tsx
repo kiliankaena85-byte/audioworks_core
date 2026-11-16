@@ -22,7 +22,6 @@ import {
   computeCaseHoverOffset,
   getCasePreviewWindow,
   readSharedCaseIdFromLocation,
-  shouldStartHoverPreview,
 } from '../data/casesData';
 import { orderPublishedCmsCasesForPersona } from '../data/studioCmsTypes';
 import { useLayaDecision } from '../engine/LayaContext';
@@ -30,8 +29,6 @@ import { PremiumAcousticWaveform } from './PremiumAcousticWaveform';
 
 const LOCAL_CASE_FALLBACK_IMAGE =
   '/src/assets/images/hero_studio_editorial_1794399404984.jpg';
-
-const HOVER_PREVIEW_DELAY_MS = 80;
 
 interface CasesGalleryProps {
   playerSnap: CasePlayerSnapshot;
@@ -195,27 +192,15 @@ function useCaseHoverPreview({
     };
   }, []);
 
-  const handlePreviewPointerEnter = (e: ReactPointerEvent<HTMLElement>) => {
-    if (!onStartPreview) return;
-    if (
-      !shouldStartHoverPreview({
-        pointerType: e.pointerType,
-        isPlaying: isGlobalPlaying,
-        playbackMode: globalPlaybackMode,
-      })
-    ) {
-      return;
-    }
-    clearPendingTimer();
-    timerRef.current = window.setTimeout(() => {
-      timerRef.current = null;
-      onStartPreview(item);
-    }, HOVER_PREVIEW_DELAY_MS);
+  const handlePreviewPointerEnter = (_e: ReactPointerEvent<HTMLElement>) => {
+    // Автоматическое проигрывание при наведении отключено: звук запускается только по кнопке «Слушать».
   };
 
   const handlePreviewPointerLeave = () => {
     clearPendingTimer();
-    onStopPreview?.(item.id);
+    if (isGlobalPlaying && globalPlaybackMode === 'preview') {
+      onStopPreview?.(item.id);
+    }
   };
 
   return {
@@ -979,8 +964,8 @@ export function CasesGallery({
             Наши работы
           </h2>
           <p className="text-base sm:text-xl text-[#111111]/68 dark:text-[#F4F3EF]/68 editorial-pretty">
-            Как звучат бренды, когда за дело берётся продакшн. Наведите курсор на
-            карточку для короткого превью или включите ролик целиком.
+            Как звучат бренды, когда за дело берётся продакшн. Включите любой
+            ролик по кнопке «Слушать», чтобы оценить режиссуру и подачу в эфире.
           </p>
         </div>
 

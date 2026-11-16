@@ -9,7 +9,7 @@ import {
   Trash2,
   Users,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { type KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import { studioCmsStore } from '../../cms/studioCmsStore';
 import { formatFileSizeReadable } from '../../data/clientCabinetHelpers';
 import type { CrmOrderRecord } from '../../data/orderCrmTypes';
@@ -27,7 +27,13 @@ import {
   type StudioKanbanColumnId,
 } from '../../data/productionApprovalWorkflow';
 import { formatRubCompact } from '../../data/radioInventory';
+import { resolveNextTabIdOnArrowKey } from '../../security/adminSessionStandards';
 import { OrderStageHistoryTimeline } from './OrderStageHistoryTimeline';
+
+const KANBAN_TAB_IDS: readonly ('all' | StudioKanbanColumnId)[] = [
+  'all',
+  ...STUDIO_KANBAN_COLUMNS.map((c) => c.id),
+];
 
 export interface AdminProductionKanbanViewProps {
   orders: CrmOrderRecord[];
@@ -90,6 +96,21 @@ export function AdminProductionKanbanView({
   const [columnFilter, setColumnFilter] = useState<
     'all' | StudioKanbanColumnId
   >('all');
+
+  const handleKanbanTabKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    currentId: 'all' | StudioKanbanColumnId
+  ) => {
+    const nextId = resolveNextTabIdOnArrowKey(
+      KANBAN_TAB_IDS,
+      currentId,
+      event.key
+    );
+    if (!nextId) return;
+    event.preventDefault();
+    setColumnFilter(nextId);
+    document.getElementById(`kanban-tab-btn-${nextId}`)?.focus();
+  };
   const [isRosterOpen, setIsRosterOpen] = useState<boolean>(false);
   const [rosterDraft, setRosterDraft] =
     useState<SoundEngineerContact[]>(soundEngineers);
@@ -581,7 +602,7 @@ export function AdminProductionKanbanView({
             <h2 className="text-sm sm:text-base font-bold text-[#111111] dark:text-[#F4F3EF]">
               Конвейер продакшна: режиссёрский мандат и шлюз звукорежиссёра
             </h2>
-            <p className="text-xs text-[#111111]/60 dark:text-[#F4F3EF]/60">
+            <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
               Клиент видит 3 спокойных этапа · звукорежиссёр получает техлист на
               почту / в Telegram с однокнопочной ссылкой прямой сдачи файла
             </p>
@@ -591,7 +612,7 @@ export function AdminProductionKanbanView({
             type="button"
             data-testid="kanban-toggle-roster-btn"
             onClick={() => setIsRosterOpen((prev) => !prev)}
-            className="min-h-[36px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            className="min-h-[36px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
           >
             <Users className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
             <span>
@@ -609,18 +630,30 @@ export function AdminProductionKanbanView({
           className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2 pt-1"
         >
           <button
+            id="kanban-tab-btn-all"
             type="button"
             role="tab"
             aria-selected={columnFilter === 'all'}
+            aria-controls="kanban-orders-tabpanel"
+            tabIndex={columnFilter === 'all' ? 0 : -1}
             data-testid="kanban-col-filter-all"
             onClick={() => setColumnFilter('all')}
+            onKeyDown={(e) => handleKanbanTabKeyDown(e, 'all')}
             className={`min-h-[54px] px-3 py-2 rounded-xl border text-left transition-colors cursor-pointer flex flex-col justify-between ${
               columnFilter === 'all'
                 ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:border-[#F4F3EF]'
-                : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] border-[#111111]/10 dark:border-white/10 text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820]'
+                : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] border-[#111111]/10 dark:border-white/10 text-[#111111] dark:text-[#F4F3EF] hover:border-[#C83210]'
             }`}
           >
-            <span className="text-[11px] opacity-70">Все колонки</span>
+            <span
+              className={`text-[11px] ${
+                columnFilter === 'all'
+                  ? 'text-white/85 dark:text-[#0D0D0F]/80'
+                  : 'text-[#111111]/72 dark:text-[#F4F3EF]/72'
+              }`}
+            >
+              Все колонки
+            </span>
             <span className="text-xs font-bold">
               Все заказы ({hydratedOrders.length})
             </span>
@@ -631,20 +664,30 @@ export function AdminProductionKanbanView({
             const count = columnCounts[col.id];
             return (
               <button
+                id={`kanban-tab-btn-${col.id}`}
                 key={col.id}
                 type="button"
                 role="tab"
                 title={col.title}
                 aria-selected={active}
+                aria-controls="kanban-orders-tabpanel"
+                tabIndex={active ? 0 : -1}
                 data-testid={`kanban-col-filter-${col.id}`}
                 onClick={() => setColumnFilter(col.id)}
+                onKeyDown={(e) => handleKanbanTabKeyDown(e, col.id)}
                 className={`min-h-[54px] px-3 py-2 rounded-xl border text-left transition-colors cursor-pointer flex flex-col justify-between ${
                   active
                     ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:border-[#F4F3EF]'
-                    : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] border-[#111111]/10 dark:border-white/10 text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820]'
+                    : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] border-[#111111]/10 dark:border-white/10 text-[#111111] dark:text-[#F4F3EF] hover:border-[#C83210]'
                 }`}
               >
-                <span className="text-[11px] opacity-70 whitespace-nowrap">
+                <span
+                  className={`text-[11px] whitespace-nowrap ${
+                    active
+                      ? 'text-white/85 dark:text-[#0D0D0F]/80'
+                      : 'text-[#111111]/72 dark:text-[#F4F3EF]/72'
+                  }`}
+                >
                   {col.stepCode} · {count} шт.
                 </span>
                 <span className="text-xs font-bold leading-snug whitespace-nowrap truncate">
@@ -764,7 +807,7 @@ export function AdminProductionKanbanView({
                             prev.filter((_, i) => i !== index)
                           )
                         }
-                        className="min-h-[36px] px-2 rounded-lg text-[#111111]/45 dark:text-[#F4F3EF]/45 hover:text-[#DC2626] cursor-pointer shrink-0"
+                        className="min-h-[36px] min-w-[36px] px-2 inline-flex items-center justify-center rounded-lg text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:text-[#B91C1C] dark:hover:text-[#F87171] cursor-pointer shrink-0"
                       >
                         <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                       </button>
@@ -780,7 +823,7 @@ export function AdminProductionKanbanView({
                 disabled={isSavingRoster}
                 data-testid="kanban-save-roster-btn"
                 onClick={() => void handleSaveRoster()}
-                className="min-h-[38px] px-4 py-1.5 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+                className="min-h-[38px] px-4 py-1.5 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] text-white text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
               >
                 {isSavingRoster
                   ? 'Сохранение…'
@@ -792,7 +835,12 @@ export function AdminProductionKanbanView({
       </div>
 
       {/* Рабочая область: очередь заказов слева + инспектор конвейера справа */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+      <div
+        id="kanban-orders-tabpanel"
+        role="tabpanel"
+        aria-labelledby={`kanban-tab-btn-${columnFilter}`}
+        className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start"
+      >
         <div className="lg:col-span-4 rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 divide-y divide-[#111111]/8 dark:divide-white/8 overflow-hidden">
           {visibleOrders.length === 0 ? (
             <div className="p-6 text-center space-y-2">
@@ -802,7 +850,7 @@ export function AdminProductionKanbanView({
               <button
                 type="button"
                 onClick={() => setColumnFilter('all')}
-                className="text-xs font-semibold text-[#FF4820] hover:underline cursor-pointer"
+                className="min-h-[32px] px-3 py-1 rounded-lg text-xs font-semibold text-[#B82D0D] dark:text-[#FF7A5C] hover:underline cursor-pointer"
               >
                 Показать все заказы ({hydratedOrders.length})
               </button>
@@ -826,7 +874,7 @@ export function AdminProductionKanbanView({
                   onClick={() => onSelectOrderId(ord.id)}
                   className={`w-full p-4 text-left transition-colors cursor-pointer space-y-1.5 ${
                     isSelected
-                      ? 'bg-[#FF4820]/8 dark:bg-[#FF4820]/12'
+                      ? 'bg-[#C83210]/8 dark:bg-[#FF7A5C]/12'
                       : 'hover:bg-[#F7F6F2] dark:hover:bg-[#0D0D0F]'
                   }`}
                 >
@@ -834,7 +882,7 @@ export function AdminProductionKanbanView({
                     <span className="font-bold text-[#111111] dark:text-[#F4F3EF]">
                       #{ord.orderNumber} · {wf.targetSlotSec} с
                     </span>
-                    <span className="text-[11px] font-medium text-[#111111]/56 dark:text-[#F4F3EF]/56">
+                    <span className="text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
                       {colMeta?.stepCode}. {colMeta?.title}
                     </span>
                   </div>
@@ -846,10 +894,10 @@ export function AdminProductionKanbanView({
                   <p
                     className={`text-[11px] font-semibold ${
                       turn.actor === 'producer'
-                        ? 'text-[#FF4820]'
+                        ? 'text-[#B82D0D] dark:text-[#FF7A5C]'
                         : turn.actor === 'completed'
-                          ? 'text-[#15803D] dark:text-[#4ADE80]'
-                          : 'text-[#111111]/62 dark:text-[#F4F3EF]/62'
+                          ? 'text-[#166534] dark:text-[#4ADE80]'
+                          : 'text-[#111111]/72 dark:text-[#F4F3EF]/72'
                     }`}
                   >
                     {turn.labelForProducer}
@@ -870,21 +918,21 @@ export function AdminProductionKanbanView({
             {/* Шапка выбранного заказа */}
             <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-[#111111]/10 dark:border-white/10">
               <div className="space-y-1">
-                <div className="flex flex-wrap items-center gap-2 text-xs text-[#111111]/62 dark:text-[#F4F3EF]/62">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
                   <span className="font-bold text-[#111111] dark:text-[#F4F3EF]">
                     #{activeOrder.orderNumber}
                   </span>
                   <span aria-hidden="true">·</span>
                   <span>{activeOrder.formatLabel}</span>
                   <span aria-hidden="true">·</span>
-                  <span className="font-semibold text-[#FF4820]">
+                  <span className="font-semibold text-[#B82D0D] dark:text-[#FF7A5C]">
                     {resolveWhoseTurn(activeOrder.approvalWorkflow).labelForProducer}
                   </span>
                 </div>
                 <h3 className="text-lg font-bold text-[#111111] dark:text-[#F4F3EF]">
                   {activeOrder.companyOrInn || activeOrder.contact}
                 </h3>
-                <p className="text-xs text-[#111111]/64 dark:text-[#F4F3EF]/64">
+                <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
                   Бюджет договора: {formatRubCompact(activeOrder.totalBudgetRub)} ·{' '}
                   Сервисный раунд доводки:{' '}
                   <strong>
@@ -916,7 +964,7 @@ export function AdminProductionKanbanView({
                 className="p-4 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] space-y-3"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <h4 className="text-xs sm:text-sm font-bold text-[#FF4820]">
+                  <h4 className="text-xs sm:text-sm font-bold text-[#B82D0D] dark:text-[#FF7A5C]">
                     Буфер ОТК продюсера: проверьте сданный файл перед отправкой
                     клиенту
                   </h4>
@@ -947,10 +995,10 @@ export function AdminProductionKanbanView({
                             <span
                               className={`font-semibold ${
                                 fit.status === 'exact'
-                                  ? 'text-[#15803D] dark:text-[#4ADE80]'
+                                  ? 'text-[#166534] dark:text-[#4ADE80]'
                                   : fit.status === 'tolerance_warning'
-                                    ? 'text-[#D97706] dark:text-[#FBBF24]'
-                                    : 'text-[#DC2626] dark:text-[#F87171]'
+                                    ? 'text-[#92400E] dark:text-[#FBBF24]'
+                                    : 'text-[#B91C1C] dark:text-[#F87171]'
                               }`}
                             >
                               {fit.badgeText}
@@ -958,7 +1006,7 @@ export function AdminProductionKanbanView({
                           </div>
 
                           {take.engineerNote && (
-                            <p className="text-xs text-[#111111]/70 dark:text-[#F4F3EF]/70">
+                            <p className="text-xs text-[#111111]/75 dark:text-[#F4F3EF]/75">
                               Пометка звукорежиссёра: «{take.engineerNote}»
                             </p>
                           )}
@@ -972,7 +1020,7 @@ export function AdminProductionKanbanView({
 
                           <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                             <div className="inline-flex items-center gap-1.5 text-xs">
-                              <span className="text-[#111111]/64 dark:text-[#F4F3EF]/64">
+                              <span className="text-[#111111]/72 dark:text-[#F4F3EF]/72">
                                 Метка версии:
                               </span>
                               {(['v1', 'v2', 'master'] as const).map((ver) => (
@@ -985,7 +1033,7 @@ export function AdminProductionKanbanView({
                                       [take.id]: ver,
                                     }))
                                   }
-                                  className={`min-h-[30px] px-2.5 py-1 rounded-lg text-xs font-semibold border cursor-pointer whitespace-nowrap shrink-0 ${
+                                  className={`min-h-[32px] px-2.5 py-1 rounded-lg text-xs font-semibold border cursor-pointer whitespace-nowrap shrink-0 ${
                                     chosenVer === ver
                                       ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
                                       : 'bg-white dark:bg-[#141418] border-[#111111]/12 dark:border-white/12'
@@ -1001,7 +1049,7 @@ export function AdminProductionKanbanView({
                               disabled={isPublishingTakeId === take.id}
                               data-testid={`kanban-publish-take-btn-${take.id}`}
                               onClick={() => void handlePublishTakeToClient(take.id)}
-                              className="min-h-[38px] px-4 py-1.5 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+                              className="min-h-[38px] px-4 py-1.5 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
                             >
                               <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
                               <span>
@@ -1024,7 +1072,7 @@ export function AdminProductionKanbanView({
                 data-testid="kanban-escalation-section"
                 className="p-4 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] space-y-3"
               >
-                <h4 className="text-xs sm:text-sm font-bold text-[#FF4820]">
+                <h4 className="text-xs sm:text-sm font-bold text-[#B82D0D] dark:text-[#FF7A5C]">
                   Запрос клиента требует решения продюсера (без микро-счетов)
                 </h4>
 
@@ -1046,10 +1094,14 @@ export function AdminProductionKanbanView({
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
                   <div className="sm:col-span-2">
-                    <label className="block text-[11px] font-medium text-[#111111]/64 dark:text-[#F4F3EF]/64 mb-1">
+                    <label
+                      htmlFor="kanban-escalation-note"
+                      className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                    >
                       Комментарий для звукорежиссёра и клиента
                     </label>
                     <input
+                      id="kanban-escalation-note"
                       type="text"
                       value={escalationNoteDraft}
                       onChange={(e) => setEscalationNoteDraft(e.target.value)}
@@ -1058,10 +1110,14 @@ export function AdminProductionKanbanView({
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-medium text-[#111111]/64 dark:text-[#F4F3EF]/64 mb-1">
+                    <label
+                      htmlFor="kanban-escalation-budget"
+                      className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                    >
                       Сумма единого счёта, ₽
                     </label>
                     <input
+                      id="kanban-escalation-budget"
                       type="text"
                       inputMode="numeric"
                       value={escalationBudgetDraft}
@@ -1077,7 +1133,7 @@ export function AdminProductionKanbanView({
                     disabled={isResolvingEscalation}
                     data-testid="kanban-resolve-loyal-btn"
                     onClick={() => void handleResolveEscalation('loyal_included')}
-                    className="min-h-[38px] px-4 py-1.5 rounded-xl bg-[#111111] hover:bg-[#FF4820] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+                    className="min-h-[38px] px-4 py-1.5 rounded-xl bg-[#111111] hover:bg-[#C83210] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#C83210] dark:hover:text-white text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
                   >
                     Выполнить лояльно в текущем счёте
                   </button>
@@ -1088,7 +1144,7 @@ export function AdminProductionKanbanView({
                     onClick={() =>
                       void handleResolveEscalation('unified_invoice_adjusted')
                     }
-                    className="min-h-[38px] px-4 py-1.5 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+                    className="min-h-[38px] px-4 py-1.5 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#C83210] text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
                   >
                     Обновить сумму единого счёта
                   </button>
@@ -1106,7 +1162,7 @@ export function AdminProductionKanbanView({
                   02. Задание звукорежиссёру и прямая ссылка сдачи файла
                 </h4>
                 {activeOrder.approvalWorkflow.lastDispatchedToEngineerAt && (
-                  <span className="text-[11px] text-[#15803D] dark:text-[#4ADE80] font-medium">
+                  <span className="text-[11px] text-[#166534] dark:text-[#4ADE80] font-medium">
                     Отправлено{' '}
                     {formatShortTimeRu(
                       activeOrder.approvalWorkflow.lastDispatchedToEngineerAt
@@ -1135,7 +1191,7 @@ export function AdminProductionKanbanView({
                   disabled={isDispatchingEngineer}
                   data-testid="kanban-dispatch-engineer-btn"
                   onClick={() => void handleDispatchToEngineer(false)}
-                  className="min-h-[40px] px-4 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+                  className="min-h-[40px] px-4 py-2 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
                 >
                   <Send className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                   <span>
@@ -1160,7 +1216,7 @@ export function AdminProductionKanbanView({
                         <a
                           href={dispatchedBundle.emailActionPath}
                           data-testid="kanban-dispatched-email-submit-btn"
-                          className="min-h-[34px] px-3.5 py-1.5 rounded-lg bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                          className="min-h-[34px] px-3.5 py-1.5 rounded-lg bg-[#C83210] hover:bg-[#AE2A0C] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
                         >
                           <span>{SOUND_ENGINEER_EMAIL_CTA_LABEL}</span>
                           <ExternalLink className="w-3 h-3" aria-hidden="true" />
@@ -1173,11 +1229,11 @@ export function AdminProductionKanbanView({
                         onClick={() =>
                           void copyTextHelper(dispatchedBundle.dropUrl, 'url')
                         }
-                        className="min-h-[32px] px-3 py-1 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
+                        className="min-h-[32px] px-3 py-1 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
                       >
                         {copiedField === 'url' ? (
                           <Check
-                            className="w-3.5 h-3.5 text-[#16A34A]"
+                            className="w-3.5 h-3.5 text-[#166534] dark:text-[#4ADE80]"
                             aria-hidden="true"
                           />
                         ) : (
@@ -1193,7 +1249,7 @@ export function AdminProductionKanbanView({
                       <a
                         href={dispatchedBundle.dropPath}
                         data-testid="kanban-open-drop-link"
-                        className="min-h-[32px] px-3 py-1 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                        className="min-h-[32px] px-3 py-1 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
                       >
                         <span>Открыть экран сдачи</span>
                         <ExternalLink className="w-3 h-3" aria-hidden="true" />
@@ -1237,7 +1293,7 @@ export function AdminProductionKanbanView({
                     {dispatchedBundle.sheet.mailtoHref && (
                       <a
                         href={dispatchedBundle.sheet.mailtoHref}
-                        className="min-h-[34px] px-3.5 py-1.5 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                        className="min-h-[34px] px-3.5 py-1.5 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
                       >
                         <Mail className="w-3.5 h-3.5" aria-hidden="true" />
                         <span>Открыть в почтовой программе</span>
@@ -1266,7 +1322,7 @@ export function AdminProductionKanbanView({
                           Отправленное e-mail уведомление звукорежиссёру ·{' '}
                           {latestEmail.engineerName} ({latestEmail.engineerEmail})
                         </p>
-                        <p className="text-[11px] text-[#111111]/64 dark:text-[#F4F3EF]/64">
+                        <p className="text-[11px] text-[#111111]/72 dark:text-[#F4F3EF]/72">
                           Тема: <strong>{latestEmail.subject}</strong> · Статус:{' '}
                           {latestEmail.previousStageLabel
                             ? `${latestEmail.previousStageLabel} → ${latestEmail.currentStageLabel}`
@@ -1280,14 +1336,14 @@ export function AdminProductionKanbanView({
                       <a
                         href={latestEmail.emailActionPath}
                         data-testid="kanban-email-cta-submit-file-btn"
-                        className="min-h-[38px] px-4 py-1.5 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                        className="min-h-[38px] px-4 py-1.5 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
                       >
                         <span>{latestEmail.buttonLabel}</span>
                         <ExternalLink className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                       </a>
                     </div>
 
-                    <p className="text-[11px] text-[#111111]/58 dark:text-[#F4F3EF]/58">
+                    <p className="text-[11px] text-[#111111]/72 dark:text-[#F4F3EF]/72">
                       При нажатии на кнопку «{latestEmail.buttonLabel}» в письме
                       автоматически генерируется свежая уникальная ссылка-токен{' '}
                       <code className="font-mono">/sound-drop?token=…</code> для
@@ -1307,15 +1363,15 @@ export function AdminProductionKanbanView({
                 <h4 className="text-xs sm:text-sm font-bold text-[#111111] dark:text-[#F4F3EF]">
                   01. Режиссёрский сценарий для клиента (без промежуточных кастингов)
                 </h4>
-                <span className="text-xs font-medium text-[#111111]/64 dark:text-[#F4F3EF]/64">
+                <span className="text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
                   Хронометраж текста: ~{chronoPreview.estimatedSec} с (
                   {chronoPreview.wordsCount} сл.) при слоте {targetSlotDraft} с
                 </span>
               </div>
 
               {activeOrder.approvalWorkflow.scriptVersions[0]?.clientComment && (
-                <div className="p-3 rounded-xl bg-[#FF4820]/10 text-xs space-y-0.5">
-                  <p className="font-bold text-[#FF4820]">
+                <div className="p-3 rounded-xl bg-[#C83210]/10 text-xs space-y-0.5">
+                  <p className="font-bold text-[#B82D0D] dark:text-[#FF7A5C]">
                     Замечание клиента к сценарию v
                     {activeOrder.approvalWorkflow.scriptVersions[0].versionNumber}:
                   </p>
@@ -1327,10 +1383,14 @@ export function AdminProductionKanbanView({
 
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
                 <div>
-                  <label className="block text-[11px] font-medium text-[#111111]/64 dark:text-[#F4F3EF]/64 mb-1">
+                  <label
+                    htmlFor="kanban-target-slot"
+                    className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                  >
                     Эфирный слот
                   </label>
                   <select
+                    id="kanban-target-slot"
                     value={targetSlotDraft}
                     onChange={(e) =>
                       setTargetSlotDraft(Number.parseInt(e.target.value, 10) || 20)
@@ -1345,10 +1405,14 @@ export function AdminProductionKanbanView({
                 </div>
 
                 <div className="sm:col-span-3">
-                  <label className="block text-[11px] font-medium text-[#111111]/64 dark:text-[#F4F3EF]/64 mb-1">
+                  <label
+                    htmlFor="kanban-concept1-title"
+                    className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                  >
                     Название концепции
                   </label>
                   <input
+                    id="kanban-concept1-title"
                     type="text"
                     value={concept1Title}
                     onChange={(e) => setConcept1Title(e.target.value)}
@@ -1358,10 +1422,14 @@ export function AdminProductionKanbanView({
               </div>
 
               <div>
-                <label className="block text-[11px] font-medium text-[#111111]/64 dark:text-[#F4F3EF]/64 mb-1">
+                <label
+                  htmlFor="kanban-concept1-body"
+                  className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                >
                   Чистовой текст ролика для озвучивания
                 </label>
                 <textarea
+                  id="kanban-concept1-body"
                   rows={3}
                   data-testid="kanban-script-body-input"
                   value={concept1Body}
@@ -1372,10 +1440,14 @@ export function AdminProductionKanbanView({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <div>
-                  <label className="block text-[11px] font-medium text-[#111111]/64 dark:text-[#F4F3EF]/64 mb-1">
+                  <label
+                    htmlFor="kanban-concept1-stresses"
+                    className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                  >
                     Ударения и произношение брендов
                   </label>
                   <input
+                    id="kanban-concept1-stresses"
                     type="text"
                     value={concept1Stresses}
                     onChange={(e) => setConcept1Stresses(e.target.value)}
@@ -1385,10 +1457,14 @@ export function AdminProductionKanbanView({
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-medium text-[#111111]/64 dark:text-[#F4F3EF]/64 mb-1">
+                  <label
+                    htmlFor="kanban-concept1-disclaimer"
+                    className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                  >
                     Обязательный дисклеймер ФЗ-38
                   </label>
                   <input
+                    id="kanban-concept1-disclaimer"
                     type="text"
                     value={concept1Disclaimer}
                     onChange={(e) => setConcept1Disclaimer(e.target.value)}
@@ -1399,10 +1475,14 @@ export function AdminProductionKanbanView({
               </div>
 
               <div>
-                <label className="block text-[11px] font-medium text-[#111111]/64 dark:text-[#F4F3EF]/64 mb-1">
+                <label
+                  htmlFor="kanban-concept1-approach"
+                  className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                >
                   Режиссёрская экспликация студии (характер диктора и музыки)
                 </label>
                 <input
+                  id="kanban-concept1-approach"
                   type="text"
                   value={concept1Approach}
                   onChange={(e) => setConcept1Approach(e.target.value)}
@@ -1414,6 +1494,7 @@ export function AdminProductionKanbanView({
                 <div className="pt-3 border-t border-[#111111]/10 dark:border-white/10 space-y-2.5">
                   <input
                     type="text"
+                    aria-label="Название второго варианта сценария"
                     value={concept2Title}
                     onChange={(e) => setConcept2Title(e.target.value)}
                     placeholder="Название варианта 2"
@@ -1421,6 +1502,7 @@ export function AdminProductionKanbanView({
                   />
                   <textarea
                     rows={2}
+                    aria-label="Текст второго варианта сценария"
                     value={concept2Body}
                     onChange={(e) => setConcept2Body(e.target.value)}
                     placeholder="Текст второго варианта сценария…"
@@ -1433,7 +1515,7 @@ export function AdminProductionKanbanView({
                 <button
                   type="button"
                   onClick={() => setShowConcept2((prev) => !prev)}
-                  className="min-h-[36px] px-3 py-1.5 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0"
+                  className="min-h-[36px] px-3 py-1.5 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0"
                 >
                   {showConcept2
                     ? 'Оставить 1 основной вариант'
@@ -1445,7 +1527,7 @@ export function AdminProductionKanbanView({
                   disabled={isPublishingScript}
                   data-testid="kanban-publish-script-btn"
                   onClick={() => void handlePublishScript()}
-                  className="min-h-[40px] px-4 py-2 rounded-xl bg-[#111111] hover:bg-[#FF4820] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+                  className="min-h-[40px] px-4 py-2 rounded-xl bg-[#111111] hover:bg-[#C83210] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#C83210] dark:hover:text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
                 >
                   {isPublishingScript
                     ? 'Публикация…'

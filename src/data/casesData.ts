@@ -210,14 +210,20 @@ export function getCasePreviewWindow(
 
 /**
  * Определяет, должно ли наведение курсора запускать короткое превью кейса:
- * - Игнорирует касания на тач-экранах (`pointerType === 'touch'`).
- * - Никогда не прерывает уже запущенный пользователем полный трек (`playbackMode === 'full'`).
+ * - По умолчанию автоматическое проигрывание при наведении отключено (`enabled !== true`),
+ *   чтобы звук включался только по явному нажатию кнопки «Слушать».
+ * - Даже при явном включении игнорирует касания на тач-экранах (`pointerType === 'touch'`)
+ *   и никогда не прерывает полный трек (`playbackMode === 'full'`).
  */
 export function shouldStartHoverPreview(params: {
   pointerType: string;
   isPlaying: boolean;
   playbackMode: CasePlaybackMode | null;
+  enabled?: boolean;
 }): boolean {
+  if (params.enabled !== true) {
+    return false;
+  }
   if (params.pointerType === 'touch') {
     return false;
   }

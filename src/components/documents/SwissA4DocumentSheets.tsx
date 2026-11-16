@@ -67,11 +67,19 @@ function SheetBrandFooter({ suite, sheetCode }: { suite: AssembledDocumentSuite;
         <span aria-hidden="true">·</span>
         <span>{studio.phone}</span>
       </div>
-      <div className="font-mono text-[10px] text-[#7A756D] shrink-0">
+      <div className="font-mono text-[10px] text-[#5C5852] shrink-0">
         {sheetCode} · Сделка #{suite.orderNumber}
       </div>
     </footer>
   );
+}
+
+function glueLegalHeaderText(text: string): string {
+  return text
+    .replace(/№\s+/g, '№\u00A0')
+    .replace(/\b(ИП|ООО|АО|ПАО|г\.)\s+/g, '$1\u00A0')
+    .replace(/([А-ЯЁ]\.)\s+([А-ЯЁ]\.)/g, '$1\u00A0$2')
+    .replace(/([А-ЯЁа-яё]+)\s+([А-ЯЁ]\.\u00A0?[А-ЯЁ]\.)/g, '$1\u00A0$2');
 }
 
 function SheetBrandHeader({
@@ -93,34 +101,36 @@ function SheetBrandHeader({
         <div className="flex flex-wrap items-center gap-3">
           <BrandLogo variant="fmworks_reg" size="sm" colorMode="dark" />
           <span className="text-[11px] font-medium text-[#5C5852]">
-            Аудиопродакшн полного цикла · {studio.city} · {studio.websiteDomain}
+            Аудиопродакшн полного цикла · {glueLegalHeaderText(studio.city)} · {studio.websiteDomain}
           </span>
         </div>
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#FF4820]">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#B82D0D]">
             {kicker}
           </p>
           <h3 className="text-lg sm:text-xl font-bold tracking-tight text-[#111111] mt-0.5 leading-snug">
-            {title}
+            {glueLegalHeaderText(title)}
           </h3>
           <p className="text-xs font-medium text-[#5C5852] mt-0.5 tabular-nums">
-            {docNumberLine}
+            {glueLegalHeaderText(docNumberLine)}
           </p>
         </div>
       </div>
 
-      <div className="text-[11px] leading-relaxed text-[#5C5852] sm:text-right sm:max-w-[280px] tabular-nums shrink-0 space-y-0.5">
-        <p className="font-semibold text-[#111111]">{studio.shortBrandTitle}</p>
+      <div className="text-[11px] leading-relaxed text-[#5C5852] sm:text-right sm:max-w-[330px] tabular-nums shrink-0 space-y-0.5 min-w-0">
+        <p className="font-semibold text-[#111111] [overflow-wrap:anywhere]">
+          {glueLegalHeaderText(studio.shortBrandTitle)}
+        </p>
         <p className="flex flex-wrap sm:justify-end gap-x-2">
           <span className="whitespace-nowrap">
-            ИНН {studio.inn}
-            {studio.entityKind === 'ooo' && studio.kpp ? ` · КПП ${studio.kpp}` : ''}
+            ИНН{'\u00A0'}{studio.inn}
+            {studio.entityKind === 'ooo' && studio.kpp ? ` · КПП\u00A0${studio.kpp}` : ''}
           </span>
           <span className="whitespace-nowrap">
-            {ogrnLabel} {studio.ogrnOrOgrnip}
+            {ogrnLabel}{'\u00A0'}{studio.ogrnOrOgrnip}
           </span>
         </p>
-        <p className="whitespace-nowrap">
+        <p className="[overflow-wrap:anywhere]">
           {studio.phone} · {studio.email}
         </p>
       </div>
@@ -158,65 +168,84 @@ function KpSheet({
 
       {/* Блок адресата и параметров проекта */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-5 mb-5 border-b border-[#E5E2DC]">
-        <div className="space-y-1">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#7A756D]">
+        <div className="space-y-1 min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#5C5852]">
             Заказчик / Адресат
           </p>
-          <p className="font-bold text-sm text-[#111111]">{customer.displayName}</p>
-          {customer.inn && (
-            <p className="text-[#5C5852] tabular-nums">
-              ИНН {customer.inn}
-              {customer.kpp ? ` · КПП ${customer.kpp}` : ''}
+          <p className="font-bold text-sm text-[#111111] [overflow-wrap:anywhere]">
+            {customer.displayName}
+          </p>
+          {customer.inn ? (
+            <p className="text-[#5C5852] tabular-nums [overflow-wrap:anywhere]">
+              ИНН{'\u00A0'}{customer.inn}
+              {customer.kpp ? ` · КПП\u00A0${customer.kpp}` : ''}
+              {customer.address ? ` · ${customer.address}` : ''}
+            </p>
+          ) : (
+            <p className="text-[#5C5852]">
+              ИНН будет внесён при выставлении счёта (или оплата картой 54-ФЗ)
             </p>
           )}
-          <p className="text-[#5C5852]">Контакт: {customer.contact}</p>
+          <p className="text-[#5C5852] [overflow-wrap:anywhere]">Контакт: {customer.contact}</p>
         </div>
 
-        <div className="space-y-1 sm:text-right tabular-nums">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#7A756D]">
+        <div className="space-y-1 sm:text-right tabular-nums min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#5C5852]">
             Параметры студийного релиза
           </p>
-          <p className="font-semibold text-[#111111]">{suite.spotWorkingTitle}</p>
-          <p className="text-[#5C5852]">
-            Хронометраж: {suite.spotDurationSec} сек ({suite.spotDurationFormatted})
+          <p className="font-semibold text-[#111111] [overflow-wrap:anywhere]">
+            {suite.spotWorkingTitle}
           </p>
-          <p className="text-[#5C5852]">Срок готовности: {scope.turnaroundLabel}</p>
+          <p className="text-[#5C5852]">
+            Хронометраж: {suite.spotDurationSec}{'\u00A0'}сек ({suite.spotDurationFormatted})
+          </p>
+          <p className="text-[#5C5852] [overflow-wrap:anywhere]">
+            Срок готовности: {scope.turnaroundLabel}
+          </p>
         </div>
       </div>
 
       {briefExcerpt?.trim() && (
-        <div className="mb-5 p-3.5 bg-[#FAF9F6] border border-[#E5E2DC] space-y-1">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#7A756D]">
+        <div className="mb-5 p-3.5 bg-[#FAF9F6] border border-[#E5E2DC] space-y-1 min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#5C5852]">
             Исходная задача Заказчика по брифу
           </p>
-          <p className="text-[#111111] whitespace-pre-line">{briefExcerpt.trim()}</p>
+          <p className="text-[#111111] whitespace-pre-line [overflow-wrap:anywhere]">
+            {briefExcerpt.trim()}
+          </p>
         </div>
       )}
 
       {/* Таблица состава работ */}
       <div className="overflow-x-auto mb-6">
-        <table className="w-full border-collapse text-left tabular-nums min-w-[460px]">
+        <table className="w-full border-collapse text-left tabular-nums min-w-[440px] sm:min-w-0">
           <thead>
             <tr className="border-y border-[#111111] bg-[#FAF9F6] text-[11px] font-bold">
-              <th className="py-2 px-2.5 w-10">№</th>
-              <th className="py-2 px-2.5">Этап и состав студийных работ</th>
-              <th className="py-2 px-2.5 w-28">Срок</th>
-              <th className="py-2 px-2.5 w-32 text-right">Стоимость</th>
+              <th scope="col" className="py-2 px-2.5 w-10">№</th>
+              <th scope="col" className="py-2 px-2.5">Этап и состав студийных работ</th>
+              <th scope="col" className="py-2 px-2.5 w-32">Срок</th>
+              <th scope="col" className="py-2 px-2.5 w-36 text-right">Стоимость</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#E5E2DC]">
             {scope.kpLineItems.map((row) => (
               <tr key={row.code}>
-                <td className="py-2.5 px-2.5 font-mono text-[#5C5852] align-top">
+                <td className="py-2.5 px-2.5 font-mono text-[#5C5852] align-top whitespace-nowrap">
                   {row.code}
                 </td>
-                <td className="py-2.5 px-2.5 align-top font-medium text-[#111111]">
+                <td className="py-2.5 px-2.5 align-top font-medium text-[#111111] break-words">
                   {row.title}
                 </td>
                 <td className="py-2.5 px-2.5 align-top text-[#5C5852]">
                   {row.turnaround}
                 </td>
-                <td className="py-2.5 px-2.5 align-top text-right font-semibold">
+                <td
+                  className={`py-2.5 px-2.5 align-top text-right font-semibold ${
+                    row.priceNote.includes('Расчёт') || row.priceNote.includes('По оценке')
+                      ? 'text-[#B82D0D]'
+                      : 'text-[#111111] whitespace-nowrap'
+                  }`}
+                >
                   {row.priceNote}
                 </td>
               </tr>
@@ -227,7 +256,7 @@ function KpSheet({
 
       {/* Итоговая стоимость и стандарты */}
       <div className="grid grid-cols-1 sm:grid-cols-12 gap-5 items-start pt-4 border-t border-[#111111]">
-        <div className="sm:col-span-7 space-y-2 text-[11px] text-[#5C5852]">
+        <div className="sm:col-span-7 space-y-2 text-[11px] text-[#5C5852] min-w-0">
           <p className="font-bold text-[#111111]">Что гарантировано в стоимости продакшна:</p>
           <ul className="space-y-1 list-disc pl-4">
             <li>{scope.conceptsCountLabel}</li>
@@ -241,13 +270,13 @@ function KpSheet({
           </ul>
         </div>
 
-        <div className="sm:col-span-5 p-4 bg-[#FAF9F6] border border-[#E5E2DC] space-y-2 tabular-nums">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#7A756D]">
+        <div className="sm:col-span-5 p-4 bg-[#FAF9F6] border border-[#E5E2DC] space-y-2 tabular-nums min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#5C5852]">
             Условия запуска и бюджет
           </p>
           {suite.isNegotiablePendingPrice ? (
             <>
-              <p className="text-base font-bold text-[#FF4820]">Договорная цена</p>
+              <p className="text-base font-bold text-[#B82D0D]">Договорная цена</p>
               <p className="text-[11px] text-[#5C5852]">
                 Финальная стоимость фиксируется в Приложении № {suite.appendixNumber} после
                 15-минутного уточнения объёма работ с продюсером. Старт работ — после 100%
@@ -256,14 +285,14 @@ function KpSheet({
             </>
           ) : (
             <>
-              <div className="flex items-baseline justify-between gap-2">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <span className="text-[#5C5852]">Итого по смете:</span>
-                <span className="text-lg font-bold text-[#111111]">
+                <span className="text-lg font-bold text-[#111111] whitespace-nowrap">
                   {tax.formattedTotalRub}
                 </span>
               </div>
               <p className="text-[11px] text-[#5C5852]">{tax.taxLegalLabel}</p>
-              <p className="text-[11px] font-medium text-[#111111]">
+              <p className="text-[11px] font-medium text-[#111111] break-words">
                 {tax.totalInWordsRu}
               </p>
               <p className="text-[11px] text-[#5C5852] pt-1 border-t border-[#E5E2DC]">
@@ -390,10 +419,10 @@ function ContractAndAppendixSheet({
               <table className="w-full border-collapse border border-[#E5E2DC] text-[11px] min-w-[460px]">
                 <thead>
                   <tr className="bg-[#FAF9F6] border-b border-[#111111] font-bold">
-                    <th className="p-2 text-left w-[34%] border-r border-[#E5E2DC]">
+                    <th scope="col" className="p-2 text-left w-[34%] border-r border-[#E5E2DC]">
                       Параметр техконтроля радиостанции
                     </th>
-                    <th className="p-2 text-left">
+                    <th scope="col" className="p-2 text-left">
                       Обязательный норматив сдачи FMWorks®
                     </th>
                   </tr>
@@ -483,7 +512,7 @@ function ContractAndAppendixSheet({
       >
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-[#FF4820]">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[#B82D0D]">
               Приложение № {suite.appendixNumber} к Договору № {suite.contractNumber}
             </p>
             <h4 className="text-sm sm:text-base font-bold text-[#111111]">
@@ -612,7 +641,7 @@ function InvoiceSheet({ suite }: { suite: AssembledDocumentSuite }) {
           <tbody>
             <tr>
               <td colSpan={2} rowSpan={2} className="p-2 align-top border-r border-b border-[#111111] w-[58%]">
-                <p className="text-[10px] text-[#7A756D]">Банк получателя</p>
+                <p className="text-[10px] text-[#5C5852]">Банк получателя</p>
                 <p className="font-semibold text-[#111111] mt-0.5">{studio.bankName}</p>
               </td>
               <td className="p-2 border-r border-b border-[#111111] w-[12%] text-[#5C5852]">БИК</td>
@@ -628,11 +657,11 @@ function InvoiceSheet({ suite }: { suite: AssembledDocumentSuite }) {
             </tr>
             <tr>
               <td className="p-2 border-r border-b border-[#111111]">
-                <span className="text-[10px] text-[#7A756D] mr-1.5">ИНН</span>
+                <span className="text-[10px] text-[#5C5852] mr-1.5">ИНН</span>
                 <strong className="font-mono">{studio.inn}</strong>
               </td>
               <td className="p-2 border-r border-b border-[#111111]">
-                <span className="text-[10px] text-[#7A756D] mr-1.5">
+                <span className="text-[10px] text-[#5C5852] mr-1.5">
                   {studio.entityKind === 'ooo' ? 'КПП' : ogrnLabel}
                 </span>
                 <strong className="font-mono">
@@ -648,7 +677,7 @@ function InvoiceSheet({ suite }: { suite: AssembledDocumentSuite }) {
             </tr>
             <tr>
               <td colSpan={2} className="p-2 border-r border-[#111111]">
-                <p className="text-[10px] text-[#7A756D]">Получатель</p>
+                <p className="text-[10px] text-[#5C5852]">Получатель</p>
                 <p className="font-bold text-[#111111]">{studio.legalName}</p>
               </td>
             </tr>
@@ -660,7 +689,7 @@ function InvoiceSheet({ suite }: { suite: AssembledDocumentSuite }) {
       <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 pb-4 mb-5 border-b border-[#E5E2DC] text-[11px]">
         <div className="sm:col-span-7 space-y-2.5">
           <div className="space-y-0.5">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-[#7A756D]">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[#5C5852]">
               Поставщик (Исполнитель)
             </p>
             <p className="font-semibold text-[#111111]">
@@ -675,7 +704,7 @@ function InvoiceSheet({ suite }: { suite: AssembledDocumentSuite }) {
             data-testid="invoice-buyer-requisites-block"
             className="space-y-0.5 pt-2 border-t border-[#E5E2DC]/80"
           >
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-[#7A756D]">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[#5C5852]">
               Плательщик (Заказчик)
             </p>
             <p className="font-bold text-[#111111]">
@@ -696,12 +725,12 @@ function InvoiceSheet({ suite }: { suite: AssembledDocumentSuite }) {
         </div>
 
         <div className="sm:col-span-5 space-y-1.5 sm:text-right">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#7A756D]">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#5C5852]">
             ЭДО и учёт (СКБ Контур)
           </p>
           <p className="font-semibold text-[#111111]">{studio.edoOperatorLabel}</p>
           <div className="text-[10px] text-[#5C5852] leading-snug">
-            <span className="text-[#7A756D]">ID Поставщика: </span>
+            <span className="text-[#5C5852]">ID Поставщика: </span>
             <span className="font-mono tracking-tight break-words">
               {studio.edoParticipantId}
             </span>
@@ -711,14 +740,14 @@ function InvoiceSheet({ suite }: { suite: AssembledDocumentSuite }) {
               data-testid="invoice-buyer-edo-box"
               className="text-[10px] text-[#111111] leading-snug"
             >
-              <span className="text-[#7A756D]">ID Заказчика: </span>
+              <span className="text-[#5C5852]">ID Заказчика: </span>
               <span className="font-mono tracking-tight break-words">
                 {customer.edoBoxId}
               </span>
             </div>
           )}
           {customer.wantsDiadocDuplicate && (
-            <p className="text-[10.5px] font-semibold text-[#FF4820]">
+            <p className="text-[10.5px] font-semibold text-[#B82D0D]">
               Дубликат счёта в Контур.Диадок запрошен
             </p>
           )}
@@ -730,7 +759,7 @@ function InvoiceSheet({ suite }: { suite: AssembledDocumentSuite }) {
           data-testid="invoice-negotiable-pending-banner"
           className="p-5 bg-[#FAF9F6] border border-[#FF4820]/45 space-y-2 mb-6"
         >
-          <p className="text-sm font-bold text-[#FF4820]">
+          <p className="text-sm font-bold text-[#B82D0D]">
             Счёт ожидает утверждения суммы продюсером (индивидуальный проект)
           </p>
           <p className="text-xs text-[#5C5852]">
@@ -745,13 +774,13 @@ function InvoiceSheet({ suite }: { suite: AssembledDocumentSuite }) {
             <table className="w-full border-collapse border border-[#E5E2DC] text-[11.5px] min-w-[460px]">
               <thead>
                 <tr className="bg-[#FAF9F6] border-y border-[#111111] font-bold">
-                  <th className="p-2 text-left w-10 border-r border-[#E5E2DC]">№</th>
-                  <th className="p-2 text-left border-r border-[#E5E2DC]">
+                  <th scope="col" className="p-2 text-left w-10 border-r border-[#E5E2DC]">№</th>
+                  <th scope="col" className="p-2 text-left border-r border-[#E5E2DC]">
                     Наименование работ / услуг по студийному производству
                   </th>
-                  <th className="p-2 text-center w-14 border-r border-[#E5E2DC] whitespace-nowrap">Ед.</th>
-                  <th className="p-2 text-center w-20 border-r border-[#E5E2DC] whitespace-nowrap">Кол-во</th>
-                  <th className="p-2 text-right w-28 whitespace-nowrap">Сумма</th>
+                  <th scope="col" className="p-2 text-center w-14 border-r border-[#E5E2DC] whitespace-nowrap">Ед.</th>
+                  <th scope="col" className="p-2 text-center w-20 border-r border-[#E5E2DC] whitespace-nowrap">Кол-во</th>
+                  <th scope="col" className="p-2 text-right w-28 whitespace-nowrap">Сумма</th>
                 </tr>
               </thead>
               <tbody>
@@ -930,11 +959,11 @@ function RadioPassportSheet({ suite }: { suite: AssembledDocumentSuite }) {
         <table className="w-full border-collapse border border-[#111111] text-[11px] tabular-nums min-w-[460px]">
           <thead>
             <tr className="bg-[#FAF9F6] border-b border-[#111111] font-bold">
-              <th className="p-2 text-left w-10 border-r border-[#E5E2DC]">№</th>
-              <th className="p-2 text-left w-[36%] border-r border-[#E5E2DC]">
+              <th scope="col" className="p-2 text-left w-10 border-r border-[#E5E2DC]">№</th>
+              <th scope="col" className="p-2 text-left w-[36%] border-r border-[#E5E2DC]">
                 Реквизит стандарта вещателя РФ
               </th>
-              <th className="p-2 text-left">Заверенные сведения по мастер-ролику</th>
+              <th scope="col" className="p-2 text-left">Заверенные сведения по мастер-ролику</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#E5E2DC]">
@@ -956,7 +985,7 @@ function RadioPassportSheet({ suite }: { suite: AssembledDocumentSuite }) {
       {/* Подтверждение техконтроля громкости и ФЗ-38 */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
         <div className="p-3.5 bg-[#FAF9F6] border border-[#E5E2DC] space-y-1">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-[#FF4820]">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-[#B82D0D]">
             Технический контроль ФАС (ч. 11 ст. 15 ФЗ-38)
           </p>
           <p className="text-[11px] text-[#111111]">
@@ -982,7 +1011,7 @@ function RadioPassportSheet({ suite }: { suite: AssembledDocumentSuite }) {
         </p>
 
         <div className="sm:w-64 space-y-1">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#7A756D]">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#5C5852]">
             Утверждено Изготовителем
           </p>
           <div className="pt-4 border-b border-[#111111]/45 flex justify-between font-semibold">

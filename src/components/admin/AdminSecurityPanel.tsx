@@ -102,6 +102,7 @@ export function AdminSecurityPanel() {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [isClearing, setIsClearing] = useState(false);
+  const [isConfirmingClear, setIsConfirmingClear] = useState(false);
 
   const fetchOverview = useCallback(async () => {
     setIsLoading(true);
@@ -146,6 +147,7 @@ export function AdminSecurityPanel() {
           ...prev,
           quarantinedLeads: [],
         }));
+        setIsConfirmingClear(false);
       }
     } finally {
       setIsClearing(false);
@@ -163,7 +165,7 @@ export function AdminSecurityPanel() {
       {/* KPI сводка антиспам-периметра */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 tabular-nums">
         <div className="rounded-2xl p-5 bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 space-y-1">
-          <p className="text-xs font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58">
+          <p className="text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
             Верифицированные заявки
           </p>
           <p
@@ -172,41 +174,41 @@ export function AdminSecurityPanel() {
           >
             {overview.stats.verifiedCount}
           </p>
-          <p className="text-xs text-emerald-700 dark:text-emerald-400">
+          <p className="text-xs text-[#166534] dark:text-[#4ADE80]">
             Прошли PoW и проверку контакта
           </p>
         </div>
 
         <div className="rounded-2xl p-5 bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 space-y-1">
-          <p className="text-xs font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58">
+          <p className="text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
             Ботов в теневом карантине
           </p>
           <p
             data-testid="security-stat-quarantined"
-            className="text-3xl font-bold text-[#FF4820]"
+            className="text-3xl font-bold text-[#B82D0D] dark:text-[#FF7A5C]"
           >
             {overview.stats.quarantinedCount}
           </p>
-          <p className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58">
+          <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
             Пиксели рекламы не обучены на спаме
           </p>
         </div>
 
         <div className="rounded-2xl p-5 bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 space-y-1">
-          <p className="text-xs font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58">
+          <p className="text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
             Отражено Flood и AI-атак
           </p>
           <p className="text-3xl font-bold text-[#111111] dark:text-[#F4F3EF]">
             {totalBlockedAttempts}
           </p>
-          <p className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58">
+          <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
             Лимит IP: {overview.stats.rateLimitedCount} · Защита квот: {overview.stats.aiQuotaShieldBlocks}
           </p>
         </div>
 
         <div className="rounded-2xl p-5 bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 flex flex-col justify-between gap-2">
           <div>
-            <p className="text-xs font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58">
+            <p className="text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
               Активных рубежей защиты
             </p>
             <p className="text-3xl font-bold text-[#111111] dark:text-[#F4F3EF] mt-1">
@@ -217,7 +219,7 @@ export function AdminSecurityPanel() {
             type="button"
             data-testid="security-refresh-btn"
             onClick={() => void fetchOverview()}
-            className="self-start inline-flex items-center gap-1.5 text-xs font-semibold text-[#FF4820] hover:underline cursor-pointer"
+            className="self-start min-h-[32px] px-2.5 py-1 rounded-lg border border-[#111111]/12 dark:border-white/12 inline-flex items-center gap-1.5 text-xs font-semibold text-[#B82D0D] dark:text-[#FF7A5C] hover:border-[#C83210] transition-colors cursor-pointer"
           >
             <RefreshCw
               className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`}
@@ -237,20 +239,20 @@ export function AdminSecurityPanel() {
           <div className="flex items-center justify-between gap-3 pb-3 border-b border-[#111111]/10 dark:border-white/10">
             <div className="flex items-center gap-2">
               <CheckCircle2
-                className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0"
+                className="w-4 h-4 text-[#166534] dark:text-[#4ADE80] shrink-0"
                 aria-hidden="true"
               />
               <h2 id="verified-leads-heading" className="text-base font-bold">
                 Чистые заявки клиентов ({overview.verifiedLeads.length})
               </h2>
             </div>
-            <span className="text-xs text-[#111111]/55 dark:text-[#F4F3EF]/55">
+            <span className="text-xs text-[#111111]/70 dark:text-[#F4F3EF]/70">
               Допущены к конверсии и продюсеру
             </span>
           </div>
 
           {overview.verifiedLeads.length === 0 ? (
-            <p className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58 py-6">
+            <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72 py-6">
               Верифицированных заявок в текущей сессии пока нет. Оформите тестовую бронь на странице заказа, чтобы увидеть запись и проверку ИНН.
             </p>
           ) : (
@@ -264,20 +266,20 @@ export function AdminSecurityPanel() {
                     <span className="font-bold text-sm text-[#111111] dark:text-[#F4F3EF]">
                       #{lead.orderNumber} · {lead.contact}
                     </span>
-                    <span className="text-[#111111]/54 dark:text-[#F4F3EF]/54">
+                    <span className="text-[#111111]/70 dark:text-[#F4F3EF]/70">
                       {formatDateTimeShort(lead.createdAt)}
                       {lead.totalBudgetRub !== null
                         ? ` · ${formatRubCompact(lead.totalBudgetRub)}`
                         : ''}
                     </span>
                   </div>
-                  <p className="text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                  <p className="text-[#111111]/78 dark:text-[#F4F3EF]/78">
                     {lead.formatLabel}
                     {lead.companyOrInn ? ` · Реквизиты: ${lead.companyOrInn}` : ''}
                     {lead.innVerified ? ' (ИНН подтверждён по ключу ФНС)' : ''}
                   </p>
                   {lead.briefExcerpt && (
-                    <p className="text-[#111111]/56 dark:text-[#F4F3EF]/56 line-clamp-2">
+                    <p className="text-[#111111]/70 dark:text-[#F4F3EF]/70 line-clamp-2">
                       Задача: {lead.briefExcerpt}
                     </p>
                   )}
@@ -291,30 +293,53 @@ export function AdminSecurityPanel() {
           aria-labelledby="quarantine-bots-heading"
           className="lg:col-span-5 rounded-2xl p-5 sm:p-6 bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 space-y-4"
         >
-          <div className="flex items-center justify-between gap-3 pb-3 border-b border-[#111111]/10 dark:border-white/10">
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#111111]/10 dark:border-white/10">
             <div className="flex items-center gap-2">
-              <ShieldAlert className="w-4 h-4 text-[#FF4820] shrink-0" aria-hidden="true" />
+              <ShieldAlert className="w-4 h-4 text-[#B82D0D] dark:text-[#FF7A5C] shrink-0" aria-hidden="true" />
               <h2 id="quarantine-bots-heading" className="text-base font-bold">
                 Теневой карантин спама ({overview.quarantinedLeads.length})
               </h2>
             </div>
 
             {overview.quarantinedLeads.length > 0 && (
-              <button
-                type="button"
-                data-testid="clear-quarantine-btn"
-                disabled={isClearing}
-                onClick={() => void handleClearQuarantine()}
-                className="inline-flex items-center gap-1 text-xs font-semibold text-[#111111]/62 dark:text-[#F4F3EF]/62 hover:text-[#DC2626] cursor-pointer"
-              >
-                <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>Очистить</span>
-              </button>
+              isConfirmingClear ? (
+                <div className="inline-flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    data-testid="confirm-clear-quarantine-btn"
+                    disabled={isClearing}
+                    onClick={() => void handleClearQuarantine()}
+                    className="min-h-[32px] px-2.5 py-1 rounded-lg bg-[#B91C1C] hover:bg-[#991B1B] text-white text-xs font-semibold cursor-pointer whitespace-nowrap"
+                  >
+                    {isClearing ? 'Очистка…' : 'Подтвердить очистку'}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="cancel-clear-quarantine-btn"
+                    disabled={isClearing}
+                    onClick={() => setIsConfirmingClear(false)}
+                    className="min-h-[32px] px-2.5 py-1 rounded-lg border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78 cursor-pointer whitespace-nowrap"
+                  >
+                    Отмена
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="clear-quarantine-btn"
+                  disabled={isClearing}
+                  onClick={() => setIsConfirmingClear(true)}
+                  className="min-h-[32px] px-2.5 py-1 rounded-lg border border-[#111111]/12 dark:border-white/12 inline-flex items-center gap-1 text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75 hover:text-[#B91C1C] hover:border-[#B91C1C] transition-colors cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>Очистить</span>
+                </button>
+              )
             )}
           </div>
 
           {overview.quarantinedLeads.length === 0 ? (
-            <p className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58 py-6">
+            <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72 py-6">
               В карантине пусто — все бот-отправки изолируются здесь без передачи сигнала конверсии в рекламные кабинеты.
             </p>
           ) : (
@@ -325,20 +350,20 @@ export function AdminSecurityPanel() {
               {overview.quarantinedLeads.map((bot) => (
                 <div key={bot.id} className="py-3 space-y-1">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold text-[#FF4820]">
+                    <span className="font-semibold text-[#B82D0D] dark:text-[#FF7A5C]">
                       Риск {bot.riskScore}/100 · IP #{bot.ipHash}
                     </span>
-                    <span className="text-[#111111]/52 dark:text-[#F4F3EF]/52">
+                    <span className="text-[#111111]/70 dark:text-[#F4F3EF]/70">
                       {formatDateTimeShort(bot.createdAt)}
                     </span>
                   </div>
-                  <p className="text-[#111111]/75 dark:text-[#F4F3EF]/75">
+                  <p className="text-[#111111]/80 dark:text-[#F4F3EF]/80">
                     Причины:{' '}
                     {bot.reasons
                       .map((r) => REASON_LABELS_RU[r] ?? r)
                       .join(' · ')}
                   </p>
-                  <p className="text-[#111111]/52 dark:text-[#F4F3EF]/52 truncate">
+                  <p className="text-[#111111]/70 dark:text-[#F4F3EF]/70 truncate">
                     Контакт: {bot.maskedContact} · Конверсия рекламы: заблокирована
                   </p>
                 </div>
@@ -355,12 +380,12 @@ export function AdminSecurityPanel() {
       >
         <div className="space-y-1 pb-3 border-b border-[#111111]/10 dark:border-white/10">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-[#FF4820] shrink-0" aria-hidden="true" />
+            <ShieldCheck className="w-4 h-4 text-[#B82D0D] dark:text-[#FF7A5C] shrink-0" aria-hidden="true" />
             <h2 id="roundtable-layers-heading" className="text-base font-bold">
               Архитектура защиты рекламного бюджета и форм (7 контуров)
             </h2>
           </div>
-          <p className="text-xs text-[#111111]/62 dark:text-[#F4F3EF]/62">
+          <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
             Многоуровневая фильтрация работает незаметно для B2B-клиента без визуальных капч и защищает платный трафик от скликивания и мусорных лидов.
           </p>
         </div>
@@ -371,16 +396,16 @@ export function AdminSecurityPanel() {
               key={layer.id}
               className="rounded-xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/8 dark:border-white/8 space-y-1.5"
             >
-              <div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-[#111111]/58 dark:text-[#F4F3EF]/58">
+              <div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
                 <span>
                   {layer.code} · {layer.roleTitle}
                 </span>
-                <span className="text-emerald-700 dark:text-emerald-400">Активен</span>
+                <span className="text-[#166534] dark:text-[#4ADE80]">Активен</span>
               </div>
               <h3 className="text-sm font-bold text-[#111111] dark:text-[#F4F3EF]">
                 {layer.title}
               </h3>
-              <p className="text-xs leading-relaxed text-[#111111]/70 dark:text-[#F4F3EF]/70">
+              <p className="text-xs leading-relaxed text-[#111111]/76 dark:text-[#F4F3EF]/76">
                 {layer.summary}
               </p>
             </div>
@@ -395,18 +420,18 @@ export function AdminSecurityPanel() {
       >
         <div className="flex items-center justify-between gap-3 pb-3 border-b border-[#111111]/10 dark:border-white/10">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-[#FF4820] shrink-0" aria-hidden="true" />
+            <ShieldCheck className="w-4 h-4 text-[#B82D0D] dark:text-[#FF7A5C] shrink-0" aria-hidden="true" />
             <h2 id="security-audit-log-heading" className="text-base font-bold">
               Журнал аудита безопасности ({overview.auditEvents.length})
             </h2>
           </div>
-          <span className="text-xs text-[#111111]/55 dark:text-[#F4F3EF]/55">
+          <span className="text-xs text-[#111111]/70 dark:text-[#F4F3EF]/70">
             События входа, SSRF, загрузок и ПДн
           </span>
         </div>
 
         {overview.auditEvents.length === 0 ? (
-          <p className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58 py-3">
+          <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72 py-3">
             Событий аудита пока нет. Входы, изменения CMS, отклонения файлов и блокировки SSRF фиксируются автоматически.
           </p>
         ) : (
@@ -420,11 +445,11 @@ export function AdminSecurityPanel() {
                   <span className="font-mono font-semibold text-[#111111] dark:text-[#F4F3EF]">
                     {ev.kind}
                   </span>
-                  <p className="text-[#111111]/68 dark:text-[#F4F3EF]/68 break-words">
+                  <p className="text-[#111111]/74 dark:text-[#F4F3EF]/74 break-words">
                     {ev.detail}
                   </p>
                 </div>
-                <span className="text-[#111111]/50 dark:text-[#F4F3EF]/50 shrink-0">
+                <span className="text-[#111111]/70 dark:text-[#F4F3EF]/70 shrink-0">
                   {formatDateTimeShort(ev.timestamp)} · IP #{ev.ipHash}
                 </span>
               </div>

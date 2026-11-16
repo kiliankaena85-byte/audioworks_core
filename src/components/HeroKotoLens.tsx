@@ -153,8 +153,6 @@ export function HeroKotoLens({
 
   const clipPathMask = useMotionTemplate`circle(${smoothRadius}px at ${smoothX}px ${smoothY}px)`;
   const ringScale = useTransform(smoothRadius, (r) => Math.max(0.2, r / 200));
-  const pillOffsetX = useTransform(smoothX, (x) => x + 18);
-  const pillOffsetY = useTransform(smoothY, (y) => y + 18);
 
   useEffect(() => {
     const unsubscribe = contrastAudioEngine.subscribe(setSnap);
@@ -333,14 +331,6 @@ export function HeroKotoLens({
     lensY.set(clamped.y);
   };
 
-  const handleStageClick = (e: ReactMouseEvent<HTMLDivElement>) => {
-    const target = e.target as HTMLElement | null;
-    if (target?.closest('[data-lens-interactive="true"]')) {
-      return;
-    }
-    contrastAudioEngine.toggleCrashTestOrShowreel();
-  };
-
   const handleVolumeSliderChange = (e: FormEvent<HTMLInputElement>) => {
     const rawPct = Number.parseFloat(e.currentTarget.value);
     if (!Number.isFinite(rawPct)) return;
@@ -404,8 +394,6 @@ export function HeroKotoLens({
     snap.isPausedMidSession ||
     snap.hasCompletedCrashTest;
 
-  const hideNativeCursor = !isExpanded && isPointerInside && !isOverControl;
-
   return (
     <>
       {/* ИНТЕРАКТИВНЫЙ ПЕРВЫЙ ЭКРАН: ЛИНЗА ВНИМАНИЯ (чистая композиция без виджетов и лишних волн) */}
@@ -423,10 +411,7 @@ export function HeroKotoLens({
           onMouseMove={handleStageMouseMove}
           onMouseLeave={handleStageMouseLeave}
           onTouchMove={handleStageTouchMove}
-          onClick={handleStageClick}
-          className={`relative w-full max-w-7xl mx-auto min-h-[70svh] sm:min-h-[76vh] rounded-2xl sm:rounded-3xl overflow-hidden bg-[#111216] text-[#F4F3EF] flex flex-col justify-between p-5 sm:p-9 lg:p-12 select-none touch-pan-y ${
-            hideNativeCursor ? 'lg:cursor-none' : 'lg:cursor-pointer'
-          }`}
+          className="relative w-full max-w-7xl mx-auto min-h-[70svh] sm:min-h-[76vh] rounded-2xl sm:rounded-3xl overflow-hidden bg-[#111216] text-[#F4F3EF] flex flex-col justify-between p-5 sm:p-9 lg:p-12 select-none touch-pan-y"
         >
           {/* Слой 1: Серый рекламный поток в дороге */}
           <div
@@ -488,32 +473,17 @@ export function HeroKotoLens({
             })}
           </motion.div>
 
-          {/* Тонкий контур линзы и спокойная подсказка курсора до раскрытия */}
+          {/* Тонкий контур линзы до раскрытия (без автозапуска по клику фона) */}
           {!isExpanded && (
-            <>
-              <motion.div
-                aria-hidden="true"
-                style={{
-                  x: smoothX,
-                  y: smoothY,
-                  scale: ringScale,
-                }}
-                className="pointer-events-none absolute top-0 left-0 z-20 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] rounded-full border border-white/40"
-              />
-
-              <motion.div
-                aria-hidden="true"
-                style={{ x: pillOffsetX, y: pillOffsetY }}
-                className={`hidden lg:inline-flex pointer-events-none absolute top-0 left-0 z-30 items-center gap-2 px-3.5 py-2 rounded-full bg-white text-[#111111] text-xs font-semibold shadow-lg transition-opacity duration-150 whitespace-nowrap ${
-                  isPointerInside && !isOverControl ? 'opacity-100' : 'opacity-0'
-                }`}
-              >
-                <Play className="w-3 h-3 fill-current text-[#FF4820]" />
-                <span>
-                  {isClutterPhase ? 'Идёт обычный блок…' : 'Слушать краш-тест'}
-                </span>
-              </motion.div>
-            </>
+            <motion.div
+              aria-hidden="true"
+              style={{
+                x: smoothX,
+                y: smoothY,
+                scale: ringScale,
+              }}
+              className="pointer-events-none absolute top-0 left-0 z-20 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] rounded-full border border-white/40"
+            />
           )}
 
           {/* Верхняя строка холста: тихий статус слева + единственный переключатель режимов справа */}

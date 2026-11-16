@@ -442,6 +442,8 @@ test('Waves 1-4 & HeroKoto Guardrails: verifies Koto 4-frame showreel, manifesto
   contrastAudioEngine.selectLens('focus');
   assert.equal(contrastAudioEngine.getSnapshot().isLensExpanded, true);
   assert.equal(contrastAudioEngine.getSnapshot().crashPhase, 'audioworks');
+  assert.equal(contrastAudioEngine.getSnapshot().isFilmPlaying, false);
+  assert.equal(contrastAudioEngine.getSnapshot().isSoundPlaying, false);
   contrastAudioEngine.restartCrashTest();
   assert.equal(contrastAudioEngine.getSnapshot().isLensExpanded, false);
   assert.equal(contrastAudioEngine.getSnapshot().crashPhase, 'clutter');
@@ -663,7 +665,7 @@ test('CasesGallery hover preview (3-5s): resolves curated preview windows and pr
     5
   );
 
-  // Hover guard: blocks touch pointers & never interrupts full playback, allows idle or switching previews
+  // Hover auto-playback is disabled by default so sound only plays on explicit button click
   assert.equal(
     shouldStartHoverPreview({ pointerType: 'touch', isPlaying: false, playbackMode: null }),
     false
@@ -674,11 +676,30 @@ test('CasesGallery hover preview (3-5s): resolves curated preview windows and pr
   );
   assert.equal(
     shouldStartHoverPreview({ pointerType: 'mouse', isPlaying: false, playbackMode: null }),
-    true
+    false
   );
   assert.equal(
     shouldStartHoverPreview({ pointerType: 'mouse', isPlaying: true, playbackMode: 'preview' }),
+    false
+  );
+  // Even if explicitly opted in via enabled: true, touch and active full playback remain blocked
+  assert.equal(
+    shouldStartHoverPreview({
+      pointerType: 'mouse',
+      isPlaying: false,
+      playbackMode: null,
+      enabled: true,
+    }),
     true
+  );
+  assert.equal(
+    shouldStartHoverPreview({
+      pointerType: 'touch',
+      isPlaying: false,
+      playbackMode: null,
+      enabled: true,
+    }),
+    false
   );
 
   // Engine state check in headless/node environment: startPreview -> stopPreview -> clean idle

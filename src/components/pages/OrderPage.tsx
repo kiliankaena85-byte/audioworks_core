@@ -3203,10 +3203,10 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                     orderNumber: draftCommercialProposal.draftOrderNumber,
                     createdAtIso: draftCommercialProposal.issueDateIso,
                     formatLabel: draftCommercialProposal.formatTitle,
-                    baseBudgetRub: draftCommercialProposal.totalPayableRub,
+                    baseBudgetRub: draftCommercialProposal.assembledSuite.effectivePriceRub,
                     defaultDurationSec: draftCommercialProposal.spotDurationSec,
                     contact: draftCommercialProposal.customerContact,
-                    companyOrInn: draft.companyLine || draft.companyName || draft.companyInn,
+                    companyOrInn: draftCommercialProposal.customerCompanyOrInnLine,
                     briefText: draftCommercialProposal.briefSummary,
                     documentMeta: draft.resolvedCounterpartyMeta ?? null,
                   }

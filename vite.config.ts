@@ -30,30 +30,36 @@ export default defineConfig(() => {
       target: 'es2020',
       cssCodeSplit: true,
       assetsInlineLimit: 4096,
-      rollupOptions: {
+      rolldownOptions: {
         output: {
-          manualChunks(id) {
-            if (!id.includes('node_modules')) return undefined;
-            if (id.includes('react-dom') || id.includes('/react/')) {
-              return 'react-vendor';
-            }
-            if (id.includes('motion') || id.includes('framer-motion')) {
-              return 'motion-vendor';
-            }
-            if (id.includes('lucide-react')) {
-              return 'icons-vendor';
-            }
-            if (id.includes('qrcode') || id.includes('pngjs')) {
-              return 'qr-vendor';
-            }
-            if (
-              id.includes('recharts') ||
-              id.includes('d3-') ||
-              id.includes('victory-vendor')
-            ) {
-              return 'charts-vendor';
-            }
-            return undefined;
+          codeSplitting: {
+            groups: [
+              {
+                name: 'react-vendor',
+                priority: 40,
+                test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+              },
+              {
+                name: 'motion-vendor',
+                priority: 30,
+                test: /[\\/]node_modules[\\/](motion|framer-motion)[\\/]/,
+              },
+              {
+                name: 'icons-vendor',
+                priority: 25,
+                test: /[\\/]node_modules[\\/]lucide-react[\\/]/,
+              },
+              {
+                name: 'qr-vendor',
+                priority: 25,
+                test: /[\\/]node_modules[\\/](qrcode|pngjs)[\\/]/,
+              },
+              {
+                name: 'charts-vendor',
+                priority: 20,
+                test: /[\\/]node_modules[\\/](recharts|d3-[^\\/]+|victory-vendor|react-redux|react-is)[\\/]/,
+              },
+            ],
           },
         },
       },
