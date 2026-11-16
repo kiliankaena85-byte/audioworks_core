@@ -246,7 +246,23 @@ class StudioCmsStore {
   })();
 
   private listeners = new Set<StudioCmsListener>();
+  private transientObjectUrls = new Set<string>();
   private bootStarted = false;
+
+  private revokeTransientObjectUrls(): void {
+    if (typeof URL === 'undefined' || typeof URL.revokeObjectURL !== 'function') {
+      this.transientObjectUrls.clear();
+      return;
+    }
+    for (const url of this.transientObjectUrls) {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        // Ignore revoke error
+      }
+    }
+    this.transientObjectUrls.clear();
+  }
 
   public subscribe(listener: StudioCmsListener): () => void {
     this.listeners.add(listener);
@@ -311,6 +327,7 @@ class StudioCmsStore {
    * Отменяет локальные несохранённые правки и возвращает состояние к серверному/заводскому эталону.
    */
   public discardLocalChanges(): void {
+    this.revokeTransientObjectUrls();
     writeLocalDraftSnapshot(null, this.state.baselineSnapshot);
     this.emit({
       snapshot: this.state.baselineSnapshot,
@@ -459,6 +476,7 @@ class StudioCmsStore {
   }
 
   public async logout(): Promise<void> {
+    this.revokeTransientObjectUrls();
     const token = readStoredToken();
     writeStoredToken(null);
     this.emit({ isAuthenticated: false, isAuthChecking: false });
@@ -548,6 +566,7 @@ class StudioCmsStore {
   public async resetToDefaults(): Promise<
     { ok: true; snapshot: StudioCmsSnapshot } | { ok: false; error: string }
   > {
+    this.revokeTransientObjectUrls();
     const freshDefaults = createDefaultStudioCmsSnapshot();
 
     if (this.isStudioSessionActive()) {
@@ -652,6 +671,10 @@ class StudioCmsStore {
       }
     }
 
+    if (localObjectUrl.startsWith('blob:')) {
+      this.transientObjectUrls.add(localObjectUrl);
+    }
+
     return {
       ok: true,
       result: {
@@ -715,6 +738,10 @@ class StudioCmsStore {
 
     if (!localImageUrl) {
       return { ok: false, error: 'Не удалось подготовить обложку' };
+    }
+
+    if (localImageUrl.startsWith('blob:')) {
+      this.transientObjectUrls.add(localImageUrl);
     }
 
     return {

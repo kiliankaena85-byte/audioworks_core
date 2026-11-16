@@ -1,5 +1,5 @@
 import { AlertCircle } from 'lucide-react';
-import { RefObject, useState } from 'react';
+import { MouseEvent, RefObject, useState } from 'react';
 import {
   PersonalData152FzModal,
   PersonalData152FzTab,
@@ -13,6 +13,7 @@ interface PersonalDataConsentFieldProps {
   inputRef?: RefObject<HTMLInputElement | null>;
   compact?: boolean;
   testIdPrefix?: string;
+  purposeLabel?: string;
 }
 
 export function PersonalDataConsentField({
@@ -23,6 +24,7 @@ export function PersonalDataConsentField({
   inputRef,
   compact = false,
   testIdPrefix = 'pdn-consent',
+  purposeLabel = 'для связи продюсера и подготовки документов по заказу',
 }: PersonalDataConsentFieldProps) {
   const [modalState, setModalState] = useState<{
     open: boolean;
@@ -31,6 +33,18 @@ export function PersonalDataConsentField({
 
   const openModalTab = (tab: PersonalData152FzTab) => {
     setModalState({ open: true, tab });
+  };
+
+  const handleLinkClick = (
+    e: MouseEvent<HTMLAnchorElement>,
+    tab: PersonalData152FzTab
+  ) => {
+    // Позволяем открыть прямую страницу /privacy в новой вкладке при клике с Ctrl/Cmd/колесом
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) {
+      return;
+    }
+    e.preventDefault();
+    openModalTab(tab);
   };
 
   return (
@@ -54,32 +68,28 @@ export function PersonalDataConsentField({
             aria-labelledby={`${id}-caption`}
             data-testid={`${testIdPrefix}-checkbox`}
             onChange={(e) => onChange(e.target.checked)}
-            className="mt-0.5 w-5 h-5 rounded border-[#111111]/30 dark:border-white/30 accent-[#FF4820] cursor-pointer shrink-0"
+            className="mt-0.5 w-5 h-5 rounded border-[#111111]/30 dark:border-white/30 accent-[#C83210] cursor-pointer shrink-0"
           />
 
           <p
             id={`${id}-caption`}
-            className="flex-1 min-w-0 text-xs leading-[1.5] text-[#111111]/78 dark:text-[#F4F3EF]/78"
+            className="flex-1 min-w-0 text-xs leading-[1.5] text-[#111111]/80 dark:text-[#F4F3EF]/80"
           >
             <label htmlFor={id} className="inline cursor-pointer select-none">
               Даю{' '}
             </label>
             <a
-              href="#pdn-consent"
-              role="button"
+              href="/privacy?tab=consent"
               aria-haspopup="dialog"
               data-testid={`${testIdPrefix}-open-consent-btn`}
-              onClick={(e) => {
-                e.preventDefault();
-                openModalTab('consent');
-              }}
+              onClick={(e) => handleLinkClick(e, 'consent')}
               onKeyDown={(e) => {
                 if (e.key === ' ') {
                   e.preventDefault();
                   openModalTab('consent');
                 }
               }}
-              className="inline underline decoration-[#111111]/35 dark:decoration-white/35 underline-offset-[3px] font-semibold text-[#111111] dark:text-[#F4F3EF] hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors cursor-pointer"
+              className="inline underline decoration-[#111111]/35 dark:decoration-white/35 underline-offset-[3px] font-semibold text-[#111111] dark:text-[#F4F3EF] hover:text-[#C83210] dark:hover:text-[#FF6B47] transition-colors cursor-pointer"
             >
               согласие на обработку персональных данных
             </a>
@@ -87,26 +97,23 @@ export function PersonalDataConsentField({
               {' '}согласно{' '}
             </label>
             <a
-              href="#pdn-policy"
-              role="button"
+              href="/privacy"
               aria-haspopup="dialog"
               data-testid={`${testIdPrefix}-open-policy-btn`}
-              onClick={(e) => {
-                e.preventDefault();
-                openModalTab('policy');
-              }}
+              onClick={(e) => handleLinkClick(e, 'policy')}
               onKeyDown={(e) => {
                 if (e.key === ' ') {
                   e.preventDefault();
                   openModalTab('policy');
                 }
               }}
-              className="inline underline decoration-[#111111]/35 dark:decoration-white/35 underline-offset-[3px] font-semibold text-[#111111] dark:text-[#F4F3EF] hover:text-[#FF4820] dark:hover:text-[#FF4820] transition-colors cursor-pointer"
+              className="inline underline decoration-[#111111]/35 dark:decoration-white/35 underline-offset-[3px] font-semibold text-[#111111] dark:text-[#F4F3EF] hover:text-[#C83210] dark:hover:text-[#FF6B47] transition-colors cursor-pointer"
             >
               Политике обработки ПДн (152-ФЗ)
             </a>
             <label htmlFor={id} className="inline cursor-pointer select-none">
-              {' '}для связи продюсера и подготовки документов по заказу.
+              {' '}
+              {purposeLabel}.
             </label>
           </p>
         </div>
@@ -116,7 +123,7 @@ export function PersonalDataConsentField({
         <p
           role="alert"
           data-testid={`${testIdPrefix}-error`}
-          className="text-xs font-semibold text-[#DC2626] dark:text-[#F87171] flex items-start gap-1.5"
+          className="text-xs font-semibold text-[#B91C1C] dark:text-[#F87171] flex items-start gap-1.5"
         >
           <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" aria-hidden="true" />
           <span>{error}</span>

@@ -48,7 +48,7 @@ export function CabinetProfileAvatar({
       aria-label={`${avatar.accessibleLabel}. Нажмите для настройки аватара профиля`}
       aria-expanded={isEditorOpen}
       onClick={onToggleEditor}
-      className={`group relative ${boxSizeClass} rounded-xl overflow-hidden shrink-0 border border-[#111111]/14 dark:border-white/16 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] cursor-pointer transition-transform duration-150 hover:scale-[1.02] ${avatar.preset.fallbackBgClass}`}
+      className={`group relative ${boxSizeClass} rounded-xl overflow-hidden shrink-0 border border-[#111111]/16 dark:border-white/18 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] cursor-pointer transition-transform duration-150 hover:scale-[1.02] ${avatar.preset.fallbackBgClass}`}
     >
       {showCustomPhoto && avatar.customPhotoUrl ? (
         <picture className="block w-full h-full">
@@ -83,22 +83,21 @@ export function CabinetProfileAvatar({
               />
             </picture>
           )}
-          {/* Выверенный контрастный скрим (>= 4.5:1 WCAG AA) для безупречной читаемости инициалов */}
+          {/* Контрастный скрим (>= 4.5:1 WCAG AA) для читаемости инициалов */}
           <span
             aria-hidden="true"
-            className="absolute inset-0 bg-gradient-to-br from-black/48 via-black/32 to-black/62"
+            className="absolute inset-0 bg-gradient-to-br from-black/52 via-black/38 to-black/68"
           />
           <span
             data-testid="cabinet-profile-avatar-initials"
             aria-hidden="true"
-            className={`absolute inset-0 flex items-center justify-center font-bold tracking-tight text-white select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.75)] ${initialsTextClass}`}
+            className={`absolute inset-0 flex items-center justify-center font-bold tracking-tight text-white select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] ${initialsTextClass}`}
           >
             {avatar.initials}
           </span>
         </>
       )}
 
-      {/* Деликатная интерактивная подсказка при наведении */}
       <span
         aria-hidden="true"
         className="absolute inset-0 bg-black/55 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center justify-center"
@@ -151,7 +150,7 @@ export function CabinetAvatarEditorStrip({
               ? 'Установлено собственное фото профиля'
               : `Абстрактный студийный аватар по инициалам «${avatar.initials}»`}
           </p>
-          <p className="text-xs text-[#111111]/62 dark:text-[#F4F3EF]/62">
+          <p className="text-xs text-[#111111]/74 dark:text-[#F4F3EF]/74">
             {avatar.hasCustomPhoto
               ? 'Вы можете заменить фотографию или удалить её, чтобы вернуть сгенерированный аватар с инициалами.'
               : 'Пока фото профиля не загружено, используется сгенерированная акустическая композиция на основе ваших инициалов.'}
@@ -175,10 +174,10 @@ export function CabinetAvatarEditorStrip({
                   aria-pressed={isSelected}
                   data-testid={`cabinet-avatar-preset-${preset.id}`}
                   onClick={() => onSelectPreset(preset.id)}
-                  className={`min-h-[34px] px-2.5 py-1 rounded-lg text-xs font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50 ${
+                  className={`min-h-[44px] sm:min-h-[34px] px-2.5 py-1 rounded-lg text-xs font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
                     isSelected
                       ? 'bg-white dark:bg-[#1C1C22] text-[#111111] dark:text-[#F4F3EF] border border-[#111111]/14 dark:border-white/16'
-                      : 'text-[#111111]/68 dark:text-[#F4F3EF]/68 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
+                      : 'text-[#111111]/74 dark:text-[#F4F3EF]/74 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
                   }`}
                 >
                   <span
@@ -214,9 +213,9 @@ export function CabinetAvatarEditorStrip({
             disabled={isSavingAvatar}
             data-testid="cabinet-avatar-upload-btn"
             onClick={() => fileInputRef.current?.click()}
-            className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+            className="min-h-[44px] sm:min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
           >
-            <ImagePlus className="w-3.5 h-3.5 shrink-0 text-[#FF4820]" aria-hidden="true" />
+            <ImagePlus className="w-3.5 h-3.5 shrink-0 text-[#C83210] dark:text-[#FF6B47]" aria-hidden="true" />
             <span>{isSavingAvatar ? 'Сохраняем…' : 'Загрузить фото'}</span>
           </button>
 
@@ -226,7 +225,7 @@ export function CabinetAvatarEditorStrip({
               disabled={isSavingAvatar}
               data-testid="cabinet-avatar-remove-photo-btn"
               onClick={onRemovePhoto}
-              className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 hover:border-[#DC2626] hover:text-[#DC2626] text-xs font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78 inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+              className="min-h-[44px] sm:min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#B91C1C] hover:text-[#B91C1C] dark:hover:text-[#F87171] text-xs font-semibold text-[#111111]/82 dark:text-[#F4F3EF]/82 inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
             >
               <Trash2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
               <span>Удалить фото</span>
@@ -236,7 +235,7 @@ export function CabinetAvatarEditorStrip({
           <button
             type="button"
             onClick={onClose}
-            className="min-h-[38px] px-2.5 py-1.5 text-xs font-semibold text-[#111111]/58 dark:text-[#F4F3EF]/58 hover:text-[#111111] dark:hover:text-[#F4F3EF] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            className="min-h-[44px] sm:min-h-[38px] px-2.5 py-1.5 text-xs font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:text-[#111111] dark:hover:text-[#F4F3EF] transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
           >
             Готово
           </button>
@@ -247,7 +246,7 @@ export function CabinetAvatarEditorStrip({
         <p
           role="alert"
           data-testid="cabinet-avatar-error"
-          className="text-xs font-medium text-[#DC2626] dark:text-[#F87171]"
+          className="text-xs font-medium text-[#B91C1C] dark:text-[#F87171]"
         >
           {avatarError}
         </p>

@@ -175,12 +175,20 @@ test('Раздел 3 Договора (техстандарт радио РФ) �
     legalProfiles: profiles,
   });
 
+  assert.equal(suite.actNumber, 'АКТ-2026/2705-1');
+  assert.equal(suite.spotMasterFileName, 'FMWorks_Spot_2026_2705_30s.wav');
+  const actText = formatProductionSuitePlainSummary(suite, 'act');
+  assert.match(actText, /АКТ СДАЧИ-ПРИЁМКИ ОКАЗАННЫХ УСЛУГ № АКТ-2026\/2705-1/);
+  assert.match(actText, /ст\. 1234, 1285 ГК РФ/);
+  assert.match(actText, /Стороны взаимных претензий не имеют/);
+
   const allTexts = [
     JSON.stringify(profiles),
     joinedTech,
     formatProductionSuitePlainSummary(suite, 'kp'),
     formatProductionSuitePlainSummary(suite, 'contract'),
     formatProductionSuitePlainSummary(suite, 'invoice'),
+    actText,
     formatProductionSuitePlainSummary(suite, 'passport'),
   ]
     .join('\n')

@@ -1625,7 +1625,7 @@ export function evaluateVariationAffinityAndReason(params: {
     score += 4;
   }
 
-  // 7. Сигналы серверного AI-анализатора продукта (`gemini-3.8-flash`)
+  // 7. Сигналы серверного AI-анализатора продукта (`gemini-4-hydrogen`)
   if (aiHint) {
     if (aiHint.boostedStationIds?.includes(stationItem.stationId)) {
       score += 7;

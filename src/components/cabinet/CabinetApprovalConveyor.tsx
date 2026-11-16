@@ -3,10 +3,11 @@ import {
   CheckCircle2,
   Clock,
   Copy,
+  Crosshair,
   MessageSquare,
   SlidersHorizontal,
 } from 'lucide-react';
-import { useState } from 'react';
+import { KeyboardEvent, useRef, useState } from 'react';
 import {
   type ClientApprovalWorkflowView,
   SPOT_REVISION_KIND_LABELS,
@@ -34,6 +35,8 @@ export interface CabinetApprovalConveyorProps {
   orderNumber: string;
   workflow: ClientApprovalWorkflowView;
   latestDeliverableId?: string | null;
+  activePlayerTimeSec?: number;
+  onRequestSeekTimeSec?: (timeSec: number) => void;
   isSubmitting: boolean;
   onApproveScript: (conceptId?: string) => Promise<void> | void;
   onRequestScriptChanges: (comment: string) => Promise<void> | void;
@@ -59,6 +62,8 @@ export function CabinetApprovalConveyor({
   orderNumber,
   workflow,
   latestDeliverableId,
+  activePlayerTimeSec = 0,
+  onRequestSeekTimeSec,
   isSubmitting,
   onApproveScript,
   onRequestScriptChanges,
@@ -69,6 +74,8 @@ export function CabinetApprovalConveyor({
   const [selectedConceptId, setSelectedConceptId] = useState<string>(
     () => latestScriptDraft?.concepts[0]?.id ?? ''
   );
+  const conceptTabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+
   const [isScriptCommentOpen, setIsScriptCommentOpen] = useState<boolean>(false);
   const [scriptCommentDraft, setScriptCommentDraft] = useState<string>('');
   const [localError, setLocalError] = useState<string | null>(null);
@@ -88,6 +95,30 @@ export function CabinetApprovalConveyor({
     latestScriptDraft?.concepts.find((c) => c.id === selectedConceptId) ??
     latestScriptDraft?.concepts[0] ??
     null;
+
+  const handleConceptTabKeyDown = (
+    e: KeyboardEvent<HTMLButtonElement>,
+    currentIndex: number
+  ) => {
+    const concepts = latestScriptDraft?.concepts ?? [];
+    if (concepts.length <= 1) return;
+    let nextIdx = -1;
+    if (e.key === 'ArrowRight') {
+      nextIdx = (currentIndex + 1) % concepts.length;
+    } else if (e.key === 'ArrowLeft') {
+      nextIdx = (currentIndex - 1 + concepts.length) % concepts.length;
+    } else if (e.key === 'Home') {
+      nextIdx = 0;
+    } else if (e.key === 'End') {
+      nextIdx = concepts.length - 1;
+    }
+    if (nextIdx >= 0) {
+      e.preventDefault();
+      const target = concepts[nextIdx];
+      setSelectedConceptId(target.id);
+      conceptTabRefs.current[target.id]?.focus();
+    }
+  };
 
   const handleCopyScriptForDirector = async () => {
     const src = workflow.lockedScript ?? activeConcept;
@@ -129,6 +160,12 @@ export function CabinetApprovalConveyor({
     setIsScriptCommentOpen(false);
   };
 
+  const handleCapturePlayerTimecode = () => {
+    const rounded = Math.max(0, Math.round(activePlayerTimeSec * 10) / 10);
+    setRevisionTimecodeInput(rounded.toFixed(1));
+    setLocalError(null);
+  };
+
   const handleSpotRevisionSubmit = async () => {
     const clean = revisionCommentDraft.trim();
     if (clean.length < 3) {
@@ -161,6 +198,8 @@ export function CabinetApprovalConveyor({
       revisionKind === 'music_replacement');
 
   const latestRevision = workflow.spotRevisions[0] ?? null;
+  const hasMultipleConcepts = (latestScriptDraft?.concepts.length ?? 0) > 1;
+  const scriptPanelId = `cabinet-script-tabpanel-${orderNumber}`;
 
   return (
     <section
@@ -171,7 +210,7 @@ export function CabinetApprovalConveyor({
     >
       {/* Строка статуса хода (чистая типографика без капсульных бейджей) */}
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[#111111]/62 dark:text-[#F4F3EF]/62">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[#111111]/72 dark:text-[#F4F3EF]/72">
           <span className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
             Конвейер согласования
           </span>
@@ -185,10 +224,10 @@ export function CabinetApprovalConveyor({
           data-testid={`cabinet-whose-turn-${orderNumber}`}
           className={`font-semibold ${
             workflow.whoseTurnActor === 'client'
-              ? 'text-[#FF4820]'
+              ? 'text-[#D93814] dark:text-[#FF6B47]'
               : workflow.whoseTurnActor === 'completed'
                 ? 'text-[#15803D] dark:text-[#4ADE80]'
-                : 'text-[#111111]/75 dark:text-[#F4F3EF]/75'
+                : 'text-[#111111]/78 dark:text-[#F4F3EF]/78'
           }`}
         >
           {workflow.whoseTurnLabel}
@@ -212,19 +251,19 @@ export function CabinetApprovalConveyor({
                   ? 'text-[#111111] dark:text-[#F4F3EF] font-semibold'
                   : isDone
                     ? 'text-[#15803D] dark:text-[#4ADE80] font-medium'
-                    : 'text-[#111111]/46 dark:text-[#F4F3EF]/46'
+                    : 'text-[#111111]/66 dark:text-[#F4F3EF]/66'
               }`}
             >
               <div className="flex items-center gap-2 min-w-0">
                 {isDone ? (
                   <CheckCircle2
-                    className="w-3.5 h-3.5 shrink-0 text-[#16A34A] dark:text-[#4ADE80]"
+                    className="w-3.5 h-3.5 shrink-0 text-[#15803D] dark:text-[#4ADE80]"
                     aria-hidden="true"
                   />
                 ) : (
                   <span
                     className={`font-mono text-[11px] shrink-0 ${
-                      isActive ? 'text-[#FF4820] font-bold' : ''
+                      isActive ? 'text-[#D93814] dark:text-[#FF6B47] font-bold' : ''
                     }`}
                   >
                     {step.code}.
@@ -234,7 +273,7 @@ export function CabinetApprovalConveyor({
               </div>
 
               {isActive && workflow.whoseTurnActor === 'client' && (
-                <span className="text-[11px] font-semibold text-[#FF4820] whitespace-nowrap shrink-0">
+                <span className="text-[11px] font-semibold text-[#D93814] dark:text-[#FF6B47] whitespace-nowrap shrink-0">
                   Ваш ход
                 </span>
               )}
@@ -256,12 +295,12 @@ export function CabinetApprovalConveyor({
                   : `Продюсер формирует режиссёрский сценарий (${workflow.targetSlotSec} с)`}
               </p>
               {latestScriptDraft?.clientComment ? (
-                <p className="text-xs text-[#111111]/68 dark:text-[#F4F3EF]/68 leading-relaxed">
+                <p className="text-xs text-[#111111]/74 dark:text-[#F4F3EF]/74 leading-relaxed">
                   Ваше замечание к v{latestScriptDraft.versionNumber}: «
                   {latestScriptDraft.clientComment}»
                 </p>
               ) : (
-                <p className="text-xs text-[#111111]/64 dark:text-[#F4F3EF]/64 leading-relaxed">
+                <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72 leading-relaxed">
                   Выверяем продающую драматургию, ударения, сноски ФЗ-38 и точный
                   хронометраж. Как только сценарий будет опубликован, придёт
                   мгновенное оповещение.
@@ -271,7 +310,7 @@ export function CabinetApprovalConveyor({
           ) : activeConcept && latestScriptDraft ? (
             <div className="space-y-3.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs text-[#111111]/68 dark:text-[#F4F3EF]/68">
+                <div className="text-xs text-[#111111]/74 dark:text-[#F4F3EF]/74">
                   <strong className="text-[#111111] dark:text-[#F4F3EF]">
                     Режиссёрский сценарий v{latestScriptDraft.versionNumber}
                   </strong>
@@ -283,10 +322,10 @@ export function CabinetApprovalConveyor({
                   type="button"
                   onClick={() => void handleCopyScriptForDirector()}
                   data-testid={`cabinet-copy-script-btn-${orderNumber}`}
-                  className="min-h-[32px] px-3 py-1 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold text-[#111111]/82 dark:text-[#F4F3EF]/82 inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                  className="min-h-[44px] sm:min-h-[34px] px-3 py-1.5 rounded-lg border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111]/85 dark:text-[#F4F3EF]/85 inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                 >
                   {copiedScript ? (
-                    <Check className="w-3.5 h-3.5 text-[#16A34A]" aria-hidden="true" />
+                    <Check className="w-3.5 h-3.5 text-[#15803D] dark:text-[#4ADE80]" aria-hidden="true" />
                   ) : (
                     <Copy className="w-3.5 h-3.5" aria-hidden="true" />
                   )}
@@ -298,25 +337,33 @@ export function CabinetApprovalConveyor({
                 </button>
               </div>
 
-              {latestScriptDraft.concepts.length > 1 && (
+              {hasMultipleConcepts && (
                 <div
                   role="tablist"
                   aria-label="Варианты режиссёрского сценария"
                   className="inline-flex flex-wrap items-center gap-1 p-1 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F]"
                 >
-                  {latestScriptDraft.concepts.map((concept) => {
+                  {latestScriptDraft.concepts.map((concept, idx) => {
                     const isSelected = concept.id === activeConcept.id;
+                    const tabId = `cabinet-script-tab-${orderNumber}-${concept.id}`;
                     return (
                       <button
                         key={concept.id}
+                        ref={(el) => {
+                          conceptTabRefs.current[concept.id] = el;
+                        }}
+                        id={tabId}
                         type="button"
                         role="tab"
                         aria-selected={isSelected}
+                        aria-controls={scriptPanelId}
+                        tabIndex={isSelected ? 0 : -1}
+                        onKeyDown={(e) => handleConceptTabKeyDown(e, idx)}
                         onClick={() => setSelectedConceptId(concept.id)}
-                        className={`min-h-[32px] px-3 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                        className={`min-h-[44px] sm:min-h-[34px] px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
                           isSelected
                             ? 'bg-white dark:bg-[#141418] text-[#111111] dark:text-[#F4F3EF] shadow-xs'
-                            : 'text-[#111111]/64 dark:text-[#F4F3EF]/64 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
+                            : 'text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
                         }`}
                       >
                         {concept.label}
@@ -326,8 +373,18 @@ export function CabinetApprovalConveyor({
                 </div>
               )}
 
-              <div className="p-4 sm:p-5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] space-y-3">
-                <p className="text-xs font-semibold text-[#111111]/64 dark:text-[#F4F3EF]/64">
+              <div
+                id={scriptPanelId}
+                role={hasMultipleConcepts ? 'tabpanel' : undefined}
+                aria-labelledby={
+                  hasMultipleConcepts
+                    ? `cabinet-script-tab-${orderNumber}-${activeConcept.id}`
+                    : undefined
+                }
+                tabIndex={hasMultipleConcepts ? 0 : undefined}
+                className="p-4 sm:p-5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] space-y-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+              >
+                <p className="text-xs font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74">
                   {activeConcept.title}
                 </p>
 
@@ -339,7 +396,7 @@ export function CabinetApprovalConveyor({
                 </p>
 
                 {(activeConcept.stressNotes || activeConcept.fz38Disclaimer) && (
-                  <div className="pt-2.5 border-t border-[#111111]/8 dark:border-white/8 space-y-1 text-xs text-[#111111]/70 dark:text-[#F4F3EF]/70">
+                  <div className="pt-2.5 border-t border-[#111111]/10 dark:border-white/10 space-y-1 text-xs text-[#111111]/76 dark:text-[#F4F3EF]/76">
                     {activeConcept.stressNotes && (
                       <p>
                         <strong className="text-[#111111] dark:text-[#F4F3EF]">
@@ -359,7 +416,7 @@ export function CabinetApprovalConveyor({
                   </div>
                 )}
 
-                <div className="pt-2.5 border-t border-[#111111]/8 dark:border-white/8 text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72 leading-relaxed">
+                <div className="pt-2.5 border-t border-[#111111]/10 dark:border-white/10 text-xs text-[#111111]/78 dark:text-[#F4F3EF]/78 leading-relaxed">
                   <strong className="text-[#111111] dark:text-[#F4F3EF]">
                     Режиссёрское решение студии (голос и музыка):
                   </strong>{' '}
@@ -367,7 +424,7 @@ export function CabinetApprovalConveyor({
                 </div>
               </div>
 
-              <p className="text-[11px] text-[#111111]/58 dark:text-[#F4F3EF]/58 leading-relaxed">
+              <p className="text-xs text-[#111111]/70 dark:text-[#F4F3EF]/70 leading-relaxed">
                 Утверждение сценария фиксирует текст, ударения и хронометраж{' '}
                 {workflow.targetSlotSec} с. Подбор диктора, интонации и
                 лицензионной музыкальной фонограммы выполняет режиссёрская группа
@@ -380,7 +437,7 @@ export function CabinetApprovalConveyor({
                   disabled={isSubmitting}
                   data-testid={`cabinet-approve-script-btn-${orderNumber}`}
                   onClick={() => void onApproveScript(activeConcept.id)}
-                  className="min-h-[42px] px-5 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+                  className="min-h-[44px] px-5 py-2.5 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                 >
                   <Check className="w-4 h-4 shrink-0" aria-hidden="true" />
                   <span>
@@ -398,7 +455,7 @@ export function CabinetApprovalConveyor({
                     setLocalError(null);
                     setIsScriptCommentOpen((prev) => !prev);
                   }}
-                  className="min-h-[42px] px-4 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                  className="min-h-[44px] px-4 py-2.5 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                 >
                   <MessageSquare className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                   <span>
@@ -423,7 +480,7 @@ export function CabinetApprovalConveyor({
                     value={scriptCommentDraft}
                     onChange={(e) => setScriptCommentDraft(e.target.value)}
                     placeholder="Например: уточните срок акции до 30 декабря и выделите телефон в финале…"
-                    className="w-full px-3 py-2 rounded-lg bg-white dark:bg-[#141418] border border-[#111111]/14 dark:border-white/14 text-xs sm:text-sm text-[#111111] dark:text-[#F4F3EF]"
+                    className="w-full px-3 py-2 rounded-lg bg-white dark:bg-[#141418] border border-[#111111]/16 dark:border-white/16 text-xs sm:text-sm text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
                   />
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <button
@@ -431,7 +488,7 @@ export function CabinetApprovalConveyor({
                       disabled={isSubmitting}
                       data-testid={`cabinet-submit-script-comment-btn-${orderNumber}`}
                       onClick={() => void handleScriptCommentSubmit()}
-                      className="min-h-[38px] px-4 py-1.5 rounded-lg bg-[#111111] hover:bg-[#FF4820] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+                      className="min-h-[44px] sm:min-h-[38px] px-4 py-1.5 rounded-lg bg-[#111111] hover:bg-[#FF4820] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                     >
                       Отправить замечание продюсеру
                     </button>
@@ -455,13 +512,13 @@ export function CabinetApprovalConveyor({
                 : 'Сценарий утверждён · ролик в студийном производстве'}
             </p>
             {workflow.lockedScript?.approvedAt && (
-              <span className="text-[11px] text-[#111111]/55 dark:text-[#F4F3EF]/55">
+              <span className="text-xs text-[#111111]/70 dark:text-[#F4F3EF]/70">
                 Утверждён {formatDateTimeRu(workflow.lockedScript.approvedAt)}
               </span>
             )}
           </div>
 
-          <p className="text-xs text-[#111111]/68 dark:text-[#F4F3EF]/68 leading-relaxed">
+          <p className="text-xs text-[#111111]/74 dark:text-[#F4F3EF]/74 leading-relaxed">
             Записываем профильного диктора, собираем коммерческую музыкальную
             фонограмму и выравниваем громкость под эфирный стандарт −14 LUFS (ровно{' '}
             {workflow.targetSlotSec},00 с). Готовый ролик откроется здесь сразу
@@ -470,14 +527,14 @@ export function CabinetApprovalConveyor({
 
           {workflow.lockedScript && (
             <details className="pt-1 text-xs">
-              <summary className="font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78 cursor-pointer select-none hover:text-[#FF4820]">
+              <summary className="min-h-[36px] inline-flex items-center font-semibold text-[#111111]/82 dark:text-[#F4F3EF]/82 cursor-pointer select-none hover:text-[#FF4820] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]">
                 Показать утверждённый текст сценария (v
                 {workflow.lockedScript.versionNumber})
               </summary>
-              <div className="mt-2 pt-2 border-t border-[#111111]/8 dark:border-white/8 space-y-1.5 text-[#111111]/78 dark:text-[#F4F3EF]/78 leading-relaxed">
+              <div className="mt-2 pt-2 border-t border-[#111111]/10 dark:border-white/10 space-y-1.5 text-[#111111]/82 dark:text-[#F4F3EF]/82 leading-relaxed">
                 <p>{workflow.lockedScript.bodyText}</p>
                 {workflow.lockedScript.stressNotes && (
-                  <p className="text-[11px] text-[#111111]/58 dark:text-[#F4F3EF]/58">
+                  <p className="text-xs text-[#111111]/70 dark:text-[#F4F3EF]/70">
                     Ударения: {workflow.lockedScript.stressNotes}
                   </p>
                 )}
@@ -499,28 +556,28 @@ export function CabinetApprovalConveyor({
             >
               <div className="flex items-start gap-2.5">
                 <CheckCircle2
-                  className="w-4 h-4 text-[#16A34A] dark:text-[#4ADE80] shrink-0 mt-0.5"
+                  className="w-4 h-4 text-[#15803D] dark:text-[#4ADE80] shrink-0 mt-0.5"
                   aria-hidden="true"
                 />
                 <div className="space-y-0.5">
                   <p className="text-xs sm:text-sm font-semibold text-[#111111] dark:text-[#F4F3EF]">
                     Аудиоролик официально принят в эфир
                   </p>
-                  <p className="text-xs text-[#111111]/64 dark:text-[#F4F3EF]/64">
+                  <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
                     {workflow.acceptedAt
                       ? `Дата приёмки: ${formatDateTimeRu(workflow.acceptedAt)} · `
                       : ''}
-                    Мастер-файл WAV (−14 LUFS) и документы доступны ниже.
+                    Мастер-файл WAV (−14 LUFS), акт сдачи-приёмки и паспорт прав доступны в карточке.
                   </p>
                 </div>
               </div>
             </div>
           ) : (
             <div className="p-4 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] space-y-3">
-              {/* Спокойное уведомление о зашитом в цену 1 сервисном раунде доводки без микро-счетов */}
+              {/* Уведомление о зашитом в цену 1 сервисном раунде доводки без микро-счетов */}
               <p
                 data-testid={`cabinet-service-round-note-${orderNumber}`}
-                className="text-xs text-[#111111]/74 dark:text-[#F4F3EF]/74 leading-relaxed"
+                className="text-xs text-[#111111]/78 dark:text-[#F4F3EF]/78 leading-relaxed"
               >
                 {!workflow.serviceRoundUsed ? (
                   <>
@@ -551,7 +608,7 @@ export function CabinetApprovalConveyor({
               {(workflow.phase === 'revision_in_progress' ||
                 workflow.phase === 'producer_escalation') &&
                 latestRevision && (
-                  <div className="pt-2.5 border-t border-[#111111]/8 dark:border-white/8 space-y-1 text-xs">
+                  <div className="pt-2.5 border-t border-[#111111]/10 dark:border-white/10 space-y-1 text-xs">
                     <div className="flex flex-wrap items-center gap-1.5 font-semibold text-[#111111] dark:text-[#F4F3EF]">
                       <Clock
                         className="w-3.5 h-3.5 text-[#FF4820] shrink-0"
@@ -564,12 +621,25 @@ export function CabinetApprovalConveyor({
                       </span>
                       <span>{SPOT_REVISION_KIND_LABELS[latestRevision.kind]}</span>
                       {typeof latestRevision.timecodeSec === 'number' && (
-                        <span>
-                          · таймкод {latestRevision.timecodeSec.toFixed(1)} с
-                        </span>
+                        onRequestSeekTimeSec ? (
+                          <button
+                            type="button"
+                            data-testid={`cabinet-seek-revision-tc-${orderNumber}`}
+                            onClick={() =>
+                              onRequestSeekTimeSec(latestRevision.timecodeSec ?? 0)
+                            }
+                            className="font-mono text-[#D93814] dark:text-[#FF6B47] underline underline-offset-2 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+                          >
+                            · таймкод {latestRevision.timecodeSec.toFixed(1)} с (перейти)
+                          </button>
+                        ) : (
+                          <span>
+                            · таймкод {latestRevision.timecodeSec.toFixed(1)} с
+                          </span>
+                        )
                       )}
                     </div>
-                    <p className="text-[#111111]/68 dark:text-[#F4F3EF]/68">
+                    <p className="text-[#111111]/74 dark:text-[#F4F3EF]/74">
                       «{latestRevision.comment}»
                     </p>
                   </div>
@@ -582,7 +652,7 @@ export function CabinetApprovalConveyor({
                     disabled={isSubmitting}
                     data-testid={`cabinet-accept-spot-btn-${orderNumber}`}
                     onClick={() => void onAcceptSpot(latestDeliverableId)}
-                    className="min-h-[42px] px-5 py-2 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+                    className="min-h-[44px] px-5 py-2.5 rounded-xl bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                   >
                     <Check className="w-4 h-4 shrink-0" aria-hidden="true" />
                     <span>
@@ -598,7 +668,7 @@ export function CabinetApprovalConveyor({
                       setLocalError(null);
                       setIsSpotRevisionOpen((prev) => !prev);
                     }}
-                    className="min-h-[42px] px-4 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                    className="min-h-[44px] px-4 py-2.5 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                   >
                     <SlidersHorizontal
                       className="w-3.5 h-3.5 shrink-0"
@@ -643,12 +713,13 @@ export function CabinetApprovalConveyor({
                           <button
                             key={opt.id}
                             type="button"
+                            aria-pressed={selected}
                             data-testid={`cabinet-revision-kind-${orderNumber}-${opt.id}`}
                             onClick={() => setRevisionKind(opt.id)}
-                            className={`min-h-[36px] px-3 py-1.5 rounded-lg border text-xs font-semibold text-left transition-colors cursor-pointer ${
+                            className={`min-h-[44px] sm:min-h-[38px] px-3 py-1.5 rounded-lg border text-xs font-semibold text-left transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
                               selected
                                 ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:border-[#F4F3EF]'
-                                : 'bg-white dark:bg-[#141418] text-[#111111]/78 dark:text-[#F4F3EF]/78 border-[#111111]/12 dark:border-white/12 hover:border-[#FF4820]'
+                                : 'bg-white dark:bg-[#141418] text-[#111111]/82 dark:text-[#F4F3EF]/82 border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820]'
                             }`}
                           >
                             {opt.short}
@@ -658,29 +729,41 @@ export function CabinetApprovalConveyor({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
-                    <div>
-                      <label
-                        htmlFor={`rev-tc-${orderNumber}`}
-                        className="block text-[11px] font-medium text-[#111111]/64 dark:text-[#F4F3EF]/64 mb-1"
-                      >
-                        Таймкод, сек
-                      </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                    <div className="sm:col-span-4 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <label
+                          htmlFor={`rev-tc-${orderNumber}`}
+                          className="block text-xs font-medium text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Таймкод, сек
+                        </label>
+                        <button
+                          type="button"
+                          data-testid={`cabinet-capture-timecode-btn-${orderNumber}`}
+                          onClick={handleCapturePlayerTimecode}
+                          className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#D93814] dark:text-[#FF6B47] hover:underline cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+                        >
+                          <Crosshair className="w-3 h-3 shrink-0" aria-hidden="true" />
+                          <span>Из плеера ({activePlayerTimeSec.toFixed(1)} с)</span>
+                        </button>
+                      </div>
                       <input
                         id={`rev-tc-${orderNumber}`}
+                        data-testid={`cabinet-revision-timecode-${orderNumber}`}
                         type="text"
                         inputMode="decimal"
                         value={revisionTimecodeInput}
                         onChange={(e) => setRevisionTimecodeInput(e.target.value)}
                         placeholder="напр. 12.5"
-                        className="w-full min-h-[38px] px-3 rounded-lg bg-white dark:bg-[#141418] border border-[#111111]/14 dark:border-white/14 text-xs tabular-nums"
+                        className="w-full min-h-[44px] sm:min-h-[38px] px-3 rounded-lg bg-white dark:bg-[#141418] border border-[#111111]/16 dark:border-white/16 text-xs tabular-nums focus:outline-none focus:border-[#FF4820]"
                       />
                     </div>
 
-                    <div className="sm:col-span-3">
+                    <div className="sm:col-span-8 space-y-1">
                       <label
                         htmlFor={`rev-comment-${orderNumber}`}
-                        className="block text-[11px] font-medium text-[#111111]/64 dark:text-[#F4F3EF]/64 mb-1"
+                        className="block text-xs font-medium text-[#111111]/74 dark:text-[#F4F3EF]/74"
                       >
                         Комментарий для студии
                       </label>
@@ -691,13 +774,13 @@ export function CabinetApprovalConveyor({
                         value={revisionCommentDraft}
                         onChange={(e) => setRevisionCommentDraft(e.target.value)}
                         placeholder="Опишите, что нужно скорректировать…"
-                        className="w-full min-h-[38px] px-3 rounded-lg bg-white dark:bg-[#141418] border border-[#111111]/14 dark:border-white/14 text-xs"
+                        className="w-full min-h-[44px] sm:min-h-[38px] px-3 rounded-lg bg-white dark:bg-[#141418] border border-[#111111]/16 dark:border-white/16 text-xs focus:outline-none focus:border-[#FF4820]"
                       />
                     </div>
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-[11px] text-[#111111]/60 dark:text-[#F4F3EF]/60">
+                    <span className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
                       {willUseIncludedServiceRound
                         ? 'Правка уйдёт сразу в работу в рамках включённого сервисного раунда (0 ₽ доплат).'
                         : 'Запрос поступит продюсеру для быстрого согласования без микро-счетов.'}
@@ -708,7 +791,7 @@ export function CabinetApprovalConveyor({
                       disabled={isSubmitting}
                       data-testid={`cabinet-submit-spot-revision-btn-${orderNumber}`}
                       onClick={() => void handleSpotRevisionSubmit()}
-                      className="min-h-[38px] px-4 py-1.5 rounded-lg bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+                      className="min-h-[44px] sm:min-h-[38px] px-4 py-1.5 rounded-lg bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                     >
                       {willUseIncludedServiceRound
                         ? 'Отправить в работу студии'
@@ -723,7 +806,7 @@ export function CabinetApprovalConveyor({
       )}
 
       {localError && (
-        <p className="text-xs font-medium text-[#DC2626] dark:text-[#F87171]">
+        <p role="alert" className="text-xs font-medium text-[#DC2626] dark:text-[#F87171]">
           {localError}
         </p>
       )}

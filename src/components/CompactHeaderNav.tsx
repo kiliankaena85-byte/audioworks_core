@@ -282,7 +282,7 @@ export function CompactHeaderNav({
             type="button"
             onClick={onToggleTheme}
             aria-label={isDark ? 'Включить светлую тему' : 'Включить тёмную тему'}
-            className="w-10 h-10 rounded-full flex items-center justify-center text-[#111111]/68 dark:text-[#F4F3EF]/68 hover:text-[#111111] dark:hover:text-[#F4F3EF] hover:bg-[#111111]/6 dark:hover:bg-white/8 transition-colors cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+            className="w-11 h-11 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-[#111111]/74 dark:text-[#F4F3EF]/74 hover:text-[#111111] dark:hover:text-[#F4F3EF] hover:bg-[#111111]/6 dark:hover:bg-white/8 transition-colors cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
           >
             {isDark ? (
               <Sun className="w-4 h-4" aria-hidden="true" />
@@ -297,7 +297,7 @@ export function CompactHeaderNav({
             aria-expanded={isMobileMenuOpen}
             aria-controls="compact-mobile-nav"
             aria-label={isMobileMenuOpen ? 'Закрыть меню разделов' : 'Открыть меню разделов'}
-            className="md:hidden w-10 h-10 rounded-full flex items-center justify-center text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:bg-[#111111]/6 dark:hover:bg-white/8 transition-colors cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+            className="md:hidden w-11 h-11 rounded-full flex items-center justify-center text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:bg-[#111111]/6 dark:hover:bg-white/8 transition-colors cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
           >
             {isMobileMenuOpen ? (
               <X className="w-4 h-4" aria-hidden="true" />
@@ -312,12 +312,12 @@ export function CompactHeaderNav({
             data-reservation-status={effectiveStatus}
             onClick={handlePrimaryCtaClick}
             aria-current={isOrderActive ? 'page' : undefined}
-            className={`h-9 sm:h-10 px-3 sm:px-5 rounded-full text-xs sm:text-[13px] font-semibold tracking-tight inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
+            className={`min-h-[44px] sm:min-h-0 sm:h-10 px-3.5 sm:px-5 rounded-full text-xs sm:text-[13px] font-semibold tracking-tight inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
               AIRTIME_SALES_ENABLED && effectiveStatus === 'confirmed_hold'
-                ? 'bg-[#111111] text-[#F7F6F2] hover:bg-[#FF4820] hover:text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white'
+                ? 'bg-[#111111] text-[#F7F6F2] hover:bg-[#C83210] hover:text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white'
                 : isOrderActive
                   ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
-                  : 'bg-[#FF4820] hover:bg-[#E63D18] text-white'
+                  : 'bg-[#C83210] hover:bg-[#B02A0C] text-white'
             }`}
           >
             {AIRTIME_SALES_ENABLED && effectiveStatus === 'confirmed_hold' ? (

@@ -183,7 +183,8 @@ test('injectRouteSeoIntoHtml подставляет метаданные, гео
   assert.ok(faqHtml.includes('<div id="root"></div>'));
   assert.ok(faqHtml.includes('<noscript data-ssr-seo="true">'));
   assert.ok(faqHtml.includes('</noscript>'));
-  assert.equal(faqHtml.includes('twitter:'), false);
+  assert.ok(faqHtml.includes('<meta name="twitter:card" content="summary_large_image" />'));
+  assert.ok(faqHtml.includes('name="twitter:image"'));
 
   const pricingHtml = injectRouteSeoIntoHtml(baseHtml, '/pricing', 'https://fmworks.ru');
   assert.ok(pricingHtml.includes('<div id="root"></div>'));

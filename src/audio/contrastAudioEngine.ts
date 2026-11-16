@@ -93,6 +93,10 @@ export interface ContrastStageSnapshot {
   hasCompletedCrashTest: boolean;
   /** Поставлен ли краш-тест / ролик на паузу посреди воспроизведения */
   isPausedMidSession: boolean;
+  /** Была ли пауза нажата внутри Фазы А («Обычный эфир») для сохранения шкалы 0..clutterDurationSec */
+  pausedInClutter: boolean;
+  /** Сообщение об ошибке старта аудио, если браузер заблокировал воспроизведение */
+  audioError: string | null;
 }
 
 type SnapshotListener = (snap: ContrastStageSnapshot) => void;
@@ -101,7 +105,6 @@ class ContrastAudioEngine {
   private ctx: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
   private synthMasterGain: GainNode | null = null;
-  private mediaElementSource: MediaElementAudioSourceNode | null = null;
   private roadGain: GainNode | null = null;
   private roadSource: AudioBufferSourceNode | null = null;
   private clutterNodes: AudioNode[] = [];
@@ -142,6 +145,7 @@ class ContrastAudioEngine {
   private isPausedMidSession = false;
   private pausedInClutter = false;
   private pausedClutterElapsedSec = 0;
+  private audioError: string | null = null;
 
   private listeners = new Set<SnapshotListener>();
   private onStartHooks = new Set<() => void>();
@@ -202,6 +206,8 @@ class ContrastAudioEngine {
       isMuted: this.isMuted,
       hasCompletedCrashTest: this.hasCompletedCrashTest,
       isPausedMidSession: this.isPausedMidSession,
+      pausedInClutter: this.pausedInClutter,
+      audioError: this.audioError,
     };
   }
 
@@ -410,16 +416,6 @@ class ContrastAudioEngine {
     }
 
     unlockAudioContextOnGesture(this.ctx);
-
-    if (this.htmlAudio && !this.mediaElementSource && this.analyser) {
-      try {
-        this.mediaElementSource = this.ctx.createMediaElementSource(this.htmlAudio);
-        this.mediaElementSource.connect(this.analyser);
-      } catch {
-        // Fallback if MediaElementSource already attached or unsupported
-      }
-    }
-
     this.syncVolumeToNodes();
     return this.ctx;
   }
@@ -910,12 +906,14 @@ class ContrastAudioEngine {
       } catch {
         // Ignore if metadata still loading
       }
+      this.audioError = null;
       audio.play().catch(() => {
         this.isSoundPlaying = false;
         this.isFilmPlaying = false;
         this.forceClutterRoadNoise = false;
         this.activeChapter = null;
         this.revealedWordsCount = this.totalFocusWords;
+        this.audioError = 'Браузер заблокировал автозапуск звука — нажмите ещё раз';
         this.syncRoadNoiseNode();
         this.emit();
       });
@@ -955,13 +953,16 @@ class ContrastAudioEngine {
     this.isPausedMidSession = false;
     this.pausedInClutter = false;
     this.hasCompletedCrashTest = false;
+    this.audioError = null;
     this.forceClutterRoadNoise = cmsClutter ? cmsClutter.roadNoiseOnClutter : true;
     this.filmElapsedSec = safeOffset;
     this.focusSegmentStartSec = 0;
 
     const duelSnap = duelAudioStore.getSnapshot();
+    let usesExternalAudioBuffer = false;
 
     if (cmsClutter && cmsClutter.mode === 'custom_upload') {
+      usesExternalAudioBuffer = true;
       const audio = this.ensureHtmlAudio(cmsClutter.audioUrl);
       this.ensureAudioGraph();
       if (audio) {
@@ -971,7 +972,10 @@ class ContrastAudioEngine {
           } catch {
             // Ignore seek before metadata
           }
-          audio.play().catch(() => {});
+          audio.play().catch(() => {
+            this.audioError = 'Нажмите ещё раз для запуска звука';
+            this.emit();
+          });
         };
         if (audio.readyState >= 1) {
           launchCustomClutter();
@@ -981,6 +985,7 @@ class ContrastAudioEngine {
         }
       }
     } else if (!this.cmsHeroPlayback && duelSnap.radioTrack) {
+      usesExternalAudioBuffer = true;
       const audio = this.ensureHtmlAudio(duelSnap.radioTrack.objectUrl);
       this.ensureAudioGraph();
       if (audio) {
@@ -989,7 +994,10 @@ class ContrastAudioEngine {
         } catch {
           // Ignore seek before metadata
         }
-        audio.play().catch(() => {});
+        audio.play().catch(() => {
+          this.audioError = 'Нажмите ещё раз для запуска звука';
+          this.emit();
+        });
       }
     } else if (!this.customAudioUrl) {
       const audio = this.ensureHtmlAudio(AUDIOWORKS_WAV_URL);
@@ -1002,7 +1010,10 @@ class ContrastAudioEngine {
           } catch {
             // Ignore
           }
-          audio.play().catch(() => {});
+          audio.play().catch(() => {
+            this.audioError = 'Нажмите ещё раз для запуска звука';
+            this.emit();
+          });
         };
         if (audio.readyState >= 1) {
           launchClutter();
@@ -1012,6 +1023,7 @@ class ContrastAudioEngine {
         }
       }
     } else {
+      usesExternalAudioBuffer = true;
       this.ensureAudioGraph();
       this.playSynthClutterBed(Math.max(0.5, clutterDur - safeOffset));
     }
@@ -1025,6 +1037,18 @@ class ContrastAudioEngine {
     let enteredStopPause = false;
 
     this.crashTimerId = window.setInterval(() => {
+      // Пока HTMLAudioElement буферизуется на 1-й фазе, не сдвигаем таймер вслепую
+      const audioStalled =
+        !usesExternalAudioBuffer &&
+        this.htmlAudio &&
+        this.htmlAudio.paused &&
+        this.htmlAudio.readyState < 2 &&
+        !enteredStopPause;
+      if (audioStalled) {
+        this.crashStartedAtMs = performance.now() - this.crashElapsedSec * 1000;
+        return;
+      }
+
       const elapsed = Math.max(0, (performance.now() - this.crashStartedAtMs) / 1000);
       this.crashElapsedSec = elapsed;
       const nextPhase = this.getCrashPhaseAt(elapsed);
@@ -1044,7 +1068,9 @@ class ContrastAudioEngine {
           this.stopSynthClutterNodes();
           this.forceClutterRoadNoise = false;
           this.syncRoadNoiseNode();
-          this.playTapeStopCue();
+          if (usesExternalAudioBuffer) {
+            this.playTapeStopCue();
+          }
 
           this.crashPhase = 'stop_pause';
           this.mode = 'silence';

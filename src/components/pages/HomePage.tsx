@@ -1,18 +1,42 @@
 import { ArrowRight, Mic, Radio } from 'lucide-react';
-import { Suspense, useLayoutEffect } from 'react';
+import { lazy, Suspense, useLayoutEffect } from 'react';
 import type { CasePlayerSnapshot } from '../../audio/lazyAudioEngines';
-import { BrandDomainVariant } from '../../data/brandKitData';
 import { BrandCasePoster, CaseId } from '../../data/casesData';
 import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
 import { parsePlatformRoute, PlatformRoute } from '../../data/platformRouter';
 import { OrderFormatId } from '../../data/pricingData';
-import { ApproachSection } from '../ApproachSection';
-import { CasesGallery } from '../CasesGallery';
-import { FifteenSecDuel } from '../FifteenSecDuel';
-import { HeroKotoLens } from '../HeroKotoLens';
-import { PricingSection } from '../PricingSection';
-import { RealRadioBroadcastBench } from '../RealRadioBroadcastBench';
-import { TestimonialsSection } from '../TestimonialsSection';
+import { HeroFMStage } from '../HeroFMStage';
+
+const RealRadioBroadcastBench = lazy(() =>
+  import('../RealRadioBroadcastBench').then((m) => ({
+    default: m.RealRadioBroadcastBench,
+  }))
+);
+const CasesGallery = lazy(() =>
+  import('../CasesGallery').then((m) => ({
+    default: m.CasesGallery,
+  }))
+);
+const FifteenSecDuel = lazy(() =>
+  import('../FifteenSecDuel').then((m) => ({
+    default: m.FifteenSecDuel,
+  }))
+);
+const ApproachSection = lazy(() =>
+  import('../ApproachSection').then((m) => ({
+    default: m.ApproachSection,
+  }))
+);
+const TestimonialsSection = lazy(() =>
+  import('../TestimonialsSection').then((m) => ({
+    default: m.TestimonialsSection,
+  }))
+);
+const PricingSection = lazy(() =>
+  import('../PricingSection').then((m) => ({
+    default: m.PricingSection,
+  }))
+);
 
 function SectionPlaceholder() {
   return <div className="min-h-[280px] w-full" aria-hidden="true" />;
@@ -21,13 +45,10 @@ function SectionPlaceholder() {
 interface HomePageProps {
   scrollAnchor?: string;
   navigationTick?: number;
-  brandVariant: BrandDomainVariant;
-  onOpenBrandKit?: () => void;
   playerSnap: CasePlayerSnapshot;
   onToggleCase: (item: BrandCasePoster) => void;
   onSeekCase?: (item: BrandCasePoster, ratio: number) => void;
   onWarmCasePlayer?: () => void;
-  onStartPreview: (item: BrandCasePoster) => void;
   onStopPreview: (caseId: CaseId) => void;
   onNavigate: (route: PlatformRoute) => void;
   onStartStudioOrder: (formatId?: OrderFormatId | null) => void;
@@ -36,13 +57,10 @@ interface HomePageProps {
 export function HomePage({
   scrollAnchor,
   navigationTick = 0,
-  brandVariant,
-  onOpenBrandKit,
   playerSnap,
   onToggleCase,
   onSeekCase,
   onWarmCasePlayer,
-  onStartPreview,
   onStopPreview,
   onNavigate,
   onStartStudioOrder,
@@ -72,8 +90,8 @@ export function HomePage({
 
   return (
     <div data-testid="home-page-root">
-      {/* 1. Главная сцена и студийный манифест */}
-      <HeroKotoLens brandVariant={brandVariant} onOpenBrandKit={onOpenBrandKit} />
+      {/* 1. Полноэкранное живое кино-полотно с A/B-сравнением и журнальным манифестом */}
+      <HeroFMStage />
 
       {/* 1.5. Интерактивный стенд реального регионального радиоэфира (ролик не первым в блоке + проверка своего ролика) */}
       <Suspense fallback={<SectionPlaceholder />}>
@@ -87,7 +105,6 @@ export function HomePage({
           onToggleCase={onToggleCase}
           onSeekCase={onSeekCase}
           onWarmCasePlayer={onWarmCasePlayer}
-          onStartPreview={onStartPreview}
           onStopPreview={onStopPreview}
           onOpenCaseDetail={(caseId) =>
             onNavigate({ kind: 'case-detail', caseSlug: caseId })

@@ -14,6 +14,7 @@ import {
   MessageSquareQuote,
   Mic2,
   Moon,
+  PhoneCall,
   Radio,
   RotateCcw,
   Save,
@@ -32,21 +33,58 @@ import {
   BANNED_EDITORIAL_TERMS,
 } from '../../data/studioCmsTypes';
 import { BrandLogo } from '../BrandLogo';
-import { LayaSimulationConsole } from '../LayaSimulationConsole';
-import { AdminDuelPanel } from './AdminDuelPanel';
-import { AdminHeroStagePanel } from './AdminHeroStagePanel';
 import { AdminLoginScreen } from './AdminLoginScreen';
-import { AdminOrdersCrmPanel } from './AdminOrdersCrmPanel';
-import { AdminPortfolioPanel } from './AdminPortfolioPanel';
 import { AdminShowcaseScenesBar } from './AdminShowcaseScenesBar';
-import { AdminSiteCopyPanel } from './AdminSiteCopyPanel';
-import { AdminTestimonialsPanel } from './AdminTestimonialsPanel';
 
+const AdminOrdersCrmPanel = lazy(() =>
+  import('./AdminOrdersCrmPanel').then((mod) => ({
+    default: mod.AdminOrdersCrmPanel,
+  }))
+);
 const LazyAdminStudioAnalyticsPanel = lazy(() =>
   import('./AdminStudioAnalyticsPanel').then((mod) => ({
     default: mod.AdminStudioAnalyticsPanel,
   }))
 );
+const AdminHeroStagePanel = lazy(() =>
+  import('./AdminHeroStagePanel').then((mod) => ({
+    default: mod.AdminHeroStagePanel,
+  }))
+);
+const AdminPortfolioPanel = lazy(() =>
+  import('./AdminPortfolioPanel').then((mod) => ({
+    default: mod.AdminPortfolioPanel,
+  }))
+);
+const AdminDuelPanel = lazy(() =>
+  import('./AdminDuelPanel').then((mod) => ({
+    default: mod.AdminDuelPanel,
+  }))
+);
+const AdminTestimonialsPanel = lazy(() =>
+  import('./AdminTestimonialsPanel').then((mod) => ({
+    default: mod.AdminTestimonialsPanel,
+  }))
+);
+const AdminSiteCopyPanel = lazy(() =>
+  import('./AdminSiteCopyPanel').then((mod) => ({
+    default: mod.AdminSiteCopyPanel,
+  }))
+);
+const LayaSimulationConsole = lazy(() =>
+  import('../LayaSimulationConsole').then((mod) => ({
+    default: mod.LayaSimulationConsole,
+  }))
+);
+
+function AdminTabSkeleton() {
+  return (
+    <div className="space-y-5" role="status" aria-live="polite">
+      <div className="h-[58px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse" />
+      <div className="h-[340px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse" />
+    </div>
+  );
+}
 
 export type AdminSectionTab =
   | 'orders_crm'
@@ -73,6 +111,7 @@ interface AdminWorkspaceProps {
   brandVariant: BrandDomainVariant;
   onSelectBrandVariant?: (variant: BrandDomainVariant) => void;
   onOpenBrandKit?: () => void;
+  onOpenRadioAdmin?: () => void;
   isDark: boolean;
   onToggleTheme: () => void;
   onNavigateHome: () => void;
@@ -95,6 +134,7 @@ export function AdminWorkspace({
   brandVariant,
   onSelectBrandVariant,
   onOpenBrandKit,
+  onOpenRadioAdmin,
   isDark,
   onToggleTheme,
   onNavigateHome,
@@ -237,9 +277,9 @@ export function AdminWorkspace({
         'Конверсия заказов по месяцам, соблюдение SLA первого ответа (≤ 15 мин), сдача роликов с 1-го дубля и выгрузка PDF/CSV',
     },
     settings: {
-      label: 'Реквизиты и шлюзы',
+      label: 'Контакты и реквизиты',
       subtitle:
-        'Юридические профили ИП / ООО (УСН и НДС), маршрутизация уведомлений в Telegram и Webhook, антиспам-карантин',
+        'Телефон и ссылка на Telegram в подвале сайта, реквизиты ООО / ИП (152-ФЗ), шлюзы уведомлений и антиспам',
     },
     hero_stage: {
       label: 'Первый экран (Hero)',
@@ -407,7 +447,7 @@ export function AdminWorkspace({
               >
                 <span className="inline-flex items-center gap-2.5">
                   <Building2 className="w-4 h-4 shrink-0" aria-hidden="true" />
-                  <span>Реквизиты и шлюзы</span>
+                  <span>Контакты и реквизиты</span>
                 </span>
               </button>
 
@@ -556,6 +596,23 @@ export function AdminWorkspace({
                         aria-hidden="true"
                       />
                       <span>Бренд и профили витрины</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      data-testid="admin-nav-footer-contacts"
+                      onClick={() => selectAdminSection('settings', true)}
+                      className={`w-full min-h-[38px] px-3.5 py-1.5 rounded-xl text-left text-xs font-semibold flex items-center gap-2.5 transition-colors cursor-pointer whitespace-nowrap ${
+                        activeTab === 'settings'
+                          ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                          : 'text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:bg-[#F7F6F2] dark:hover:bg-white/[0.04] hover:text-[#111111] dark:hover:text-white'
+                      }`}
+                    >
+                      <PhoneCall
+                        className="w-3.5 h-3.5 shrink-0"
+                        aria-hidden="true"
+                      />
+                      <span>Контакты подвала (Тел · TG)</span>
                     </button>
                   </div>
                 )}
@@ -792,43 +849,28 @@ export function AdminWorkspace({
             />
           )}
 
-          {(activeTab === 'orders_crm' ||
-            activeTab === 'production' ||
-            activeTab === 'settings') && (
-            <AdminOrdersCrmPanel
-              viewGroup={
-                activeTab === 'production'
-                  ? 'production'
-                  : activeTab === 'settings'
-                    ? 'settings'
-                    : 'ledger'
-              }
-              focusedOrderId={focusedOrderId}
-              onNavigateToProductionOrder={(orderId) => {
-                setFocusedOrderId(orderId);
-                setActiveTab('production');
-                setSaveBanner(null);
-              }}
-            />
-          )}
+          <Suspense fallback={<AdminTabSkeleton />}>
+            {(activeTab === 'orders_crm' ||
+              activeTab === 'production' ||
+              activeTab === 'settings') && (
+              <AdminOrdersCrmPanel
+                viewGroup={
+                  activeTab === 'production'
+                    ? 'production'
+                    : activeTab === 'settings'
+                      ? 'settings'
+                      : 'ledger'
+                }
+                focusedOrderId={focusedOrderId}
+                onNavigateToProductionOrder={(orderId) => {
+                  setFocusedOrderId(orderId);
+                  setActiveTab('production');
+                  setSaveBanner(null);
+                }}
+              />
+            )}
 
-          {activeTab === 'analytics' && (
-            <Suspense
-              fallback={
-                <div className="space-y-6">
-                  <div className="h-[62px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse" />
-                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-                    {[0, 1, 2, 3].map((idx) => (
-                      <div
-                        key={idx}
-                        className="h-[116px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse"
-                      />
-                    ))}
-                  </div>
-                  <div className="h-[390px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse" />
-                </div>
-              }
-            >
+            {activeTab === 'analytics' && (
               <LazyAdminStudioAnalyticsPanel
                 isDark={isDark}
                 onOpenOrdersFunnel={() => {
@@ -836,147 +878,149 @@ export function AdminWorkspace({
                   setSaveBanner(null);
                 }}
               />
-            </Suspense>
-          )}
+            )}
 
-          {activeTab === 'laya_brand' && (
-            <LayaSimulationConsole
-              mode="embedded"
-              activeBrandVariant={brandVariant}
-              onSelectBrandVariant={onSelectBrandVariant}
-              onOpenBrandKit={onOpenBrandKit}
-              onOpenHeroStageAdmin={() => {
-                setActiveTab('hero_stage');
-                setIsCmsDrawerOpen(true);
-                setSaveBanner(null);
-              }}
-              onOpenDuelAdmin={() => {
-                setActiveTab('duel');
-                setIsCmsDrawerOpen(true);
-                setSaveBanner(null);
-              }}
-            />
-          )}
+            {activeTab === 'laya_brand' && (
+              <LayaSimulationConsole
+                mode="embedded"
+                activeBrandVariant={brandVariant}
+                onSelectBrandVariant={onSelectBrandVariant}
+                onOpenBrandKit={onOpenBrandKit}
+                onOpenRadioAdmin={onOpenRadioAdmin}
+                onOpenHomePreview={onNavigateHome}
+                onOpenHeroStageAdmin={() => {
+                  setActiveTab('hero_stage');
+                  setIsCmsDrawerOpen(true);
+                  setSaveBanner(null);
+                }}
+                onOpenDuelAdmin={() => {
+                  setActiveTab('duel');
+                  setIsCmsDrawerOpen(true);
+                  setSaveBanner(null);
+                }}
+              />
+            )}
 
-          {activeTab === 'hero_stage' && (
-            <AdminHeroStagePanel
-              snapshot={snapshot}
-              onChangeHeroStage={(nextHero) =>
-                updateLocalSnapshot((prev) => ({
-                  ...prev,
-                  heroStage: nextHero,
-                }))
-              }
-              onChangeHeroCopy={(patch) =>
-                updateLocalSnapshot((prev) => ({
-                  ...prev,
-                  siteCopy: {
-                    ...prev.siteCopy,
-                    ...patch,
-                  },
-                }))
-              }
-              onUploadAudio={uploadAudioFile}
-              onOpenPortfolioTab={() => {
-                setActiveTab('portfolio');
-                setIsCmsDrawerOpen(true);
-                setSaveBanner(null);
-              }}
-              onNavigateToHeroOnSite={() => handleNavigateToAnchor('#top')}
-            />
-          )}
+            {activeTab === 'hero_stage' && (
+              <AdminHeroStagePanel
+                snapshot={snapshot}
+                onChangeHeroStage={(nextHero) =>
+                  updateLocalSnapshot((prev) => ({
+                    ...prev,
+                    heroStage: nextHero,
+                  }))
+                }
+                onChangeHeroCopy={(patch) =>
+                  updateLocalSnapshot((prev) => ({
+                    ...prev,
+                    siteCopy: {
+                      ...prev.siteCopy,
+                      ...patch,
+                    },
+                  }))
+                }
+                onUploadAudio={uploadAudioFile}
+                onOpenPortfolioTab={() => {
+                  setActiveTab('portfolio');
+                  setIsCmsDrawerOpen(true);
+                  setSaveBanner(null);
+                }}
+                onNavigateToHeroOnSite={() => handleNavigateToAnchor('#top')}
+              />
+            )}
 
-          {activeTab === 'portfolio' && (
-            <AdminPortfolioPanel
-              flagshipReel={snapshot.flagshipReel}
-              portfolioCases={snapshot.portfolioCases}
-              heroStage={snapshot.heroStage}
-              onPatchCase={(caseId, patch) =>
-                updateLocalSnapshot((prev) => {
-                  if (prev.flagshipReel.id === caseId) {
+            {activeTab === 'portfolio' && (
+              <AdminPortfolioPanel
+                flagshipReel={snapshot.flagshipReel}
+                portfolioCases={snapshot.portfolioCases}
+                heroStage={snapshot.heroStage}
+                onPatchCase={(caseId, patch) =>
+                  updateLocalSnapshot((prev) => {
+                    if (prev.flagshipReel.id === caseId) {
+                      return {
+                        ...prev,
+                        flagshipReel: { ...prev.flagshipReel, ...patch },
+                      };
+                    }
                     return {
                       ...prev,
-                      flagshipReel: { ...prev.flagshipReel, ...patch },
+                      portfolioCases: prev.portfolioCases.map((c) =>
+                        c.id === caseId ? { ...c, ...patch } : c
+                      ),
                     };
-                  }
-                  return {
+                  })
+                }
+                onChangePortfolioCases={(nextCases) =>
+                  updateLocalSnapshot((prev) => ({
                     ...prev,
-                    portfolioCases: prev.portfolioCases.map((c) =>
-                      c.id === caseId ? { ...c, ...patch } : c
+                    portfolioCases: nextCases,
+                  }))
+                }
+                onAssignCaseToHero={(item) =>
+                  updateLocalSnapshot((prev) => ({
+                    ...prev,
+                    heroStage: assignPortfolioCaseToHeroStage(
+                      prev.heroStage,
+                      item
                     ),
-                  };
-                })
-              }
-              onChangePortfolioCases={(nextCases) =>
-                updateLocalSnapshot((prev) => ({
-                  ...prev,
-                  portfolioCases: nextCases,
-                }))
-              }
-              onAssignCaseToHero={(item) =>
-                updateLocalSnapshot((prev) => ({
-                  ...prev,
-                  heroStage: assignPortfolioCaseToHeroStage(
-                    prev.heroStage,
-                    item
-                  ),
-                }))
-              }
-              onOpenHeroStageTab={() => {
-                setActiveTab('hero_stage');
-                setIsCmsDrawerOpen(true);
-                setSaveBanner(null);
-              }}
-              onUploadAudio={uploadAudioFile}
-              onUploadImage={uploadImageFile}
-              onNavigateToGallery={() => handleNavigateToAnchor('#work')}
-            />
-          )}
+                  }))
+                }
+                onOpenHeroStageTab={() => {
+                  setActiveTab('hero_stage');
+                  setIsCmsDrawerOpen(true);
+                  setSaveBanner(null);
+                }}
+                onUploadAudio={uploadAudioFile}
+                onUploadImage={uploadImageFile}
+                onNavigateToGallery={() => handleNavigateToAnchor('#work')}
+              />
+            )}
 
-          {activeTab === 'duel' && (
-            <AdminDuelPanel
-              duel={snapshot.duel}
-              onChangeDuel={(nextDuel) =>
-                updateLocalSnapshot((prev) => ({ ...prev, duel: nextDuel }))
-              }
-              onUploadAudio={uploadAudioFile}
-            />
-          )}
+            {activeTab === 'duel' && (
+              <AdminDuelPanel
+                duel={snapshot.duel}
+                onChangeDuel={(nextDuel) =>
+                  updateLocalSnapshot((prev) => ({ ...prev, duel: nextDuel }))
+                }
+                onUploadAudio={uploadAudioFile}
+              />
+            )}
 
-          {activeTab === 'testimonials' && (
-            <AdminTestimonialsPanel
-              testimonials={snapshot.testimonials}
-              portfolioCases={snapshot.portfolioCases}
-              flagshipReel={snapshot.flagshipReel}
-              onChangeTestimonials={(nextTestimonials) =>
-                updateLocalSnapshot((prev) => ({
-                  ...prev,
-                  testimonials: nextTestimonials,
-                }))
-              }
-              onNavigateToTestimonialsOnSite={() =>
-                handleNavigateToAnchor('#testimonials')
-              }
-            />
-          )}
+            {activeTab === 'testimonials' && (
+              <AdminTestimonialsPanel
+                testimonials={snapshot.testimonials}
+                portfolioCases={snapshot.portfolioCases}
+                flagshipReel={snapshot.flagshipReel}
+                onChangeTestimonials={(nextTestimonials) =>
+                  updateLocalSnapshot((prev) => ({
+                    ...prev,
+                    testimonials: nextTestimonials,
+                  }))
+                }
+                onNavigateToTestimonialsOnSite={() =>
+                  handleNavigateToAnchor('#testimonials')
+                }
+              />
+            )}
 
-          {activeTab === 'copy' && (
-            <AdminSiteCopyPanel
-              draft={snapshot}
-              onChangeNeuroApproach={(nextNeuro) =>
-                updateLocalSnapshot((prev) => ({
-                  ...prev,
-                  neuroApproach: nextNeuro,
-                }))
-              }
-              onChangeSiteCopy={(nextCopy) =>
-                updateLocalSnapshot((prev) => ({ ...prev, siteCopy: nextCopy }))
-              }
-              onImportSnapshot={(imported) => updateLocalSnapshot(imported)}
-              onResetToDefaults={handleResetAll}
-              onUploadImage={uploadImageFile}
-            />
-          )}
+            {activeTab === 'copy' && (
+              <AdminSiteCopyPanel
+                draft={snapshot}
+                onChangeNeuroApproach={(nextNeuro) =>
+                  updateLocalSnapshot((prev) => ({
+                    ...prev,
+                    neuroApproach: nextNeuro,
+                  }))
+                }
+                onChangeSiteCopy={(nextCopy) =>
+                  updateLocalSnapshot((prev) => ({ ...prev, siteCopy: nextCopy }))
+                }
+                onImportSnapshot={(imported) => updateLocalSnapshot(imported)}
+                onResetToDefaults={handleResetAll}
+                onUploadImage={uploadImageFile}
+              />
+            )}
+          </Suspense>
         </main>
       </div>
     </div>

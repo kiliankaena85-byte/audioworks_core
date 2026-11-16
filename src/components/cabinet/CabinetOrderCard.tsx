@@ -3,14 +3,16 @@ import {
   CheckCircle2,
   Download,
   ExternalLink,
+  FileCheck2,
   FileSpreadsheet,
   FileText,
   FolderOpen,
   Repeat,
+  Search,
   Trash2,
   Upload,
 } from 'lucide-react';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import {
   buildDeliverableDownloadUrls,
   buildOrderAudioVersionHistory,
@@ -31,8 +33,10 @@ import {
 } from '../../data/clientCabinetHelpers';
 import type { SpotRevisionKind } from '../../data/productionApprovalWorkflow';
 import { formatRubCompact } from '../../data/radioInventory';
+import type { BrandedDocumentKind } from '../../data/studioDocumentsCore';
 import { CabinetApprovalConveyor } from './CabinetApprovalConveyor';
 import { CabinetAudioVersionHistory } from './CabinetAudioVersionHistory';
+import type { AudioSeekRequest } from './useClientCabinetController';
 import {
   inspectInnDigits,
   normalizeInnDigits,
@@ -62,6 +66,7 @@ function formatShortDate(iso: string): string {
 
 export interface CabinetOrderCardProps {
   order: ClientCabinetOrderSummary;
+  isAuthenticatedSession?: boolean;
   isEditingInn: boolean;
   innCompanyNameDraft: string;
   onChangeInnCompanyNameDraft: (value: string) => void;
@@ -69,6 +74,8 @@ export interface CabinetOrderCardProps {
   onChangeInnDigitsDraft: (digits: string) => void;
   innDraftInspection: ReturnType<typeof inspectInnDigits>;
   innSaveError: string | null;
+  isLookingUpInn?: boolean;
+  onLookupCompanyByInn?: () => void;
   isBusyPrefs: boolean;
   onToggleInnEditor: () => void;
   onSaveCompanyInn: () => void;
@@ -83,9 +90,14 @@ export interface CabinetOrderCardProps {
   isUploading: boolean;
   uploadFeedback?: { kind: 'ok' | 'error'; text: string };
   onSelectClientFile: (file: File | null) => void;
-  onOpenInvoiceModal: () => void;
+  onOpenDocumentModal: (initialDoc?: BrandedDocumentKind) => void;
   onRepeatOrder: () => void;
   onForgetFromDevice: () => void;
+  activePlayerTimeSec?: number;
+  audioSeekRequest?: AudioSeekRequest;
+  highlightedVersionCode?: string;
+  onAudioTimeUpdateSec?: (timeSec: number) => void;
+  onRequestAudioSeekSec?: (timeSec: number) => void;
   isSubmittingApproval?: boolean;
   onApproveScript?: (conceptId?: string) => Promise<void> | void;
   onRequestScriptChanges?: (comment: string) => Promise<void> | void;
@@ -99,6 +111,7 @@ export interface CabinetOrderCardProps {
 
 export function CabinetOrderCard({
   order,
+  isAuthenticatedSession = false,
   isEditingInn,
   innCompanyNameDraft,
   onChangeInnCompanyNameDraft,
@@ -106,6 +119,8 @@ export function CabinetOrderCard({
   onChangeInnDigitsDraft,
   innDraftInspection,
   innSaveError,
+  isLookingUpInn = false,
+  onLookupCompanyByInn,
   isBusyPrefs,
   onToggleInnEditor,
   onSaveCompanyInn,
@@ -117,9 +132,14 @@ export function CabinetOrderCard({
   isUploading,
   uploadFeedback,
   onSelectClientFile,
-  onOpenInvoiceModal,
+  onOpenDocumentModal,
   onRepeatOrder,
   onForgetFromDevice,
+  activePlayerTimeSec = 0,
+  audioSeekRequest,
+  highlightedVersionCode,
+  onAudioTimeUpdateSec,
+  onRequestAudioSeekSec,
   isSubmittingApproval = false,
   onApproveScript,
   onRequestScriptChanges,
@@ -127,39 +147,61 @@ export function CabinetOrderCard({
   onRequestSpotRevision,
 }: CabinetOrderCardProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [confirmingForget, setConfirmingForget] = useState(false);
+
   const progress = mapCrmStageToClientProgress(order.stage);
   const audioHistory = buildOrderAudioVersionHistory(order);
-  const { supplementaryFiles } = extractOrderMasterFiles(order);
+  const { masterFiles, supplementaryFiles } = extractOrderMasterFiles(order);
   const parsedSel = parseDeliveryDetailSelection(
     order.preferredDeliveryChannel,
     order.preferredDeliveryDetail
   );
 
+  const isAcceptedOrReady =
+    order.stage === 'on_air' ||
+    order.stage === 'completed_ltv' ||
+    order.approvalWorkflow?.phase === 'accepted' ||
+    masterFiles.length > 0;
+
+  const isClientTurn = order.approvalWorkflow?.whoseTurnActor === 'client';
+
   return (
     <article
       data-testid={`cabinet-order-card-${order.orderNumber}`}
-      className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 p-5 sm:p-7 space-y-6"
+      className={`rounded-2xl bg-white dark:bg-[#141418] border p-5 sm:p-7 space-y-6 ${
+        isClientTurn
+          ? 'border-[#C83210]/45 dark:border-[#FF6B47]/45'
+          : 'border-[#111111]/12 dark:border-white/12'
+      }`}
     >
       {/* Шапка карточки заказа */}
       <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4 pb-5 border-b border-[#111111]/10 dark:border-white/10">
         <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium text-[#111111]/62 dark:text-[#F4F3EF]/62 tabular-nums">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 tabular-nums">
             <span className="font-bold text-[#111111] dark:text-[#F4F3EF]">
               #{order.orderNumber}
             </span>
             <span aria-hidden="true">·</span>
-            <span className="font-semibold text-[#FF4820]">
+            <span className="font-semibold text-[#C83210] dark:text-[#FF6B47]">
               {progress.badgeLabel}
             </span>
             <span aria-hidden="true">·</span>
             <span>от {formatShortDate(order.createdAt)}</span>
+            {isClientTurn && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="font-semibold text-[#C83210] dark:text-[#FF6B47]">
+                  Ожидает вашего решения
+                </span>
+              </>
+            )}
           </div>
 
           <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF]">
             {order.formatLabel}
           </h2>
 
-          <p className="text-xs sm:text-sm text-[#111111]/68 dark:text-[#F4F3EF]/68">
+          <p className="text-xs sm:text-sm text-[#111111]/76 dark:text-[#F4F3EF]/76">
             Контакт: <strong>{order.contact}</strong>
             {order.companyOrInn ? (
               <>
@@ -172,21 +214,36 @@ export function CabinetOrderCard({
           </p>
         </div>
 
-        <div className="flex flex-wrap lg:flex-col items-start lg:items-end justify-between gap-2 shrink-0">
+        <div className="flex flex-col items-start lg:items-end justify-between gap-2.5 shrink-0">
           <p className="text-2xl font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF] tabular-nums">
             {order.totalBudgetRub > 0
               ? formatRubCompact(order.totalBudgetRub)
               : 'Договорная'}
           </p>
-          <button
-            type="button"
-            data-testid={`cabinet-invoice-btn-${order.orderNumber}`}
-            onClick={onOpenInvoiceModal}
-            className="min-h-[40px] px-4 py-2 rounded-xl bg-[#111111] hover:bg-[#FF4820] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-          >
-            <FileSpreadsheet className="w-4 h-4 shrink-0" aria-hidden="true" />
-            <span>Открыть / скачать счёт (A4)</span>
-          </button>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              data-testid={`cabinet-invoice-btn-${order.orderNumber}`}
+              onClick={() => onOpenDocumentModal('invoice')}
+              className="min-h-[44px] sm:min-h-[40px] px-4 py-2 rounded-xl bg-[#111111] hover:bg-[#C83210] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+            >
+              <FileSpreadsheet className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span>Пакет документов (A4)</span>
+            </button>
+
+            {isAcceptedOrReady && (
+              <button
+                type="button"
+                data-testid={`cabinet-act-btn-${order.orderNumber}`}
+                onClick={() => onOpenDocumentModal('act')}
+                className="min-h-[44px] sm:min-h-[40px] px-3.5 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+              >
+                <FileCheck2 className="w-4 h-4 text-[#166534] dark:text-[#4ADE80] shrink-0" aria-hidden="true" />
+                <span>Акт сдачи (A4)</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -200,6 +257,8 @@ export function CabinetOrderCard({
             order.deliverables[0]?.id ??
             null
           }
+          activePlayerTimeSec={activePlayerTimeSec}
+          onRequestSeekTimeSec={onRequestAudioSeekSec}
           isSubmitting={isSubmittingApproval}
           onApproveScript={(conceptId) => onApproveScript?.(conceptId)}
           onRequestScriptChanges={(comment) =>
@@ -211,10 +270,10 @@ export function CabinetOrderCard({
       ) : (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-semibold text-[#111111]/75 dark:text-[#F4F3EF]/75">
+            <p className="text-xs font-semibold text-[#111111]/80 dark:text-[#F4F3EF]/80">
               {progress.summaryText}
             </p>
-            <span className="text-xs font-semibold text-[#111111]/55 dark:text-[#F4F3EF]/55 tabular-nums">
+            <span className="text-xs font-semibold text-[#111111]/70 dark:text-[#F4F3EF]/70 tabular-nums">
               Этап {progress.stepIndex + 1} из {progress.totalSteps}
             </span>
           </div>
@@ -225,24 +284,24 @@ export function CabinetOrderCard({
                 key={step.key}
                 className={`rounded-xl px-3 py-2.5 border text-xs transition-colors ${
                   step.done
-                    ? 'bg-[#16A34A]/8 border-[#16A34A]/30 text-[#15803D] dark:text-[#4ADE80]'
+                    ? 'bg-[#166534]/8 border-[#166534]/30 text-[#166534] dark:text-[#4ADE80]'
                     : step.active
-                      ? 'bg-[#FF4820]/10 border-[#FF4820]/45 text-[#111111] dark:text-[#F4F3EF] font-semibold'
-                      : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] border-[#111111]/8 dark:border-white/8 text-[#111111]/50 dark:text-[#F4F3EF]/50'
+                      ? 'bg-[#C83210]/10 border-[#C83210]/45 text-[#111111] dark:text-[#F4F3EF] font-semibold'
+                      : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] border-[#111111]/10 dark:border-white/10 text-[#111111]/68 dark:text-[#F4F3EF]/68'
                 }`}
               >
                 <div className="flex items-center gap-1.5">
                   {step.done ? (
                     <CheckCircle2
-                      className="w-3.5 h-3.5 shrink-0 text-[#16A34A] dark:text-[#4ADE80]"
+                      className="w-3.5 h-3.5 shrink-0 text-[#166534] dark:text-[#4ADE80]"
                       aria-hidden="true"
                     />
                   ) : (
                     <span
                       className={`w-4 h-4 rounded-full text-[10px] font-bold inline-flex items-center justify-center shrink-0 tabular-nums ${
                         step.active
-                          ? 'bg-[#FF4820] text-white'
-                          : 'bg-[#111111]/10 dark:bg-white/10'
+                          ? 'bg-[#C83210] text-white'
+                          : 'bg-[#111111]/12 dark:bg-white/14'
                       }`}
                     >
                       {idx + 1}
@@ -269,7 +328,7 @@ export function CabinetOrderCard({
                 target="_blank"
                 rel="noopener noreferrer"
                 data-testid={`cabinet-cloud-link-${order.orderNumber}`}
-                className="min-h-[34px] px-3 py-1.5 rounded-lg bg-[#FF4820]/10 hover:bg-[#FF4820]/18 text-xs font-semibold text-[#FF4820] inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                className="min-h-[44px] sm:min-h-[34px] px-3 py-1.5 rounded-lg border border-[#C83210]/30 bg-[#C83210]/8 hover:bg-[#C83210]/14 text-xs font-semibold text-[#C83210] dark:text-[#FF6B47] inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
               >
                 <FolderOpen className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                 <span>Открыть папку на диске</span>
@@ -279,7 +338,7 @@ export function CabinetOrderCard({
           </div>
 
           {order.deliverables.length === 0 ? (
-            <div className="py-3.5 border-t border-b border-[#111111]/8 dark:border-white/8 text-xs text-[#111111]/64 dark:text-[#F4F3EF]/64 leading-relaxed">
+            <div className="py-3.5 border-t border-b border-[#111111]/10 dark:border-white/10 text-xs text-[#111111]/74 dark:text-[#F4F3EF]/74 leading-relaxed">
               Все итерации аудиоролика (черновой дубль v1, правки v2 и финальный
               мастер WAV) появятся здесь по мере записи и сведения, а также придут
               выбранным способом:{' '}
@@ -301,11 +360,14 @@ export function CabinetOrderCard({
                   supplementaryCount={supplementaryFiles.length}
                   variant="active_card"
                   defaultExpandLatestAudio={true}
+                  highlightedVersionCode={highlightedVersionCode}
+                  seekRequest={audioSeekRequest}
+                  onTimeUpdateSec={onAudioTimeUpdateSec}
                 />
               )}
 
               {supplementaryFiles.length > 0 && (
-                <ul className="divide-y divide-[#111111]/8 dark:divide-white/8 border-t border-b border-[#111111]/8 dark:border-white/8">
+                <ul className="divide-y divide-[#111111]/10 dark:divide-white/10 border-t border-b border-[#111111]/10 dark:border-white/10">
                   {supplementaryFiles.map((file) => {
                     const { downloadHref } = buildDeliverableDownloadUrls(
                       order.orderNumber,
@@ -321,14 +383,14 @@ export function CabinetOrderCard({
                       >
                         <div className="flex items-start gap-2.5 flex-1 min-w-[200px]">
                           <FileText
-                            className="w-4 h-4 text-[#FF4820] shrink-0 mt-0.5"
+                            className="w-4 h-4 text-[#C83210] dark:text-[#FF6B47] shrink-0 mt-0.5"
                             aria-hidden="true"
                           />
                           <div className="min-w-0 flex-1">
                             <p className="text-xs sm:text-sm font-semibold leading-snug text-[#111111] dark:text-[#F4F3EF] break-words">
                               {file.title}
                             </p>
-                            <p className="text-[11px] text-[#111111]/56 dark:text-[#F4F3EF]/56 break-all sm:break-normal mt-0.5 tabular-nums">
+                            <p className="text-[11px] text-[#111111]/70 dark:text-[#F4F3EF]/70 break-all sm:break-normal mt-0.5 tabular-nums">
                               {DELIVERABLE_KIND_LABELS[file.kind] ?? 'Файл'} ·{' '}
                               {file.fileName} ·{' '}
                               {formatFileSizeReadable(file.sizeBytes)}
@@ -340,7 +402,7 @@ export function CabinetOrderCard({
                           href={downloadHref}
                           download={file.fileName}
                           data-testid={`cabinet-download-deliverable-${file.id}`}
-                          className="min-h-[34px] px-3 py-1.5 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                          className="min-h-[44px] sm:min-h-[34px] px-3 py-1.5 rounded-lg border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                         >
                           <Download className="w-3.5 h-3.5" aria-hidden="true" />
                           <span>Скачать</span>
@@ -355,10 +417,10 @@ export function CabinetOrderCard({
 
           {order.briefText && (
             <div className="pt-2 space-y-1">
-              <p className="text-xs font-semibold text-[#111111]/60 dark:text-[#F4F3EF]/60">
+              <p className="text-xs font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72">
                 Текст задачи по заказу
               </p>
-              <p className="text-xs sm:text-sm text-[#111111]/82 dark:text-[#F4F3EF]/82 leading-relaxed">
+              <p className="text-xs sm:text-sm text-[#111111]/86 dark:text-[#F4F3EF]/86 leading-relaxed">
                 {order.briefText}
               </p>
             </div>
@@ -412,10 +474,10 @@ export function CabinetOrderCard({
                       onUpdateDeliveryPreferences(opt.id, nextDefaultDetail);
                     }}
                     aria-pressed={selected}
-                    className={`min-h-[38px] px-2.5 py-1.5 rounded-lg border text-xs font-medium text-left transition-colors cursor-pointer inline-flex items-center justify-between gap-1 ${
+                    className={`min-h-[44px] sm:min-h-[38px] px-2.5 py-1.5 rounded-lg border text-xs font-medium text-left transition-colors cursor-pointer inline-flex items-center justify-between gap-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
                       selected
                         ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:border-[#F4F3EF]'
-                        : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/78 dark:text-[#F4F3EF]/78 border-[#111111]/12 dark:border-white/12 hover:border-[#FF4820]/50'
+                        : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/82 dark:text-[#F4F3EF]/82 border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820]/60'
                     }`}
                   >
                     <span className="truncate">{opt.shortLabel}</span>
@@ -437,14 +499,15 @@ export function CabinetOrderCard({
                         key={m.id}
                         type="button"
                         disabled={isBusyPrefs}
+                        aria-pressed={active}
                         data-testid={`cabinet-messenger-${order.orderNumber}-${m.id}`}
                         onClick={() =>
                           onUpdateDeliveryPreferences('messenger', m.label)
                         }
-                        className={`min-h-[28px] px-2.5 py-1 rounded-md text-[11px] font-semibold border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                        className={`min-h-[44px] sm:min-h-[30px] px-3 py-1 rounded-md text-xs sm:text-[11px] font-semibold border transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
                           active
-                            ? 'bg-[#FF4820] text-white border-[#FF4820]'
-                            : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/75 dark:text-[#F4F3EF]/75 border-[#111111]/12 dark:border-white/12 hover:border-[#FF4820]'
+                            ? 'bg-[#C83210] text-white border-[#C83210]'
+                            : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/80 dark:text-[#F4F3EF]/80 border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820]'
                         }`}
                       >
                         {m.label}
@@ -453,7 +516,7 @@ export function CabinetOrderCard({
                   }
                 )}
                 {parsedSel.messenger === 'other' && parsedSel.messengerOther && (
-                  <span className="text-[11px] font-semibold text-[#FF4820]">
+                  <span className="text-xs font-semibold text-[#C83210] dark:text-[#FF6B47]">
                     Выбран: {parsedSel.messengerOther}
                   </span>
                 )}
@@ -470,12 +533,13 @@ export function CabinetOrderCard({
                         key={c.id}
                         type="button"
                         disabled={isBusyPrefs}
+                        aria-pressed={active}
                         data-testid={`cabinet-cloud-${order.orderNumber}-${c.id}`}
                         onClick={() => onUpdateDeliveryPreferences('cloud', c.label)}
-                        className={`min-h-[28px] px-2.5 py-1 rounded-md text-[11px] font-semibold border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                        className={`min-h-[44px] sm:min-h-[30px] px-3 py-1 rounded-md text-xs sm:text-[11px] font-semibold border transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
                           active
-                            ? 'bg-[#FF4820] text-white border-[#FF4820]'
-                            : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/75 dark:text-[#F4F3EF]/75 border-[#111111]/12 dark:border-white/12 hover:border-[#FF4820]'
+                            ? 'bg-[#C83210] text-white border-[#C83210]'
+                            : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/80 dark:text-[#F4F3EF]/80 border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820]'
                         }`}
                       >
                         {c.label}
@@ -484,7 +548,7 @@ export function CabinetOrderCard({
                   }
                 )}
                 {parsedSel.cloud === 'other' && parsedSel.cloudOther && (
-                  <span className="text-[11px] font-semibold text-[#FF4820]">
+                  <span className="text-xs font-semibold text-[#C83210] dark:text-[#FF6B47]">
                     Выбрано: {parsedSel.cloudOther}
                   </span>
                 )}
@@ -502,7 +566,7 @@ export function CabinetOrderCard({
                   }
                   onChange={(e) => onChangeDeliveryEmailDraft(e.target.value)}
                   placeholder="name@company.ru"
-                  className="flex-1 min-w-0 min-h-[34px] px-2.5 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                  className="flex-1 min-w-0 min-h-[44px] sm:min-h-[36px] px-2.5 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/16 dark:border-white/16 text-xs focus:outline-none focus:border-[#FF4820]"
                 />
                 <button
                   type="button"
@@ -514,7 +578,7 @@ export function CabinetOrderCard({
                       deliveryEmailDraft ?? order.preferredDeliveryDetail ?? ''
                     )
                   }
-                  className="min-h-[34px] px-3 rounded-lg bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+                  className="min-h-[44px] sm:min-h-[36px] px-3.5 rounded-lg bg-[#C83210] hover:bg-[#B02A0C] text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                 >
                   ОК
                 </button>
@@ -522,17 +586,17 @@ export function CabinetOrderCard({
             )}
           </div>
 
-          {/* Реквизиты организации для счёта */}
-          <div className="space-y-2 pt-3 border-t border-[#111111]/8 dark:border-white/8">
+          {/* Реквизиты организации для счёта, договора и акта */}
+          <div className="space-y-2 pt-3 border-t border-[#111111]/10 dark:border-white/10">
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs font-semibold text-[#111111] dark:text-[#F4F3EF]">
-                Реквизиты для счёта и акта
+                Реквизиты для счёта, договора и акта
               </p>
               <button
                 type="button"
                 data-testid={`cabinet-edit-inn-btn-${order.orderNumber}`}
                 onClick={onToggleInnEditor}
-                className="text-xs font-semibold text-[#FF4820] hover:underline cursor-pointer whitespace-nowrap shrink-0"
+                className="min-h-[44px] sm:min-h-[32px] px-1 text-xs font-semibold text-[#C83210] dark:text-[#FF6B47] hover:underline cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
               >
                 {isEditingInn
                   ? 'Отмена'
@@ -543,45 +607,67 @@ export function CabinetOrderCard({
             </div>
 
             {!isEditingInn ? (
-              <p className="text-xs text-[#111111]/68 dark:text-[#F4F3EF]/68">
+              <p className="text-xs text-[#111111]/74 dark:text-[#F4F3EF]/74">
                 {order.companyOrInn
                   ? order.companyOrInn
-                  : 'ИНН пока не указан — добавьте его здесь, если потребуется выставить счёт на юрлицо или ИП.'}
+                  : 'ИНН пока не указан — добавьте его здесь, если потребуется выставить счёт, договор и закрывающий акт на юрлицо или ИП.'}
               </p>
             ) : (
-              <div className="space-y-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 p-3">
+              <div className="space-y-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 p-3">
+                <div className="flex flex-col sm:flex-row gap-1.5">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    aria-label="ИНН организации или ИП"
+                    data-testid={`cabinet-inn-digits-input-${order.orderNumber}`}
+                    value={innDigitsDraft}
+                    onChange={(e) =>
+                      onChangeInnDigitsDraft(normalizeInnDigits(e.target.value))
+                    }
+                    placeholder="ИНН (10 или 12 цифр)"
+                    className="flex-1 min-h-[44px] sm:min-h-[38px] px-3 rounded-lg bg-white dark:bg-[#141418] border border-[#111111]/16 dark:border-white/16 text-xs tabular-nums focus:outline-none focus:border-[#FF4820]"
+                  />
+                  {onLookupCompanyByInn && (
+                    <button
+                      type="button"
+                      disabled={isLookingUpInn || isBusyPrefs}
+                      data-testid={`cabinet-lookup-inn-btn-${order.orderNumber}`}
+                      onClick={onLookupCompanyByInn}
+                      className="min-h-[44px] sm:min-h-[38px] px-3 rounded-lg border border-[#111111]/16 dark:border-white/16 bg-white dark:bg-[#141418] hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+                    >
+                      <Search className="w-3.5 h-3.5 text-[#C83210] dark:text-[#FF6B47] shrink-0" aria-hidden="true" />
+                      <span>
+                        {isLookingUpInn ? 'Поиск ФНС…' : 'Заполнить по ИНН'}
+                      </span>
+                    </button>
+                  )}
+                </div>
+
                 <input
                   type="text"
                   aria-label="Название компании или ИП"
+                  data-testid={`cabinet-inn-name-input-${order.orderNumber}`}
                   value={innCompanyNameDraft}
                   onChange={(e) => onChangeInnCompanyNameDraft(e.target.value)}
                   placeholder="ООО «Компания» или ИП"
-                  className="w-full min-h-[38px] px-3 rounded-lg bg-white dark:bg-[#141418] border border-[#111111]/14 dark:border-white/14 text-xs"
-                />
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  aria-label="ИНН организации или ИП"
-                  value={innDigitsDraft}
-                  onChange={(e) =>
-                    onChangeInnDigitsDraft(normalizeInnDigits(e.target.value))
-                  }
-                  placeholder="ИНН (10 или 12 цифр)"
-                  className="w-full min-h-[38px] px-3 rounded-lg bg-white dark:bg-[#141418] border border-[#111111]/14 dark:border-white/14 text-xs tabular-nums"
+                  className="w-full min-h-[44px] sm:min-h-[38px] px-3 rounded-lg bg-white dark:bg-[#141418] border border-[#111111]/16 dark:border-white/16 text-xs focus:outline-none focus:border-[#FF4820]"
                 />
                 {innDraftInspection.statusMessage && (
                   <p
                     className={`text-[11px] ${
                       innDraftInspection.checksumValid
-                        ? 'text-[#16A34A] dark:text-[#4ADE80]'
-                        : 'text-[#111111]/60 dark:text-[#F4F3EF]/60'
+                        ? 'text-[#166534] dark:text-[#4ADE80]'
+                        : 'text-[#111111]/72 dark:text-[#F4F3EF]/72'
                     }`}
                   >
                     {innDraftInspection.statusMessage}
                   </p>
                 )}
                 {innSaveError && (
-                  <p className="text-[11px] font-medium text-[#DC2626] dark:text-[#F87171]">
+                  <p
+                    role="alert"
+                    className="text-[11px] font-medium text-[#B91C1C] dark:text-[#F87171]"
+                  >
                     {innSaveError}
                   </p>
                 )}
@@ -590,18 +676,18 @@ export function CabinetOrderCard({
                   disabled={isBusyPrefs}
                   data-testid={`cabinet-save-inn-btn-${order.orderNumber}`}
                   onClick={onSaveCompanyInn}
-                  className="w-full min-h-[38px] px-3 py-1.5 rounded-lg bg-[#FF4820] hover:bg-[#E63D18] text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                  className="w-full min-h-[44px] sm:min-h-[38px] px-3 py-1.5 rounded-lg bg-[#C83210] hover:bg-[#B02A0C] text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                 >
                   {isBusyPrefs
                     ? 'Сохранение…'
-                    : 'Сохранить реквизиты и обновить счёт'}
+                    : 'Сохранить реквизиты и обновить документы'}
                 </button>
               </div>
             )}
           </div>
 
           {/* Загрузка клиентских файлов */}
-          <div className="space-y-2.5 pt-3 border-t border-[#111111]/8 dark:border-white/8">
+          <div className="space-y-2.5 pt-3 border-t border-[#111111]/10 dark:border-white/10">
             <p className="text-xs font-semibold text-[#111111] dark:text-[#F4F3EF]">
               Передать материалы к заказу (текст, логотип, референс)
             </p>
@@ -613,7 +699,7 @@ export function CabinetOrderCard({
                 value={uploadNote}
                 onChange={(e) => onChangeUploadNote(e.target.value)}
                 placeholder="Комментарий (необязательно)"
-                className="flex-1 min-h-[38px] px-3 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 text-xs"
+                className="flex-1 min-h-[44px] sm:min-h-[38px] px-3 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs focus:outline-none focus:border-[#FF4820]"
               />
               <input
                 ref={fileInputRef}
@@ -632,7 +718,7 @@ export function CabinetOrderCard({
                 disabled={isUploading}
                 data-testid={`cabinet-upload-btn-${order.orderNumber}`}
                 onClick={() => fileInputRef.current?.click()}
-                className="min-h-[38px] px-3.5 py-1.5 rounded-lg border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+                className="min-h-[44px] sm:min-h-[38px] px-3.5 py-1.5 rounded-lg border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
               >
                 <Upload className="w-3.5 h-3.5" aria-hidden="true" />
                 <span>{isUploading ? 'Загрузка…' : 'Загрузить файл'}</span>
@@ -641,10 +727,11 @@ export function CabinetOrderCard({
 
             {uploadFeedback && (
               <p
-                className={`text-[11px] font-medium ${
+                role={uploadFeedback.kind === 'error' ? 'alert' : 'status'}
+                className={`text-xs font-medium ${
                   uploadFeedback.kind === 'ok'
-                    ? 'text-[#16A34A] dark:text-[#4ADE80]'
-                    : 'text-[#DC2626] dark:text-[#F87171]'
+                    ? 'text-[#166534] dark:text-[#4ADE80]'
+                    : 'text-[#B91C1C] dark:text-[#F87171]'
                 }`}
               >
                 {uploadFeedback.text}
@@ -656,13 +743,13 @@ export function CabinetOrderCard({
                 {order.clientUploads.map((up) => (
                   <li
                     key={up.id}
-                    className="flex items-center justify-between gap-2 text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72 bg-[#F7F6F2] dark:bg-[#0D0D0F] px-2.5 py-1.5 rounded-lg"
+                    className="flex items-center justify-between gap-2 text-xs text-[#111111]/80 dark:text-[#F4F3EF]/80 bg-[#F7F6F2] dark:bg-[#0D0D0F] px-2.5 py-1.5 rounded-lg"
                   >
                     <span className="truncate">
                       {up.fileName}
                       {up.note ? ` · ${up.note}` : ''}
                     </span>
-                    <span className="text-[11px] text-[#111111]/50 dark:text-[#F4F3EF]/50 shrink-0 tabular-nums">
+                    <span className="text-[11px] text-[#111111]/70 dark:text-[#F4F3EF]/70 shrink-0 tabular-nums">
                       {formatFileSizeReadable(up.sizeBytes)}
                     </span>
                   </li>
@@ -672,26 +759,52 @@ export function CabinetOrderCard({
           </div>
 
           {/* Действия с заказом */}
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#111111]/8 dark:border-white/8">
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#111111]/10 dark:border-white/10">
             <button
               type="button"
               data-testid={`cabinet-repeat-btn-${order.orderNumber}`}
               onClick={onRepeatOrder}
-              className="min-h-[36px] px-3.5 py-1.5 rounded-lg bg-[#FF4820]/10 hover:bg-[#FF4820]/18 text-xs font-semibold text-[#FF4820] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              className="min-h-[44px] sm:min-h-[36px] px-3.5 py-1.5 rounded-lg border border-[#C83210]/30 bg-[#C83210]/8 hover:bg-[#C83210]/14 text-xs font-semibold text-[#C83210] dark:text-[#FF6B47] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
             >
               <Repeat className="w-3.5 h-3.5" aria-hidden="true" />
               <span>Повторить заказ</span>
             </button>
 
-            <button
-              type="button"
-              onClick={onForgetFromDevice}
-              aria-label={`Убрать заказ ${order.orderNumber} из этого браузера`}
-              className="min-h-[34px] px-2.5 py-1 rounded-lg text-xs text-[#111111]/48 dark:text-[#F4F3EF]/48 hover:text-[#DC2626] inline-flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>Скрыть с устройства</span>
-            </button>
+            {!isAuthenticatedSession && (
+              confirmingForget ? (
+                <div className="inline-flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    data-testid={`cabinet-confirm-forget-btn-${order.orderNumber}`}
+                    onClick={() => {
+                      setConfirmingForget(false);
+                      onForgetFromDevice();
+                    }}
+                    className="min-h-[44px] sm:min-h-[34px] px-3 py-1 rounded-lg bg-[#B91C1C] text-white text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+                  >
+                    Подтвердить скрытие
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingForget(false)}
+                    className="min-h-[44px] sm:min-h-[34px] px-2.5 py-1 rounded-lg border border-[#111111]/16 dark:border-white/16 text-xs font-medium text-[#111111]/78 dark:text-[#F4F3EF]/78 cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    Отмена
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  data-testid={`cabinet-forget-device-btn-${order.orderNumber}`}
+                  onClick={() => setConfirmingForget(true)}
+                  aria-label={`Скрыть заказ ${order.orderNumber} из памяти этого браузера`}
+                  className="min-h-[44px] sm:min-h-[34px] px-2.5 py-1 rounded-lg text-xs text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:text-[#B91C1C] dark:hover:text-[#F87171] inline-flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+                >
+                  <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>Скрыть с устройства</span>
+                </button>
+              )
+            )}
           </div>
         </div>
       </div>

@@ -10,8 +10,9 @@
     "start": "node server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit",
-    "test": "tsx --test src/**/*.test.ts"
+    "lint": "tsc --noEmit && oxlint -D react-hooks/rules-of-hooks -D typescript/no-explicit-any -D eslint/eqeqeq -D eslint/no-self-compare -D eslint/no-constant-binary-expression -D eslint/no-template-curly-in-string -A eslint/no-control-regex src server.ts scripts vite.config.ts && eslint scripts/*.mjs eslint.config.mjs",
+    "test": "tsx --test src/**/*.test.ts",
+    "audit:quality": "npm run lint && npm test && npm run build && tsx scripts/quality-audit.ts"
   },
   "dependencies": {
     "@fontsource/golos-text": "^5.3.0",
@@ -29,6 +30,10 @@
     "web-vitals": "^6.2.3"
   },
   "devDependencies": {
+    "@babel/core": "^8.1.2",
+    "@babel/eslint-parser": "^8.1.2",
+    "@babel/preset-typescript": "^8.0.7",
+    "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
@@ -36,9 +41,14 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
+    "eslint": "^10.15.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.14.0",
+    "oxlint": "^1.94.0",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",
     "typescript": "^7.0.2",
+    "typescript-eslint": "^8.72.2",
     "vite": "^8.3.0"
   }
 }

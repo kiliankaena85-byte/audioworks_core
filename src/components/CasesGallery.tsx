@@ -35,7 +35,6 @@ interface CasesGalleryProps {
   onToggleCase: (item: BrandCasePoster) => void;
   onSeekCase?: (item: BrandCasePoster, ratio: number) => void;
   onWarmCasePlayer?: () => void;
-  onStartPreview?: (item: BrandCasePoster) => void;
   onStopPreview?: (caseId: CaseId) => void;
   onOpenCaseDetail?: (caseId: CaseId) => void;
 }
@@ -164,7 +163,6 @@ interface UseCaseHoverPreviewOptions {
   item: BrandCasePoster;
   isGlobalPlaying: boolean;
   globalPlaybackMode: CasePlaybackMode | null;
-  onStartPreview?: (item: BrandCasePoster) => void;
   onStopPreview?: (caseId: CaseId) => void;
 }
 
@@ -172,41 +170,16 @@ function useCaseHoverPreview({
   item,
   isGlobalPlaying,
   globalPlaybackMode,
-  onStartPreview,
   onStopPreview,
 }: UseCaseHoverPreviewOptions) {
-  const timerRef = useRef<number | null>(null);
-
-  const clearPendingTimer = () => {
-    if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-  };
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current !== null) {
-        window.clearTimeout(timerRef.current);
-      }
-    };
-  }, []);
-
-  const handlePreviewPointerEnter = (_e: ReactPointerEvent<HTMLElement>) => {
-    // Автоматическое проигрывание при наведении отключено: звук запускается только по кнопке «Слушать».
-  };
-
   const handlePreviewPointerLeave = () => {
-    clearPendingTimer();
     if (isGlobalPlaying && globalPlaybackMode === 'preview') {
       onStopPreview?.(item.id);
     }
   };
 
   return {
-    handlePreviewPointerEnter,
     handlePreviewPointerLeave,
-    clearPendingTimer,
   };
 }
 
@@ -298,7 +271,6 @@ interface StudioCommercialStripProps {
   onToggleCase: (item: BrandCasePoster) => void;
   onSeekCase?: (item: BrandCasePoster, ratio: number) => void;
   onWarmCasePlayer?: () => void;
-  onStartPreview?: (item: BrandCasePoster) => void;
   onStopPreview?: (caseId: CaseId) => void;
   onShare: (item: BrandCasePoster) => void;
   onOpenCaseDetail?: (caseId: CaseId) => void;
@@ -316,7 +288,6 @@ function StudioCommercialStrip({
   onToggleCase,
   onSeekCase,
   onWarmCasePlayer,
-  onStartPreview,
   onStopPreview,
   onShare,
   onOpenCaseDetail,
@@ -339,15 +310,10 @@ function StudioCommercialStrip({
     hoverScale: 1.085,
   });
 
-  const {
-    handlePreviewPointerEnter,
-    handlePreviewPointerLeave,
-    clearPendingTimer,
-  } = useCaseHoverPreview({
+  const { handlePreviewPointerLeave } = useCaseHoverPreview({
     item: reel,
     isGlobalPlaying,
     globalPlaybackMode,
-    onStartPreview,
     onStopPreview,
   });
 
@@ -356,10 +322,7 @@ function StudioCommercialStrip({
       ref={stripRef}
       id={`case-${reel.id}`}
       data-testid="flagship-studio-reel"
-      onPointerEnter={(e) => {
-        handlePointerEnter();
-        handlePreviewPointerEnter(e);
-      }}
+      onPointerEnter={handlePointerEnter}
       onPointerMove={handlePointerMove}
       onPointerLeave={() => {
         handlePointerLeave();
@@ -407,10 +370,7 @@ function StudioCommercialStrip({
 
           <button
             type="button"
-            onClick={() => {
-              clearPendingTimer();
-              onToggleCase(reel);
-            }}
+            onClick={() => onToggleCase(reel)}
             aria-label={
               isReelFullPlaying
                 ? `Остановить ${reel.client}`
@@ -444,10 +404,7 @@ function StudioCommercialStrip({
             <button
               type="button"
               data-testid={`open-case-detail-${reel.id}`}
-              onClick={() => {
-                clearPendingTimer();
-                onOpenCaseDetail(reel.id);
-              }}
+              onClick={() => onOpenCaseDetail(reel.id)}
               className="min-h-[42px] sm:min-h-[44px] px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-full inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold bg-white/10 hover:bg-white/20 text-white border border-white/18 transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
               <span>Разбор</span>
@@ -463,17 +420,9 @@ function StudioCommercialStrip({
           progress={progress}
           spectrumBands={spectrumBands}
           currentTimeSec={currentTimeSec}
-          onScrubStart={() => {
-            clearPendingTimer();
-            onWarmCasePlayer?.();
-          }}
+          onScrubStart={() => onWarmCasePlayer?.()}
           onSeekRatio={
-            onSeekCase
-              ? (ratio) => {
-                  clearPendingTimer();
-                  onSeekCase(reel, ratio);
-                }
-              : undefined
+            onSeekCase ? (ratio) => onSeekCase(reel, ratio) : undefined
           }
         />
       </div>
@@ -494,7 +443,6 @@ interface BrandCaseCardProps {
   onToggleCase: (item: BrandCasePoster) => void;
   onSeekCase?: (item: BrandCasePoster, ratio: number) => void;
   onWarmCasePlayer?: () => void;
-  onStartPreview?: (item: BrandCasePoster) => void;
   onStopPreview?: (caseId: CaseId) => void;
   onShare: (item: BrandCasePoster) => void;
   onOpenCaseDetail?: (caseId: CaseId) => void;
@@ -513,7 +461,6 @@ function BrandCaseCard({
   onToggleCase,
   onSeekCase,
   onWarmCasePlayer,
-  onStartPreview,
   onStopPreview,
   onShare,
   onOpenCaseDetail,
@@ -537,15 +484,10 @@ function BrandCaseCard({
     hoverScale: 1.09,
   });
 
-  const {
-    handlePreviewPointerEnter,
-    handlePreviewPointerLeave,
-    clearPendingTimer,
-  } = useCaseHoverPreview({
+  const { handlePreviewPointerLeave } = useCaseHoverPreview({
     item,
     isGlobalPlaying,
     globalPlaybackMode,
-    onStartPreview,
     onStopPreview,
   });
 
@@ -558,10 +500,7 @@ function BrandCaseCard({
         id={`case-${item.id}`}
         data-testid={`case-poster-${index}`}
         data-case-id={item.id}
-        onPointerEnter={(e) => {
-          handlePointerEnter();
-          handlePreviewPointerEnter(e);
-        }}
+        onPointerEnter={handlePointerEnter}
         onPointerMove={handlePointerMove}
         onPointerLeave={() => {
           handlePointerLeave();
@@ -596,17 +535,9 @@ function BrandCaseCard({
               progress={progress}
               spectrumBands={spectrumBands}
               currentTimeSec={currentTimeSec}
-              onScrubStart={() => {
-                clearPendingTimer();
-                onWarmCasePlayer?.();
-              }}
+              onScrubStart={() => onWarmCasePlayer?.()}
               onSeekRatio={
-                onSeekCase
-                  ? (ratio) => {
-                      clearPendingTimer();
-                      onSeekCase(item, ratio);
-                    }
-                  : undefined
+                onSeekCase ? (ratio) => onSeekCase(item, ratio) : undefined
               }
             />
 
@@ -614,10 +545,7 @@ function BrandCaseCard({
               <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
                 <button
                   type="button"
-                  onClick={() => {
-                    clearPendingTimer();
-                    onToggleCase(item);
-                  }}
+                  onClick={() => onToggleCase(item)}
                   aria-label={
                     isThisFullPlaying
                       ? `Остановить кейс «${item.client}»`
@@ -647,10 +575,7 @@ function BrandCaseCard({
                   <button
                     type="button"
                     data-testid={`open-case-detail-${item.id}`}
-                    onClick={() => {
-                      clearPendingTimer();
-                      onOpenCaseDetail(item.id);
-                    }}
+                    onClick={() => onOpenCaseDetail(item.id)}
                     className="min-h-[42px] sm:min-h-[44px] px-3 sm:px-4 py-2 sm:py-2.5 rounded-full inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold bg-white/10 hover:bg-white/20 text-white border border-white/18 transition-colors cursor-pointer whitespace-nowrap shrink-0"
                   >
                     <span>Сценарий</span>
@@ -705,10 +630,7 @@ function BrandCaseCard({
       id={`case-${item.id}`}
       data-testid={`case-poster-${index}`}
       data-case-id={item.id}
-      onPointerEnter={(e) => {
-        handlePointerEnter();
-        handlePreviewPointerEnter(e);
-      }}
+      onPointerEnter={handlePointerEnter}
       onPointerMove={handlePointerMove}
       onPointerLeave={() => {
         handlePointerLeave();
@@ -754,17 +676,9 @@ function BrandCaseCard({
             progress={progress}
             spectrumBands={spectrumBands}
             currentTimeSec={currentTimeSec}
-            onScrubStart={() => {
-              clearPendingTimer();
-              onWarmCasePlayer?.();
-            }}
+            onScrubStart={() => onWarmCasePlayer?.()}
             onSeekRatio={
-              onSeekCase
-                ? (ratio) => {
-                    clearPendingTimer();
-                    onSeekCase(item, ratio);
-                  }
-                : undefined
+              onSeekCase ? (ratio) => onSeekCase(item, ratio) : undefined
             }
           />
 
@@ -772,10 +686,7 @@ function BrandCaseCard({
             <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
               <button
                 type="button"
-                onClick={() => {
-                  clearPendingTimer();
-                  onToggleCase(item);
-                }}
+                onClick={() => onToggleCase(item)}
                 aria-label={
                   isThisFullPlaying
                     ? `Остановить кейс «${item.client}»`
@@ -805,10 +716,7 @@ function BrandCaseCard({
                 <button
                   type="button"
                   data-testid={`open-case-detail-${item.id}`}
-                  onClick={() => {
-                    clearPendingTimer();
-                    onOpenCaseDetail(item.id);
-                  }}
+                  onClick={() => onOpenCaseDetail(item.id)}
                   className="min-h-[42px] sm:min-h-[44px] px-3 sm:px-4 py-2 sm:py-2.5 rounded-full inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold bg-black/45 hover:bg-black/65 text-white border border-white/20 backdrop-blur-md transition-colors cursor-pointer whitespace-nowrap shrink-0"
                 >
                   <span>Сценарий</span>
@@ -844,7 +752,6 @@ export function CasesGallery({
   onToggleCase,
   onSeekCase,
   onWarmCasePlayer,
-  onStartPreview,
   onStopPreview,
   onOpenCaseDetail,
 }: CasesGalleryProps) {
@@ -982,7 +889,6 @@ export function CasesGallery({
             onToggleCase={onToggleCase}
             onSeekCase={onSeekCase}
             onWarmCasePlayer={onWarmCasePlayer}
-            onStartPreview={onStartPreview}
             onStopPreview={onStopPreview}
             onShare={handleShareCase}
             onOpenCaseDetail={onOpenCaseDetail}
@@ -1011,7 +917,6 @@ export function CasesGallery({
               onToggleCase={onToggleCase}
               onSeekCase={onSeekCase}
               onWarmCasePlayer={onWarmCasePlayer}
-              onStartPreview={onStartPreview}
               onStopPreview={onStopPreview}
               onShare={handleShareCase}
               onOpenCaseDetail={onOpenCaseDetail}

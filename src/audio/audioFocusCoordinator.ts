@@ -3,7 +3,8 @@ export type AudioFocusChannelId =
   | 'case_player'
   | 'broadcast_aircheck'
   | 'fifteen_sec_duel'
-  | 'voice_brief_recorder';
+  | 'voice_brief_recorder'
+  | 'cabinet_player';
 
 type AudioFocusListener = (activeChannel: AudioFocusChannelId) => void;
 

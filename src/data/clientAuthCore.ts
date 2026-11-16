@@ -584,5 +584,54 @@ export function createSeedClientAccounts(nowMs = Date.now()): ClientAccountRecor
   ];
 }
 
+/**
+ * Политика безопасности привязки локальных заказов устройства к e-mail адресу:
+ * прямая бесшовная привязка с выдачей сессии разрешена ТОЛЬКО если у клиента уже открыта
+ * подтверждённая сессия на этот же e-mail. В остальных случаях сервер обязан запросить
+ * подтверждение владения почтой через одноразовую magic-ссылку (защита от перехвата чужого аккаунта).
+ */
+export function canDirectBindOrdersToEmailSession(params: {
+  verifiedSessionEmail: string | null | undefined;
+  targetEmail: string | null | undefined;
+}): boolean {
+  const sessionNorm = normalizeClientEmail(params.verifiedSessionEmail);
+  const targetNorm = normalizeClientEmail(params.targetEmail);
+  if (!sessionNorm || !targetNorm) {
+    return false;
+  }
+  return sessionNorm === targetNorm;
+}
+
+/**
+ * Определяет, допустимо ли вернуть ссылку входа (`local_preview`) прямо в JSON-ответе API:
+ * - Если внешний почтовый шлюз настроен, но запрос к нему завершился ошибкой (`gatewayFailed: true`),
+ *   возвращать токен в теле ответа ЗАПРЕЩЕНО в любом боевом режиме (иначе сбой SMTP приведёт к утечке ссылок).
+ * - В `production` без внешнего шлюза локальный предпросмотр разрешён только для изолированного демо-аккаунта
+ *   студии (`DEMO_CLIENT_CABINET_EMAIL`) либо при явном флаге стенда `allowPreviewMagicLinks`.
+ */
+export function canExposeMagicLinkLocalPreview(params: {
+  nodeEnv?: string | undefined;
+  email: string;
+  hasConfiguredGateway: boolean;
+  gatewayFailed: boolean;
+  allowPreviewMagicLinks?: boolean;
+}): boolean {
+  const normalizedEmail = normalizeClientEmail(params.email);
+  if (!normalizedEmail) return false;
+
+  const isProduction = (params.nodeEnv ?? '').toLowerCase() === 'production';
+
+  if (params.hasConfiguredGateway && params.gatewayFailed) {
+    return !isProduction && normalizedEmail === DEMO_CLIENT_CABINET_EMAIL;
+  }
+
+  if (!isProduction || params.allowPreviewMagicLinks === true) {
+    return true;
+  }
+
+  return normalizedEmail === DEMO_CLIENT_CABINET_EMAIL;
+}
+
 // Re-export helper check to ensure anonymized orders drop clientEmail too when called via CRM
 export { anonymizeCrmOrderPdnRecord };
+

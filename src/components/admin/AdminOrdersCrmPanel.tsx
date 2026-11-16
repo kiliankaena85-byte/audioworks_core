@@ -51,18 +51,34 @@ import {
 } from '../../data/productionApprovalWorkflow';
 import { formatRubCompact } from '../../data/radioInventory';
 import {
+  dispatchLegalProfilesUpdatedEvent,
+} from '../../context/StudioLegalConfigContext';
+import {
   assembleProductionDocumentSuite,
+  createDefaultPrivacyPolicySettings,
+  createDefaultPublicContactsConfig,
   createDefaultStudioLegalProfiles,
   type OrderDocumentMeta,
+  sanitizePrivacyPolicySettings,
+  sanitizePublicContactsConfig,
   type StudioEntityKind,
+  type StudioLegalOperatingMode,
   type StudioLegalProfile,
   type StudioLegalProfilesConfig,
+  type StudioPrivacyPolicySettings,
+  type StudioPublicContactsConfig,
   type StudioTaxRegimeId,
   type StudioVatCalculationMode,
   TAX_REGIME_OPTIONS,
 } from '../../data/studioDocumentsCore';
 import { resolveNextTabIdOnArrowKey } from '../../security/adminSessionStandards';
 import { evaluateWebhookEndpointRfSafety } from '../../security/rfLegalCompliance';
+import {
+  buildTelHref,
+  formatDisplayPhoneRu,
+  normalizeTelegramContact,
+  validateAdminFooterContacts,
+} from '../../utils/footerContactsFormat';
 import { BrandedDocumentSuiteModal } from '../documents/BrandedDocumentSuiteModal';
 import { AdminB2bOrderDossier } from './AdminB2bOrderDossier';
 import { AdminProductionKanbanView } from './AdminProductionKanbanView';
@@ -255,7 +271,7 @@ export function AdminOrdersCrmPanel({
     createDefaultStudioLegalProfiles()
   );
   const [editingEntityTab, setEditingEntityTab] =
-    useState<StudioEntityKind>('ip');
+    useState<StudioEntityKind>('ooo');
   const [isSavingLegal, setIsSavingLegal] = useState<boolean>(false);
 
   // Состояние формы настроек шлюзов Telegram + Webhook
@@ -296,22 +312,26 @@ export function AdminOrdersCrmPanel({
   }, [focusedOrderId]);
 
   const applyServerSettings = useCallback(
-    (settings: AdminDispatchSettingsResponse) => {
-      setTgEnabled(settings.telegram.enabled);
-      setTgHasToken(settings.telegram.hasBotToken);
-      setTgTokenSource(settings.telegram.botTokenSource ?? 'none');
-      setTgMaskedToken(settings.telegram.maskedBotToken || '');
-      setTgChatId(settings.telegram.chatId || '');
-      setTgDiscoveredChatTitle(settings.telegram.discoveredChatTitle || '');
-      setTgNotifyNew(settings.telegram.notifyOnNewOrder);
-      setTgNotifyStage(settings.telegram.notifyOnStageChange);
-      setTgMaskPdn(settings.telegram.maskPdnInExternalAlerts !== false);
+    (settings?: Partial<AdminDispatchSettingsResponse> | null) => {
+      if (settings?.telegram) {
+        setTgEnabled(Boolean(settings.telegram.enabled));
+        setTgHasToken(Boolean(settings.telegram.hasBotToken));
+        setTgTokenSource(settings.telegram.botTokenSource ?? 'none');
+        setTgMaskedToken(settings.telegram.maskedBotToken || '');
+        setTgChatId(settings.telegram.chatId || '');
+        setTgDiscoveredChatTitle(settings.telegram.discoveredChatTitle || '');
+        setTgNotifyNew(Boolean(settings.telegram.notifyOnNewOrder));
+        setTgNotifyStage(Boolean(settings.telegram.notifyOnStageChange));
+        setTgMaskPdn(settings.telegram.maskPdnInExternalAlerts !== false);
+      }
 
-      setWhEnabled(settings.webhook.enabled);
-      setWhEndpointUrl(settings.webhook.endpointUrl || '');
-      setWhSecretInput(settings.webhook.maskedHmacSecret || '');
-      setWhNotifyNew(settings.webhook.notifyOnNewOrder);
-      setWhNotifyStage(settings.webhook.notifyOnStageChange);
+      if (settings?.webhook) {
+        setWhEnabled(Boolean(settings.webhook.enabled));
+        setWhEndpointUrl(settings.webhook.endpointUrl || '');
+        setWhSecretInput(settings.webhook.maskedHmacSecret || '');
+        setWhNotifyNew(Boolean(settings.webhook.notifyOnNewOrder));
+        setWhNotifyStage(Boolean(settings.webhook.notifyOnStageChange));
+      }
     },
     []
   );
@@ -599,6 +619,34 @@ export function AdminOrdersCrmPanel({
   };
 
   const handleSaveLegalProfiles = async () => {
+    const activeProf =
+      legalDraft.activeEntityKind === 'ip'
+        ? legalDraft.ipProfile
+        : legalDraft.oooProfile;
+    const rawContacts =
+      legalDraft.publicContacts ??
+      sanitizePublicContactsConfig(
+        undefined,
+        activeProf.phone,
+        activeProf.email
+      );
+    const contactsCheck = validateAdminFooterContacts({
+      phone: rawContacts.phone,
+      telegram: rawContacts.telegram,
+      showPhoneInFooter: rawContacts.showPhoneInFooter,
+      showTelegramInFooter: rawContacts.showTelegramInFooter,
+    });
+    if (!contactsCheck.isValid) {
+      setFeedbackBanner({
+        kind: 'error',
+        text:
+          contactsCheck.phoneError ??
+          contactsCheck.telegramError ??
+          'Проверьте номер телефона и ссылку на Telegram перед сохранением.',
+      });
+      return;
+    }
+
     setIsSavingLegal(true);
     setFeedbackBanner(null);
     try {
@@ -623,9 +671,11 @@ export function AdminOrdersCrmPanel({
       }
       setLegalProfiles(json.legalProfiles);
       setLegalDraft(json.legalProfiles);
+      setEditingEntityTab(json.legalProfiles.activeEntityKind);
+      dispatchLegalProfilesUpdatedEvent(json.legalProfiles);
       setFeedbackBanner({
         kind: 'ok',
-        text: 'Юридические реквизиты исполнителя (ИП / ООО, г. Тверь) и налоговый режим сохранены.',
+        text: 'Контакты подвала сайта (Телефон · Telegram · Почта), реквизиты компании и настройки 152-ФЗ сохранены и обновлены на сайте.',
       });
     } catch (err) {
       setFeedbackBanner({
@@ -633,7 +683,7 @@ export function AdminOrdersCrmPanel({
         text:
           err instanceof Error
             ? err.message
-            : 'Ошибка сохранения юридических реквизитов',
+            : 'Ошибка сохранения юридических реквизитов и контактов',
       });
     } finally {
       setIsSavingLegal(false);
@@ -652,6 +702,90 @@ export function AdminOrdersCrmPanel({
         [targetKey]: {
           ...current,
           [key]: editingEntityTab === 'ip' && key === 'kpp' ? '' : value,
+        },
+      };
+    });
+  };
+
+  const updatePublicContactsField = <K extends keyof StudioPublicContactsConfig>(
+    key: K,
+    value: StudioPublicContactsConfig[K]
+  ) => {
+    setLegalDraft((prev) => {
+      const activeProf =
+        prev.activeEntityKind === 'ip' ? prev.ipProfile : prev.oooProfile;
+      const baseContacts =
+        prev.publicContacts ??
+        sanitizePublicContactsConfig(
+          undefined,
+          activeProf.phone,
+          activeProf.email
+        );
+      return {
+        ...prev,
+        publicContacts: {
+          ...baseContacts,
+          [key]: value,
+        },
+      };
+    });
+  };
+
+  const updatePrivacyPolicyField = <K extends keyof StudioPrivacyPolicySettings>(
+    key: K,
+    value: StudioPrivacyPolicySettings[K]
+  ) => {
+    setLegalDraft((prev) => {
+      const activeProf =
+        prev.activeEntityKind === 'ip' ? prev.ipProfile : prev.oooProfile;
+      const currentPrivacy = sanitizePrivacyPolicySettings(
+        prev.privacyPolicy,
+        activeProf.email
+      );
+      return {
+        ...prev,
+        privacyPolicy: {
+          ...currentPrivacy,
+          [key]: value,
+        },
+      };
+    });
+  };
+
+  const handleSetOperatingMode = (mode: StudioLegalOperatingMode) => {
+    setLegalDraft((prev) => {
+      const nextActive: StudioEntityKind =
+        mode === 'ooo_only'
+          ? 'ooo'
+          : mode === 'ip_only'
+            ? 'ip'
+            : prev.activeEntityKind;
+      setEditingEntityTab(nextActive);
+      return {
+        ...prev,
+        legalOperatingMode: mode,
+        activeEntityKind: nextActive,
+      };
+    });
+  };
+
+  const handleClearPendingRequisites = () => {
+    setLegalDraft((prev) => {
+      const targetKey = editingEntityTab === 'ip' ? 'ipProfile' : 'oooProfile';
+      const current = prev[targetKey];
+      return {
+        ...prev,
+        [targetKey]: {
+          ...current,
+          inn: '',
+          kpp: '',
+          ogrnOrOgrnip: '',
+          legalAddress: '',
+          bankName: '',
+          bik: '',
+          checkingAccount: '',
+          correspondentAccount: '',
+          edoParticipantId: '',
         },
       };
     });
@@ -1566,7 +1700,7 @@ export function AdminOrdersCrmPanel({
                 }`}
               >
                 <Building2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                <span>Реквизиты ИП / ООО и налоги</span>
+                <span>Контакты подвала, ООО / ИП и 152-ФЗ</span>
               </button>
 
               <button
@@ -1614,13 +1748,44 @@ export function AdminOrdersCrmPanel({
             </div>
           </div>
 
-          {/* 3.1 Юридические и налоговые реквизиты студии (ИП / ООО, г. Тверь) */}
+          {/* 3.1 Публичные контакты подвала, юридический профиль (ООО / ИП) и 152-ФЗ */}
           {settingsTab === 'legal' &&
             (() => {
+              const operatingMode: StudioLegalOperatingMode =
+                legalDraft.legalOperatingMode ??
+                (legalDraft.activeEntityKind === 'ip' ? 'both' : 'ooo_only');
               const editedProfile =
                 editingEntityTab === 'ip'
                   ? legalDraft.ipProfile
                   : legalDraft.oooProfile;
+              const activeBaseProfile =
+                legalDraft.activeEntityKind === 'ip'
+                  ? legalDraft.ipProfile
+                  : legalDraft.oooProfile;
+              const defaultContacts = createDefaultPublicContactsConfig();
+              const contactsDraft: StudioPublicContactsConfig =
+                legalDraft.publicContacts ?? {
+                  ...defaultContacts,
+                  phone: activeBaseProfile.phone || defaultContacts.phone,
+                  email: activeBaseProfile.email || defaultContacts.email,
+                };
+              const privacyDraft = sanitizePrivacyPolicySettings(
+                legalDraft.privacyPolicy ?? createDefaultPrivacyPolicySettings(),
+                activeBaseProfile.email
+              );
+              const normalizedTgPreview = normalizeTelegramContact(
+                contactsDraft.telegram
+              );
+              const formattedPhonePreview = formatDisplayPhoneRu(
+                contactsDraft.phone
+              );
+              const phoneHrefPreview = buildTelHref(contactsDraft.phone);
+              const contactsValidation = validateAdminFooterContacts({
+                phone: contactsDraft.phone,
+                telegram: contactsDraft.telegram,
+                showPhoneInFooter: contactsDraft.showPhoneInFooter,
+                showTelegramInFooter: contactsDraft.showTelegramInFooter,
+              });
 
               return (
                 <div
@@ -1630,16 +1795,15 @@ export function AdminOrdersCrmPanel({
                   data-testid="crm-legal-profiles-view"
                   className="space-y-6"
                 >
+                  {/* БЛОК 1: Публичные контакты в подвале сайта (Телефон · Telegram · Почта · Слоган) */}
                   <section className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-6 space-y-5">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#111111]/10 dark:border-white/10">
                       <div className="space-y-1">
-                        <p className="text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                          Брендированные документы A4 (КП · Договор г. Тверь ·
-                          Счёт · Паспорт РАО/ВОИС)
+                        <p className="text-xs font-medium text-[#111111]/70 dark:text-[#F4F3EF]/70">
+                          Публичные контакты на сайте без хардкода · обновляются в подвале мгновенно
                         </p>
                         <h2 className="text-lg font-bold text-[#111111] dark:text-[#F4F3EF]">
-                          Профиль исполнителя (ИП / ООО) и налоговый режим (УСН /
-                          НДС)
+                          1. Контакты в подвале сайта (Номер телефона, ссылка на Telegram и почта)
                         </h2>
                       </div>
 
@@ -1657,77 +1821,380 @@ export function AdminOrdersCrmPanel({
                         <span>
                           {isSavingLegal
                             ? 'Сохранение…'
-                            : 'Сохранить реквизиты студии'}
+                            : 'Сохранить контакты и реквизиты'}
                         </span>
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                      <div className="rounded-xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 space-y-2.5">
-                        <p className="text-xs font-bold text-[#111111] dark:text-[#F4F3EF]">
-                          Активное юрлицо по умолчанию для новых счетов:
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                      {/* Карточка настройки телефона */}
+                      <div className="rounded-xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-bold text-[#111111] dark:text-[#F4F3EF]">
+                            Номер телефона в подвале
+                          </span>
+                          <label className="inline-flex items-center gap-2 cursor-pointer select-none font-medium text-[#111111]/80 dark:text-[#F4F3EF]/80">
+                            <input
+                              type="checkbox"
+                              data-testid="crm-public-show-phone"
+                              checked={contactsDraft.showPhoneInFooter}
+                              onChange={(e) =>
+                                updatePublicContactsField(
+                                  'showPhoneInFooter',
+                                  e.target.checked
+                                )
+                              }
+                              className="w-4 h-4 accent-[#C83210]"
+                            />
+                            <span>Показывать на сайте</span>
+                          </label>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label
+                              htmlFor="crm-public-phone"
+                              className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72"
+                            >
+                              Номер телефона
+                            </label>
+                            <input
+                              id="crm-public-phone"
+                              data-testid="crm-public-phone"
+                              type="tel"
+                              inputMode="tel"
+                              placeholder="+7 (904) 000-09-11"
+                              value={contactsDraft.phone}
+                              aria-invalid={Boolean(contactsValidation.phoneError)}
+                              onChange={(e) =>
+                                updatePublicContactsField('phone', e.target.value)
+                              }
+                              className={`w-full min-h-[40px] px-3 rounded-xl bg-white dark:bg-[#141418] border tabular-nums ${
+                                contactsValidation.phoneError
+                                  ? 'border-[#DC2626]'
+                                  : 'border-[#111111]/14 dark:border-white/14'
+                              }`}
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label
+                              htmlFor="crm-public-phone-label"
+                              className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72"
+                            >
+                              Подпись над номером
+                            </label>
+                            <input
+                              id="crm-public-phone-label"
+                              data-testid="crm-public-phone-label"
+                              type="text"
+                              placeholder="Прямая линия продюсера"
+                              value={contactsDraft.phoneLabel}
+                              onChange={(e) =>
+                                updatePublicContactsField(
+                                  'phoneLabel',
+                                  e.target.value
+                                )
+                              }
+                              className="w-full min-h-[40px] px-3 rounded-xl bg-white dark:bg-[#141418] border border-[#111111]/14 dark:border-white/14"
+                            />
+                          </div>
+                        </div>
+
+                        {contactsValidation.phoneError ? (
+                          <p
+                            role="alert"
+                            data-testid="crm-public-phone-error"
+                            className="text-[11px] font-medium text-[#B91C1C] dark:text-[#F87171]"
+                          >
+                            {contactsValidation.phoneError}
+                          </p>
+                        ) : (
+                          <p className="text-[11px] text-[#111111]/60 dark:text-[#F4F3EF]/60">
+                            На сайте отобразится:{' '}
+                            <strong className="text-[#111111] dark:text-[#F4F3EF] tabular-nums">
+                              {contactsDraft.showPhoneInFooter &&
+                              formattedPhonePreview &&
+                              phoneHrefPreview
+                                ? `${formattedPhonePreview} (${phoneHrefPreview})`
+                                : 'Скрыто'}
+                            </strong>
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Карточка настройки ссылки на Telegram */}
+                      <div className="rounded-xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-bold text-[#111111] dark:text-[#F4F3EF]">
+                            Ссылка на Telegram в подвале
+                          </span>
+                          <label className="inline-flex items-center gap-2 cursor-pointer select-none font-medium text-[#111111]/80 dark:text-[#F4F3EF]/80">
+                            <input
+                              type="checkbox"
+                              data-testid="crm-public-show-telegram"
+                              checked={contactsDraft.showTelegramInFooter}
+                              onChange={(e) =>
+                                updatePublicContactsField(
+                                  'showTelegramInFooter',
+                                  e.target.checked
+                                )
+                              }
+                              className="w-4 h-4 accent-[#C83210]"
+                            />
+                            <span>Показывать на сайте</span>
+                          </label>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label
+                              htmlFor="crm-public-telegram"
+                              className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72"
+                            >
+                              Ссылка https://t.me/... или @никнейм
+                            </label>
+                            <input
+                              id="crm-public-telegram"
+                              data-testid="crm-public-telegram"
+                              type="text"
+                              placeholder="https://t.me/fmworks или @fmworks"
+                              value={contactsDraft.telegram}
+                              aria-invalid={Boolean(
+                                contactsValidation.telegramError
+                              )}
+                              onChange={(e) =>
+                                updatePublicContactsField(
+                                  'telegram',
+                                  e.target.value
+                                )
+                              }
+                              className={`w-full min-h-[40px] px-3 rounded-xl bg-white dark:bg-[#141418] border ${
+                                contactsValidation.telegramError
+                                  ? 'border-[#DC2626]'
+                                  : 'border-[#111111]/14 dark:border-white/14'
+                              }`}
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label
+                              htmlFor="crm-public-telegram-label"
+                              className="block font-semibold text-[#111111]/72 dark:text-[#F4F3EF]/72"
+                            >
+                              Подпись над Telegram
+                            </label>
+                            <input
+                              id="crm-public-telegram-label"
+                              data-testid="crm-public-telegram-label"
+                              type="text"
+                              placeholder="Написать в Telegram"
+                              value={contactsDraft.telegramLabel}
+                              onChange={(e) =>
+                                updatePublicContactsField(
+                                  'telegramLabel',
+                                  e.target.value
+                                )
+                              }
+                              className="w-full min-h-[40px] px-3 rounded-xl bg-white dark:bg-[#141418] border border-[#111111]/14 dark:border-white/14"
+                            />
+                          </div>
+                        </div>
+
+                        {contactsValidation.telegramError ? (
+                          <p
+                            role="alert"
+                            data-testid="crm-public-telegram-error"
+                            className="text-[11px] font-medium text-[#B91C1C] dark:text-[#F87171]"
+                          >
+                            {contactsValidation.telegramError}
+                          </p>
+                        ) : (
+                          <p className="text-[11px] text-[#111111]/60 dark:text-[#F4F3EF]/60">
+                            Активная ссылка:{' '}
+                            <strong className="text-[#111111] dark:text-[#F4F3EF]">
+                              {contactsDraft.showTelegramInFooter &&
+                              normalizedTgPreview
+                                ? `${normalizedTgPreview.displayHandle} (${normalizedTgPreview.href})`
+                                : 'Скрыто'}
+                            </strong>
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-public-email"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Почта продюсеров в подвале
+                        </label>
+                        <input
+                          id="crm-public-email"
+                          data-testid="crm-public-email"
+                          type="email"
+                          value={contactsDraft.email}
+                          onChange={(e) =>
+                            updatePublicContactsField('email', e.target.value)
+                          }
+                          className="w-full min-h-[40px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-public-work-hours"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          График работы студии
+                        </label>
+                        <input
+                          id="crm-public-work-hours"
+                          type="text"
+                          placeholder="Пн–Пт 09:00–19:00"
+                          value={contactsDraft.workHoursLabel}
+                          onChange={(e) =>
+                            updatePublicContactsField(
+                              'workHoursLabel',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[40px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-public-tagline-1"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Подпись у логотипа · 1-я строка
+                        </label>
+                        <input
+                          id="crm-public-tagline-1"
+                          type="text"
+                          value={contactsDraft.taglineLine1}
+                          onChange={(e) =>
+                            updatePublicContactsField(
+                              'taglineLine1',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[40px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-public-tagline-2"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Подпись у логотипа · 2-я строка
+                        </label>
+                        <input
+                          id="crm-public-tagline-2"
+                          type="text"
+                          value={contactsDraft.taglineLine2}
+                          onChange={(e) =>
+                            updatePublicContactsField(
+                              'taglineLine2',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[40px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+                    </div>
+                  </section>
+
+                  {/* БЛОК 2: Юридическая форма компании (Только ООО / Только ИП / Оба) и реквизиты для A4-документов */}
+                  <section className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-6 space-y-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#111111]/10 dark:border-white/10">
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-[#111111]/70 dark:text-[#F4F3EF]/70">
+                          Документы A4 (КП · Договор · Счёт · Акт · Паспорт РАО/ВОИС) и Оператор 152-ФЗ
                         </p>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <h2 className="text-lg font-bold text-[#111111] dark:text-[#F4F3EF]">
+                          2. Юридическое лицо студии (ООО или ИП) и расчётные реквизиты
+                        </h2>
+                      </div>
+
+                      <button
+                        type="button"
+                        data-testid="crm-legal-clear-pending-btn"
+                        onClick={handleClearPendingRequisites}
+                        className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#C83210] text-xs font-semibold text-[#111111]/82 dark:text-[#F4F3EF]/82 transition-colors cursor-pointer whitespace-nowrap self-start sm:self-auto"
+                      >
+                        Очистить ИНН / ОГРН / банк (заполню позже)
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                      <div className="lg:col-span-7 rounded-xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 space-y-2.5">
+                        <p className="text-xs font-bold text-[#111111] dark:text-[#F4F3EF]">
+                          Режим работы юридических лиц на сайте и в Политики ПДн:
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                           <button
                             type="button"
-                            data-testid="crm-legal-active-ip"
-                            onClick={() => {
-                              setLegalDraft((prev) => ({
-                                ...prev,
-                                activeEntityKind: 'ip',
-                              }));
-                              setEditingEntityTab('ip');
-                            }}
-                            className={`min-h-[42px] px-3.5 py-2 rounded-xl border text-xs font-semibold text-left transition-colors cursor-pointer whitespace-nowrap ${
-                              legalDraft.activeEntityKind === 'ip'
+                            data-testid="crm-legal-mode-ooo-only"
+                            onClick={() => handleSetOperatingMode('ooo_only')}
+                            className={`min-h-[42px] px-3 py-2 rounded-xl border text-xs font-semibold text-left transition-colors cursor-pointer whitespace-nowrap ${
+                              operatingMode === 'ooo_only'
                                 ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
                                 : 'bg-white dark:bg-[#141418] border-[#111111]/14 dark:border-white/14'
                             }`}
                           >
-                            ИП (без КПП · УСН / НДС)
+                            Только ООО (без ИП)
                           </button>
                           <button
                             type="button"
-                            data-testid="crm-legal-active-ooo"
-                            onClick={() => {
-                              setLegalDraft((prev) => ({
-                                ...prev,
-                                activeEntityKind: 'ooo',
-                              }));
-                              setEditingEntityTab('ooo');
-                            }}
-                            className={`min-h-[42px] px-3.5 py-2 rounded-xl border text-xs font-semibold text-left transition-colors cursor-pointer whitespace-nowrap ${
-                              legalDraft.activeEntityKind === 'ooo'
+                            data-testid="crm-legal-mode-ip-only"
+                            onClick={() => handleSetOperatingMode('ip_only')}
+                            className={`min-h-[42px] px-3 py-2 rounded-xl border text-xs font-semibold text-left transition-colors cursor-pointer whitespace-nowrap ${
+                              operatingMode === 'ip_only'
                                 ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
                                 : 'bg-white dark:bg-[#141418] border-[#111111]/14 dark:border-white/14'
                             }`}
                           >
-                            ООО (с КПП · УСН / ОСНО)
+                            Только ИП (без ООО)
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="crm-legal-mode-both"
+                            onClick={() => handleSetOperatingMode('both')}
+                            className={`min-h-[42px] px-3 py-2 rounded-xl border text-xs font-semibold text-left transition-colors cursor-pointer whitespace-nowrap ${
+                              operatingMode === 'both'
+                                ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                                : 'bg-white dark:bg-[#141418] border-[#111111]/14 dark:border-white/14'
+                            }`}
+                          >
+                            Оба лица (ООО + ИП)
                           </button>
                         </div>
                       </div>
 
-                      <div className="rounded-xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 space-y-2.5">
+                      <div className="lg:col-span-5 rounded-xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 space-y-2.5">
                         <p className="text-xs font-bold text-[#111111] dark:text-[#F4F3EF]">
-                          Редактируемая карточка реквизитов:
+                          {operatingMode === 'both'
+                            ? 'Основное лицо по умолчанию и карточка:'
+                            : 'Редактируемая карточка реквизитов:'}
                         </p>
                         <div className="grid grid-cols-2 gap-2">
                           <button
                             type="button"
-                            data-testid="crm-legal-edit-tab-ip"
-                            onClick={() => setEditingEntityTab('ip')}
-                            className={`min-h-[42px] px-3 py-2 rounded-xl border text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${
-                              editingEntityTab === 'ip'
-                                ? 'border-[#C83210] bg-[#C83210]/10 text-[#B82D0D] dark:text-[#FF7A5C]'
-                                : 'border-[#111111]/14 dark:border-white/14'
-                            }`}
-                          >
-                            Карточка ИП
-                          </button>
-                          <button
-                            type="button"
                             data-testid="crm-legal-edit-tab-ooo"
-                            onClick={() => setEditingEntityTab('ooo')}
+                            onClick={() => {
+                              setEditingEntityTab('ooo');
+                              if (operatingMode === 'both') {
+                                setLegalDraft((prev) => ({
+                                  ...prev,
+                                  activeEntityKind: 'ooo',
+                                }));
+                              }
+                            }}
                             className={`min-h-[42px] px-3 py-2 rounded-xl border text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${
                               editingEntityTab === 'ooo'
                                 ? 'border-[#C83210] bg-[#C83210]/10 text-[#B82D0D] dark:text-[#FF7A5C]'
@@ -1735,6 +2202,26 @@ export function AdminOrdersCrmPanel({
                             }`}
                           >
                             Карточка ООО
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="crm-legal-edit-tab-ip"
+                            onClick={() => {
+                              setEditingEntityTab('ip');
+                              if (operatingMode === 'both') {
+                                setLegalDraft((prev) => ({
+                                  ...prev,
+                                  activeEntityKind: 'ip',
+                                }));
+                              }
+                            }}
+                            className={`min-h-[42px] px-3 py-2 rounded-xl border text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${
+                              editingEntityTab === 'ip'
+                                ? 'border-[#C83210] bg-[#C83210]/10 text-[#B82D0D] dark:text-[#FF7A5C]'
+                                : 'border-[#111111]/14 dark:border-white/14'
+                            }`}
+                          >
+                            Карточка ИП
                           </button>
                         </div>
                       </div>
@@ -1754,6 +2241,27 @@ export function AdminOrdersCrmPanel({
                           value={editedProfile.legalName}
                           onChange={(e) =>
                             updateEditingProfileField('legalName', e.target.value)
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-short-brand"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Краткое наименование (в шапке КП/счёта)
+                        </label>
+                        <input
+                          id="crm-legal-short-brand"
+                          type="text"
+                          value={editedProfile.shortBrandTitle}
+                          onChange={(e) =>
+                            updateEditingProfileField(
+                              'shortBrandTitle',
+                              e.target.value
+                            )
                           }
                           className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
                         />
@@ -1815,19 +2323,45 @@ export function AdminOrdersCrmPanel({
 
                       <div className="space-y-1">
                         <label
+                          htmlFor="crm-legal-domain"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Домен сайта компании
+                        </label>
+                        <input
+                          id="crm-legal-domain"
+                          type="text"
+                          value={editedProfile.websiteDomain}
+                          onChange={(e) =>
+                            updateEditingProfileField(
+                              'websiteDomain',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
                           htmlFor="crm-legal-inn"
                           className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
                         >
-                          ИНН
+                          ИНН (можно оставить пустым до регистрации)
                         </label>
                         <input
                           id="crm-legal-inn"
                           type="text"
+                          placeholder={
+                            editingEntityTab === 'ip'
+                              ? '12 цифр (или пусто)'
+                              : '10 цифр (или пусто)'
+                          }
                           value={editedProfile.inn}
                           onChange={(e) =>
                             updateEditingProfileField('inn', e.target.value)
                           }
-                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 tabular-nums"
                         />
                       </div>
 
@@ -1838,7 +2372,7 @@ export function AdminOrdersCrmPanel({
                         >
                           {editingEntityTab === 'ip'
                             ? 'КПП (у ИП отсутствует)'
-                            : 'КПП (9 цифр)'}
+                            : 'КПП (9 цифр или пусто)'}
                         </label>
                         <input
                           id="crm-legal-kpp"
@@ -1848,12 +2382,12 @@ export function AdminOrdersCrmPanel({
                           placeholder={
                             editingEntityTab === 'ip'
                               ? 'Не применяется для ИП'
-                              : '695001001'
+                              : '9 цифр (или пусто)'
                           }
                           onChange={(e) =>
                             updateEditingProfileField('kpp', e.target.value)
                           }
-                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 disabled:opacity-55"
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 disabled:opacity-55 tabular-nums"
                         />
                       </div>
 
@@ -1867,6 +2401,7 @@ export function AdminOrdersCrmPanel({
                         <input
                           id="crm-legal-ogrn"
                           type="text"
+                          placeholder="Оставьте пустым, если вносится позже"
                           value={editedProfile.ogrnOrOgrnip}
                           onChange={(e) =>
                             updateEditingProfileField(
@@ -1874,7 +2409,7 @@ export function AdminOrdersCrmPanel({
                               e.target.value
                             )
                           }
-                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 tabular-nums"
                         />
                       </div>
 
@@ -1883,7 +2418,7 @@ export function AdminOrdersCrmPanel({
                           htmlFor="crm-legal-city"
                           className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
                         >
-                          Город (место заключения договора)
+                          Город (место заключения договора и подвал)
                         </label>
                         <input
                           id="crm-legal-city"
@@ -1898,10 +2433,28 @@ export function AdminOrdersCrmPanel({
 
                       <div className="space-y-1">
                         <label
+                          htmlFor="crm-legal-email"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Официальный Email юрлица (для договоров)
+                        </label>
+                        <input
+                          id="crm-legal-email"
+                          type="email"
+                          value={editedProfile.email}
+                          onChange={(e) =>
+                            updateEditingProfileField('email', e.target.value)
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
                           htmlFor="crm-legal-phone"
                           className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
                         >
-                          Телефон студии
+                          Телефон в шапке договоров и КП
                         </label>
                         <input
                           id="crm-legal-phone"
@@ -1910,7 +2463,7 @@ export function AdminOrdersCrmPanel({
                           onChange={(e) =>
                             updateEditingProfileField('phone', e.target.value)
                           }
-                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 tabular-nums"
                         />
                       </div>
 
@@ -1924,6 +2477,7 @@ export function AdminOrdersCrmPanel({
                         <input
                           id="crm-legal-address"
                           type="text"
+                          placeholder="Укажите полный адрес после регистрации компании"
                           value={editedProfile.legalAddress}
                           onChange={(e) =>
                             updateEditingProfileField(
@@ -1932,6 +2486,116 @@ export function AdminOrdersCrmPanel({
                             )
                           }
                           className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-role"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Должность подписанта
+                        </label>
+                        <input
+                          id="crm-legal-role"
+                          type="text"
+                          value={editedProfile.signatoryRoleTitle}
+                          onChange={(e) =>
+                            updateEditingProfileField(
+                              'signatoryRoleTitle',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-signatory-full"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          ФИО подписанта полностью
+                        </label>
+                        <input
+                          id="crm-legal-signatory-full"
+                          type="text"
+                          value={editedProfile.signatoryFullName}
+                          onChange={(e) =>
+                            updateEditingProfileField(
+                              'signatoryFullName',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-signatory"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Подписант кратко (Фамилия И. О.)
+                        </label>
+                        <input
+                          id="crm-legal-signatory"
+                          type="text"
+                          value={editedProfile.signatoryShortName}
+                          onChange={(e) =>
+                            updateEditingProfileField(
+                              'signatoryShortName',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2 space-y-1">
+                        <label
+                          htmlFor="crm-legal-authority"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Основание полномочий (в родительном/творительном падеже для преамбулы)
+                        </label>
+                        <input
+                          id="crm-legal-authority"
+                          type="text"
+                          value={editedProfile.authorityBasis}
+                          onChange={(e) =>
+                            updateEditingProfileField(
+                              'authorityBasis',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-legal-accountant"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Главный бухгалтер (для ООО)
+                        </label>
+                        <input
+                          id="crm-legal-accountant"
+                          type="text"
+                          disabled={editingEntityTab === 'ip'}
+                          value={
+                            editingEntityTab === 'ip'
+                              ? ''
+                              : editedProfile.chiefAccountantShortName
+                          }
+                          onChange={(e) =>
+                            updateEditingProfileField(
+                              'chiefAccountantShortName',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 disabled:opacity-55"
                         />
                       </div>
 
@@ -1967,7 +2631,7 @@ export function AdminOrdersCrmPanel({
                           onChange={(e) =>
                             updateEditingProfileField('bik', e.target.value)
                           }
-                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 tabular-nums"
                         />
                       </div>
 
@@ -1988,7 +2652,7 @@ export function AdminOrdersCrmPanel({
                               e.target.value
                             )
                           }
-                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 tabular-nums"
                         />
                       </div>
 
@@ -2009,24 +2673,24 @@ export function AdminOrdersCrmPanel({
                               e.target.value
                             )
                           }
-                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                          className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 tabular-nums"
                         />
                       </div>
 
                       <div className="space-y-1">
                         <label
-                          htmlFor="crm-legal-signatory"
+                          htmlFor="crm-legal-edo-operator"
                           className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
                         >
-                          Подписант (И. О. Фамилия)
+                          Оператор ЭДО
                         </label>
                         <input
-                          id="crm-legal-signatory"
+                          id="crm-legal-edo-operator"
                           type="text"
-                          value={editedProfile.signatoryShortName}
+                          value={editedProfile.edoOperatorLabel}
                           onChange={(e) =>
                             updateEditingProfileField(
-                              'signatoryShortName',
+                              'edoOperatorLabel',
                               e.target.value
                             )
                           }
@@ -2039,7 +2703,7 @@ export function AdminOrdersCrmPanel({
                           htmlFor="crm-legal-edo-box"
                           className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
                         >
-                          BoxId в Контур.Диадоке (Учёт в Контур.Экстерне)
+                          Идентификатор участника ЭДО (BoxId)
                         </label>
                         <input
                           id="crm-legal-edo-box"
@@ -2054,6 +2718,170 @@ export function AdminOrdersCrmPanel({
                           className="w-full min-h-[42px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
                         />
                       </div>
+                    </div>
+                  </section>
+
+                  {/* БЛОК 3: Настройки Политики ПДн (152-ФЗ) и вывода реквизитов в подвале */}
+                  <section className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-6 space-y-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#111111]/10 dark:border-white/10">
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-[#111111]/70 dark:text-[#F4F3EF]/70">
+                          Соответствие 152-ФЗ, 149-ФЗ и 156-ФЗ РФ
+                        </p>
+                        <h2 className="text-lg font-bold text-[#111111] dark:text-[#F4F3EF]">
+                          3. Настройки Политики конфиденциальности (/privacy) и строки оператора в подвале
+                        </h2>
+                      </div>
+                      <a
+                        href="/privacy"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-semibold text-[#C83210] hover:underline whitespace-nowrap"
+                      >
+                        Открыть страницу /privacy →
+                      </a>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-privacy-email"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Почта для запросов по ПДн (152-ФЗ)
+                        </label>
+                        <input
+                          id="crm-privacy-email"
+                          type="email"
+                          value={privacyDraft.privacyEmail}
+                          onChange={(e) =>
+                            updatePrivacyPolicyField(
+                              'privacyEmail',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[40px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-privacy-rkn"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Рег. номер в реестре РКН (необязательно)
+                        </label>
+                        <input
+                          id="crm-privacy-rkn"
+                          type="text"
+                          placeholder="Вносится после уведомления РКН"
+                          value={privacyDraft.rknRegistryNumber}
+                          onChange={(e) =>
+                            updatePrivacyPolicyField(
+                              'rknRegistryNumber',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[40px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-privacy-version-date"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Дата редакции Политики
+                        </label>
+                        <input
+                          id="crm-privacy-version-date"
+                          type="text"
+                          value={privacyDraft.policyVersionDate}
+                          onChange={(e) =>
+                            updatePrivacyPolicyField(
+                              'policyVersionDate',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[40px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="crm-privacy-hosting"
+                          className="block font-semibold text-[#111111]/74 dark:text-[#F4F3EF]/74"
+                        >
+                          Локализация БД (ч. 5 ст. 18 152-ФЗ)
+                        </label>
+                        <input
+                          id="crm-privacy-hosting"
+                          type="text"
+                          value={privacyDraft.hostingLocationLabel}
+                          onChange={(e) =>
+                            updatePrivacyPolicyField(
+                              'hostingLocationLabel',
+                              e.target.value
+                            )
+                          }
+                          className="w-full min-h-[40px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">
+                      <div className="flex flex-wrap items-center gap-6 text-xs">
+                        <label className="inline-flex items-center gap-2 cursor-pointer select-none font-medium text-[#111111]/82 dark:text-[#F4F3EF]/82">
+                          <input
+                            type="checkbox"
+                            checked={privacyDraft.showRequisitesInFooter}
+                            onChange={(e) =>
+                              updatePrivacyPolicyField(
+                                'showRequisitesInFooter',
+                                e.target.checked
+                              )
+                            }
+                            className="w-4 h-4 accent-[#C83210]"
+                          />
+                          <span>
+                            Показывать строку открытых реквизитов владельца сайта в подвале (ст. 10 149-ФЗ)
+                          </span>
+                        </label>
+
+                        <label className="inline-flex items-center gap-2 cursor-pointer select-none font-medium text-[#111111]/82 dark:text-[#F4F3EF]/82">
+                          <input
+                            type="checkbox"
+                            checked={privacyDraft.cookieBannerEnabled}
+                            onChange={(e) =>
+                              updatePrivacyPolicyField(
+                                'cookieBannerEnabled',
+                                e.target.checked
+                              )
+                            }
+                            className="w-4 h-4 accent-[#C83210]"
+                          />
+                          <span>
+                            Показывать уведомление о технических cookie и localStorage
+                          </span>
+                        </label>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={isSavingLegal}
+                        onClick={() => void handleSaveLegalProfiles()}
+                        className="w-full sm:w-auto min-h-[42px] px-5 py-2 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] disabled:opacity-55 text-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                      >
+                        <CheckCircle2
+                          className="w-4 h-4 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span>
+                          {isSavingLegal
+                            ? 'Сохранение…'
+                            : 'Сохранить контакты и реквизиты'}
+                        </span>
+                      </button>
                     </div>
                   </section>
                 </div>

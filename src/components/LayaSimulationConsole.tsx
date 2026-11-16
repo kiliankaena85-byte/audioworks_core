@@ -2,21 +2,22 @@ import { ChangeEvent, useEffect, useRef, useState } from 'react';
 import {
   ArrowUpRight,
   AudioWaveform,
+  Film,
   Music,
   Palette,
   Radio,
+  RotateCcw,
   SlidersHorizontal,
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import {
-  lazyCasePlayerEngine as casePlayerEngine,
-  lazyContrastAudioEngine as contrastAudioEngine,
-} from '../audio/lazyAudioEngines';
+import { fmTunerAudioEngine } from '../audio/fmTunerAudioEngine';
+import { lazyCasePlayerEngine as casePlayerEngine } from '../audio/lazyAudioEngines';
 import { duelAudioStore } from '../audio/duelAudioStore';
 import { useStudioCms } from '../cms/StudioCmsContext';
 import { BRAND_DOMAIN_OPTIONS, BrandDomainVariant } from '../data/brandKitData';
 import { resolveHeroStagePlayback } from '../data/heroStageCms';
+import { heroVideoStore, HeroVideoSnapshot } from '../data/heroVideoStore';
 import { LAYA_SIMULATION_TRACES } from '../engine/layaEngine';
 import { useLayaDecision } from '../engine/LayaContext';
 
@@ -30,6 +31,7 @@ interface LayaSimulationConsoleProps {
   onOpenRadioAdmin?: () => void;
   onOpenHeroStageAdmin?: () => void;
   onOpenDuelAdmin?: () => void;
+  onOpenHomePreview?: () => void;
 }
 
 export function LayaSimulationConsole({
@@ -42,16 +44,24 @@ export function LayaSimulationConsole({
   onOpenRadioAdmin,
   onOpenHeroStageAdmin,
   onOpenDuelAdmin,
+  onOpenHomePreview,
 }: LayaSimulationConsoleProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isScrolling, setIsScrolling] = useState(false);
+  const [videoSnap, setVideoSnap] = useState<HeroVideoSnapshot>(() =>
+    heroVideoStore.getSnapshot()
+  );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
   const duelPairInputRef = useRef<HTMLInputElement | null>(null);
 
   const { decision, activeTraceId, selectSimulationTrace } = useLayaDecision();
   const { snapshot } = useStudioCms();
   const resolvedHero = resolveHeroStagePlayback(snapshot, decision.choice);
 
+  useEffect(() => {
+    return heroVideoStore.subscribe(setVideoSnap);
+  }, []);
 
   useEffect(() => {
     if (mode === 'embedded') return;
@@ -86,7 +96,17 @@ export function LayaSimulationConsole({
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    contrastAudioEngine.loadCustomShowreel(objectUrl, file.name, false);
+    fmTunerAudioEngine.setCustomShowreel(objectUrl, file.name, false);
+    event.target.value = '';
+  };
+
+  const handleVideoFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    heroVideoStore.setCustomVideoFile(file);
+    if (mode === 'floating' && typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
     event.target.value = '';
   };
 
@@ -111,6 +131,15 @@ export function LayaSimulationConsole({
           onChange={handleFileChange}
           aria-label="Выбрать локальный аудиофайл шоурила (.mp3 или .wav)"
           data-testid="laya-custom-audio-input"
+          className="sr-only"
+        />
+        <input
+          ref={videoInputRef}
+          type="file"
+          accept=".mp4,video/mp4,video/webm,video/*"
+          onChange={handleVideoFileChange}
+          aria-label="Выбрать MP4-видео для фона главного экрана"
+          data-testid="laya-hero-video-input"
           className="sr-only"
         />
         <input
@@ -261,6 +290,56 @@ export function LayaSimulationConsole({
               </div>
 
               <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  data-testid="laya-upload-hero-video-btn"
+                  onClick={() => videoInputRef.current?.click()}
+                  className="w-full min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#FF4820] hover:bg-[#E63E19] text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <Film className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span>Загрузить MP4-видео на главный экран</span>
+                </button>
+
+                {videoSnap.videoError && (
+                  <p
+                    role="alert"
+                    data-testid="laya-hero-video-error"
+                    className="px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/25 text-xs text-red-700 dark:text-red-300"
+                  >
+                    {videoSnap.videoError}
+                  </p>
+                )}
+
+                {videoSnap.isCustomUploaded && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 text-xs">
+                      <span className="truncate text-[#111111]/78 dark:text-[#F4F3EF]/78">
+                        Активно: {videoSnap.fileName}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => heroVideoStore.resetDefaultVideo()}
+                        className="inline-flex items-center gap-1 font-semibold text-[#FF4820] hover:underline shrink-0 cursor-pointer"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+                        <span>Сбросить</span>
+                      </button>
+                    </div>
+
+                    {onOpenHomePreview && (
+                      <button
+                        type="button"
+                        data-testid="laya-preview-hero-home-btn"
+                        onClick={onOpenHomePreview}
+                        className="w-full min-h-[40px] inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-[#FF4820]/12 hover:bg-[#FF4820]/20 border border-[#FF4820]/35 text-[#FF4820] text-xs font-semibold transition-colors cursor-pointer"
+                      >
+                        <span>Посмотреть на главном экране</span>
+                        <ArrowUpRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 {onOpenHeroStageAdmin && (
                   <button
                     type="button"
@@ -322,6 +401,15 @@ export function LayaSimulationConsole({
         className="sr-only"
       />
       <input
+        ref={videoInputRef}
+        type="file"
+        accept=".mp4,video/mp4,video/webm,video/*"
+        onChange={handleVideoFileChange}
+        aria-label="Выбрать MP4-видео для фона главного экрана"
+        data-testid="laya-hero-video-input"
+        className="sr-only"
+      />
+      <input
         ref={duelPairInputRef}
         type="file"
         multiple
@@ -368,10 +456,41 @@ export function LayaSimulationConsole({
             <div className="pt-3.5 border-t border-white/10 space-y-2.5">
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
+                data-testid="laya-upload-hero-video-btn"
+                onClick={() => videoInputRef.current?.click()}
                 className="w-full inline-flex items-center justify-center gap-2.5 px-4 py-2.5 rounded-2xl bg-[#FF4820] hover:bg-[#E63E19] active:scale-[0.99] text-white text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap"
               >
-                <Music className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <Film className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span>Загрузить MP4-видео на главный экран</span>
+              </button>
+
+              {videoSnap.videoError && (
+                <p
+                  role="alert"
+                  data-testid="laya-hero-video-error"
+                  className="px-3 py-2 rounded-xl bg-red-500/18 border border-red-400/35 text-xs text-red-200"
+                >
+                  {videoSnap.videoError}
+                </p>
+              )}
+
+              {videoSnap.isCustomUploaded && (
+                <button
+                  type="button"
+                  onClick={() => heroVideoStore.resetDefaultVideo()}
+                  className="w-full inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl bg-white/8 hover:bg-white/14 border border-white/14 text-white/80 text-xs font-medium transition-colors cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-[#FF4820]" aria-hidden="true" />
+                  <span className="truncate">Вернуть видео по умолчанию ({videoSnap.fileName})</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full inline-flex items-center justify-center gap-2.5 px-4 py-2.5 rounded-2xl bg-white/10 hover:bg-white/16 border border-white/14 text-white text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap"
+              >
+                <Music className="w-4 h-4 text-[#FF4820] shrink-0" aria-hidden="true" />
                 <span>Загрузить свой шоурил (.mp3 / .wav)</span>
               </button>
 

@@ -13,7 +13,12 @@ export type StudioTaxRegimeId =
 
 export type StudioVatCalculationMode = 'included' | 'on_top';
 
-export type BrandedDocumentKind = 'kp' | 'contract' | 'invoice' | 'passport';
+export type BrandedDocumentKind =
+  | 'kp'
+  | 'contract'
+  | 'invoice'
+  | 'act'
+  | 'passport';
 
 export type Fz38DisclaimerStatus =
   | 'included_in_spot'
@@ -47,10 +52,37 @@ export interface StudioLegalProfile {
   vatMode: StudioVatCalculationMode;
 }
 
+export type StudioLegalOperatingMode = 'ooo_only' | 'ip_only' | 'both';
+
+export interface StudioPrivacyPolicySettings {
+  privacyEmail: string;
+  rknRegistryNumber: string;
+  policyVersionDate: string;
+  hostingLocationLabel: string;
+  showRequisitesInFooter: boolean;
+  cookieBannerEnabled: boolean;
+}
+
+export interface StudioPublicContactsConfig {
+  phone: string;
+  phoneLabel: string;
+  telegram: string;
+  telegramLabel: string;
+  email: string;
+  workHoursLabel: string;
+  taglineLine1: string;
+  taglineLine2: string;
+  showPhoneInFooter: boolean;
+  showTelegramInFooter: boolean;
+}
+
 export interface StudioLegalProfilesConfig {
   activeEntityKind: StudioEntityKind;
+  legalOperatingMode?: StudioLegalOperatingMode;
   ipProfile: StudioLegalProfile;
   oooProfile: StudioLegalProfile;
+  privacyPolicy?: StudioPrivacyPolicySettings;
+  publicContacts?: StudioPublicContactsConfig;
 }
 
 export interface OrderDocumentMeta {
@@ -143,6 +175,7 @@ export interface AssembledDocumentSuite {
   contractDateRu: string;
   appendixNumber: number;
   invoiceNumber: string;
+  actNumber: string;
   passportNumber: string;
   isNegotiablePendingPrice: boolean;
   effectivePriceRub: number;
@@ -257,9 +290,36 @@ export const BROADCAST_TECH_STANDARD_ROWS: readonly BroadcastTechStandardRow[] =
   },
 ] as const;
 
+export function createDefaultPrivacyPolicySettings(): StudioPrivacyPolicySettings {
+  return {
+    privacyEmail: 'art@artmspektr.ru',
+    rknRegistryNumber: '',
+    policyVersionDate: '16.11.2026',
+    hostingLocationLabel: 'Российская Федерация (серверные мощности и СУБД на территории РФ)',
+    showRequisitesInFooter: true,
+    cookieBannerEnabled: true,
+  };
+}
+
+export function createDefaultPublicContactsConfig(): StudioPublicContactsConfig {
+  return {
+    phone: '+79040000911',
+    phoneLabel: 'Прямая линия продюсера',
+    telegram: '@fmworks',
+    telegramLabel: 'Написать в Telegram',
+    email: 'art@artmspektr.ru',
+    workHoursLabel: 'Пн–Пт 09:00–19:00',
+    taglineLine1: 'Аудиореклама,',
+    taglineLine2: 'которая работает',
+    showPhoneInFooter: true,
+    showTelegramInFooter: true,
+  };
+}
+
 export function createDefaultStudioLegalProfiles(): StudioLegalProfilesConfig {
   return {
-    activeEntityKind: 'ip',
+    activeEntityKind: 'ooo',
+    legalOperatingMode: 'ooo_only',
     ipProfile: {
       entityKind: 'ip',
       legalName: 'Индивидуальный предприниматель Соколов Артём Викторович',
@@ -313,19 +373,102 @@ export function createDefaultStudioLegalProfiles(): StudioLegalProfilesConfig {
       taxRegime: 'osno_vat_20',
       vatMode: 'included',
     },
+    privacyPolicy: createDefaultPrivacyPolicySettings(),
+    publicContacts: createDefaultPublicContactsConfig(),
   };
 }
 
-function cleanText(raw: unknown, fallback: string, maxLen = 240): string {
+function cleanText(
+  raw: unknown,
+  fallback: string,
+  maxLen = 240,
+  allowExplicitEmpty = false
+): string {
   if (typeof raw !== 'string') return fallback;
   const trimmed = raw.trim();
-  return trimmed ? trimmed.slice(0, maxLen) : fallback;
+  if (!trimmed) {
+    return allowExplicitEmpty ? '' : fallback;
+  }
+  return trimmed.slice(0, maxLen);
 }
 
-function cleanDigits(raw: unknown, fallback: string, maxLen: number): string {
+function cleanDigits(
+  raw: unknown,
+  fallback: string,
+  maxLen: number,
+  allowExplicitEmpty = false
+): string {
   if (typeof raw !== 'string') return fallback;
   const digits = raw.replace(/\D/g, '').slice(0, maxLen);
-  return digits || fallback;
+  if (!digits) {
+    return allowExplicitEmpty ? '' : fallback;
+  }
+  return digits;
+}
+
+export function sanitizePrivacyPolicySettings(
+  raw: Partial<StudioPrivacyPolicySettings> | null | undefined,
+  fallbackEmail = 'art@artmspektr.ru'
+): StudioPrivacyPolicySettings {
+  const base = createDefaultPrivacyPolicySettings();
+  if (!raw || typeof raw !== 'object') {
+    return {
+      ...base,
+      privacyEmail: fallbackEmail || base.privacyEmail,
+    };
+  }
+  return {
+    privacyEmail: cleanText(raw.privacyEmail, fallbackEmail || base.privacyEmail, 120, true),
+    rknRegistryNumber: cleanText(raw.rknRegistryNumber, '', 80, true),
+    policyVersionDate: cleanText(raw.policyVersionDate, base.policyVersionDate, 40, false),
+    hostingLocationLabel: cleanText(
+      raw.hostingLocationLabel,
+      base.hostingLocationLabel,
+      200,
+      false
+    ),
+    showRequisitesInFooter:
+      typeof raw.showRequisitesInFooter === 'boolean'
+        ? raw.showRequisitesInFooter
+        : base.showRequisitesInFooter,
+    cookieBannerEnabled:
+      typeof raw.cookieBannerEnabled === 'boolean'
+        ? raw.cookieBannerEnabled
+        : base.cookieBannerEnabled,
+  };
+}
+
+export function sanitizePublicContactsConfig(
+  raw: Partial<StudioPublicContactsConfig> | null | undefined,
+  fallbackPhone = '+79040000911',
+  fallbackEmail = 'art@artmspektr.ru'
+): StudioPublicContactsConfig {
+  const base = createDefaultPublicContactsConfig();
+  if (!raw || typeof raw !== 'object') {
+    return {
+      ...base,
+      phone: fallbackPhone || base.phone,
+      email: fallbackEmail || base.email,
+    };
+  }
+  return {
+    phone: cleanText(raw.phone, fallbackPhone || base.phone, 60, true),
+    phoneLabel: cleanText(raw.phoneLabel, base.phoneLabel, 80, true),
+    telegram: cleanText(raw.telegram, base.telegram, 120, true),
+    telegramLabel: cleanText(raw.telegramLabel, base.telegramLabel, 80, true),
+    email: cleanText(raw.email, fallbackEmail || base.email, 100, false),
+    workHoursLabel: cleanText(raw.workHoursLabel, base.workHoursLabel, 80, true),
+    taglineLine1: cleanText(raw.taglineLine1, base.taglineLine1, 80, false),
+    taglineLine2: cleanText(raw.taglineLine2, base.taglineLine2, 80, false),
+    showPhoneInFooter:
+      typeof raw.showPhoneInFooter === 'boolean'
+        ? raw.showPhoneInFooter
+        : base.showPhoneInFooter,
+    showTelegramInFooter:
+      typeof raw.showTelegramInFooter === 'boolean'
+        ? raw.showTelegramInFooter
+        : base.showTelegramInFooter,
+  };
 }
 
 export function sanitizeStudioLegalProfile(
@@ -346,46 +489,49 @@ export function sanitizeStudioLegalProfile(
 
   return {
     entityKind,
-    legalName: cleanText(raw.legalName, base.legalName, 220),
-    shortBrandTitle: cleanText(raw.shortBrandTitle, base.shortBrandTitle, 160),
-    inn: cleanDigits(raw.inn, base.inn, entityKind === 'ip' ? 12 : 10),
+    legalName: cleanText(raw.legalName, base.legalName, 220, false),
+    shortBrandTitle: cleanText(raw.shortBrandTitle, base.shortBrandTitle, 160, false),
+    inn: cleanDigits(raw.inn, base.inn, entityKind === 'ip' ? 12 : 10, true),
     // У ИП поле КПП юридически отсутствует — жёстко очищаем его
-    kpp: entityKind === 'ip' ? '' : cleanDigits(raw.kpp, base.kpp, 9),
+    kpp: entityKind === 'ip' ? '' : cleanDigits(raw.kpp, base.kpp, 9, true),
     ogrnOrOgrnip: cleanDigits(
       raw.ogrnOrOgrnip,
       base.ogrnOrOgrnip,
-      entityKind === 'ip' ? 15 : 13
+      entityKind === 'ip' ? 15 : 13,
+      true
     ),
-    city: cleanText(raw.city, 'г. Тверь', 80),
-    legalAddress: cleanText(raw.legalAddress, base.legalAddress, 260),
-    bankName: cleanText(raw.bankName, base.bankName, 160),
-    bik: cleanDigits(raw.bik, base.bik, 9),
+    city: cleanText(raw.city, 'г. Тверь', 80, false),
+    legalAddress: cleanText(raw.legalAddress, base.legalAddress, 260, true),
+    bankName: cleanText(raw.bankName, base.bankName, 160, true),
+    bik: cleanDigits(raw.bik, base.bik, 9, true),
     correspondentAccount: cleanDigits(
       raw.correspondentAccount,
       base.correspondentAccount,
-      20
+      20,
+      true
     ),
-    checkingAccount: cleanDigits(raw.checkingAccount, base.checkingAccount, 20),
+    checkingAccount: cleanDigits(raw.checkingAccount, base.checkingAccount, 20, true),
     signatoryRoleTitle: cleanText(
       raw.signatoryRoleTitle,
       base.signatoryRoleTitle,
-      100
+      100,
+      true
     ),
-    signatoryFullName: cleanText(raw.signatoryFullName, base.signatoryFullName, 140),
-    signatoryShortName: cleanText(raw.signatoryShortName, base.signatoryShortName, 80),
+    signatoryFullName: cleanText(raw.signatoryFullName, base.signatoryFullName, 140, true),
+    signatoryShortName: cleanText(raw.signatoryShortName, base.signatoryShortName, 80, true),
     chiefAccountantShortName:
       entityKind === 'ip'
         ? ''
-        : cleanText(raw.chiefAccountantShortName, base.chiefAccountantShortName, 80),
-    authorityBasis: cleanText(raw.authorityBasis, base.authorityBasis, 200),
+        : cleanText(raw.chiefAccountantShortName, base.chiefAccountantShortName, 80, true),
+    authorityBasis: cleanText(raw.authorityBasis, base.authorityBasis, 200, true),
     edoOperatorLabel: (() => {
-      const cleaned = cleanText(raw.edoOperatorLabel, base.edoOperatorLabel, 100);
+      const cleaned = cleanText(raw.edoOperatorLabel, base.edoOperatorLabel, 100, true);
       return cleaned === 'Контур.Диадок / СБИС' ? base.edoOperatorLabel : cleaned;
     })(),
-    edoParticipantId: cleanText(raw.edoParticipantId, base.edoParticipantId, 100),
-    websiteDomain: cleanText(raw.websiteDomain, 'fmworks.ru', 80),
-    email: cleanText(raw.email, 'art@artmspektr.ru', 100),
-    phone: cleanText(raw.phone, base.phone, 60),
+    edoParticipantId: cleanText(raw.edoParticipantId, base.edoParticipantId, 100, true),
+    websiteDomain: cleanText(raw.websiteDomain, 'fmworks.ru', 80, false),
+    email: cleanText(raw.email, 'art@artmspektr.ru', 100, false),
+    phone: cleanText(raw.phone, base.phone, 60, false),
     taxRegime,
     vatMode,
   };
@@ -396,11 +542,70 @@ export function sanitizeStudioLegalProfilesConfig(
 ): StudioLegalProfilesConfig {
   const defaults = createDefaultStudioLegalProfiles();
   if (!raw || typeof raw !== 'object') return defaults;
+
+  const ipProfile = sanitizeStudioLegalProfile(raw.ipProfile, 'ip');
+  const oooProfile = sanitizeStudioLegalProfile(raw.oooProfile, 'ooo');
+
+  let legalOperatingMode: StudioLegalOperatingMode;
+  if (
+    raw.legalOperatingMode === 'ooo_only' ||
+    raw.legalOperatingMode === 'ip_only' ||
+    raw.legalOperatingMode === 'both'
+  ) {
+    legalOperatingMode = raw.legalOperatingMode;
+  } else if (raw.activeEntityKind === 'ip') {
+    legalOperatingMode = 'both';
+  } else {
+    legalOperatingMode = 'ooo_only';
+  }
+
+  const activeEntityKind: StudioEntityKind =
+    legalOperatingMode === 'ooo_only'
+      ? 'ooo'
+      : legalOperatingMode === 'ip_only'
+        ? 'ip'
+        : raw.activeEntityKind === 'ip'
+          ? 'ip'
+          : 'ooo';
+
+  const primaryEmail =
+    activeEntityKind === 'ooo' ? oooProfile.email : ipProfile.email;
+  const primaryPhone =
+    activeEntityKind === 'ooo' ? oooProfile.phone : ipProfile.phone;
+
   return {
-    activeEntityKind: raw.activeEntityKind === 'ooo' ? 'ooo' : 'ip',
-    ipProfile: sanitizeStudioLegalProfile(raw.ipProfile, 'ip'),
-    oooProfile: sanitizeStudioLegalProfile(raw.oooProfile, 'ooo'),
+    activeEntityKind,
+    legalOperatingMode,
+    ipProfile,
+    oooProfile,
+    privacyPolicy: sanitizePrivacyPolicySettings(raw.privacyPolicy, primaryEmail),
+    publicContacts: sanitizePublicContactsConfig(
+      raw.publicContacts,
+      primaryPhone,
+      primaryEmail
+    ),
   };
+}
+
+export function resolveActiveStudioProfile(
+  config?: Partial<StudioLegalProfilesConfig> | null
+): StudioLegalProfile {
+  const sanitized = sanitizeStudioLegalProfilesConfig(config);
+  return sanitized.activeEntityKind === 'ooo'
+    ? sanitized.oooProfile
+    : sanitized.ipProfile;
+}
+
+export function resolveSecondaryStudioProfile(
+  config?: Partial<StudioLegalProfilesConfig> | null
+): StudioLegalProfile | null {
+  const sanitized = sanitizeStudioLegalProfilesConfig(config);
+  if (sanitized.legalOperatingMode !== 'both') {
+    return null;
+  }
+  return sanitized.activeEntityKind === 'ooo'
+    ? sanitized.ipProfile
+    : sanitized.oooProfile;
 }
 
 export function sanitizeOrderDocumentMeta(
@@ -1066,7 +1271,7 @@ function slugifyMasterFileName(title: string, durationSec: number, dealCode: str
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
     .slice(0, 22);
-  const stem = ascii || `FMWorks_Spot_${cleanSuffix}`;
+  const stem = /[a-z]{3,}/.test(ascii) ? ascii : `FMWorks_Spot_${cleanSuffix}`;
   return `${stem}_${durationSec}s.wav`;
 }
 
@@ -1132,6 +1337,7 @@ export function assembleProductionDocumentSuite(
   const contractDateRu = meta.frameworkContractDate || issueDateRu;
   const kpNumber = `КП-${dealCode}`;
   const invoiceNumber = `СЧ-${dealCode}-${appendixNumber}`;
+  const actNumber = `АКТ-${dealCode}-${appendixNumber}`;
   const passportNumber = `ПР-${dealCode}-${appendixNumber}`;
 
   const customer = parseCustomerCounterparty(
@@ -1197,6 +1403,7 @@ export function assembleProductionDocumentSuite(
     contractDateRu,
     appendixNumber,
     invoiceNumber,
+    actNumber,
     passportNumber,
     isNegotiablePendingPrice,
     effectivePriceRub,
@@ -1305,6 +1512,23 @@ export function formatProductionSuitePlainSummary(
           ? 'стоимость определяется после оценки продюсером'
           : `стоимость ${tax.formattedTotalRub} (${tax.taxLegalLabel})`
       }.`,
+    ].join('\n');
+  }
+
+  if (activeDoc === 'act') {
+    return [
+      ...headerLines,
+      `АКТ СДАЧИ-ПРИЁМКИ ОКАЗАННЫХ УСЛУГ № ${suite.actNumber} от ${suite.issueDateRu}`,
+      `Основание: Приложение № ${suite.appendixNumber} к Договору № ${suite.contractNumber} от ${suite.contractDateRu}`,
+      `Исполнитель: ${studio.legalName} (ИНН ${studio.inn}${kppPart}, ${ogrnLabel} ${studio.ogrnOrOgrnip})`,
+      `Заказчик: ${customer.displayName}${customer.inn ? ` (ИНН ${customer.inn}${customer.kpp ? `, КПП ${customer.kpp}` : ''})` : ''}`,
+      ``,
+      `1. Наименование выполненной работы: Производство рекламного аудиоролика «${suite.spotWorkingTitle}» (файл ${suite.spotMasterFileName}, хронометраж ${suite.spotDurationSec} сек, тариф «${scope.tierTitle}») и отчуждение исключительных прав на готовую фонограмму (ст. 1234, 1285 ГК РФ).`,
+      `2. Технический контроль и Паспорт прав: Мастер-файл соответствует Разделу 3 Договора (WAV PCM + MP3 320 kbps, -14…-11 LUFS, пики ≤ -0.5 dBTP). Паспорт рекламного аудиоролика № ${suite.passportNumber} передан Заказчику.`,
+      suite.isNegotiablePendingPrice
+        ? `3. Стоимость работ: Фиксируется по согласованной смете в Приложении № ${suite.appendixNumber}.`
+        : `3. Всего оказано услуг на сумму: ${tax.formattedTotalRub} (${tax.totalInWordsRu}). ${tax.taxLegalLabel}.`,
+      `4. Работы выполнены в полном объёме, в установленный срок и надлежащего качества. Стороны взаимных претензий не имеют.`,
     ].join('\n');
   }
 

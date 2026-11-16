@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { fmTunerAudioEngine } from './audio/fmTunerAudioEngine';
 import {
   type CasePlayerSnapshot,
   lazyBroadcastAircheckEngine as broadcastAircheckEngine,
@@ -11,8 +12,10 @@ import { AppErrorBoundary } from './components/AppErrorBoundary';
 import { CompactHeaderNav } from './components/CompactHeaderNav';
 import { FloatingCasePlayer } from './components/FloatingCasePlayer';
 import { Footer } from './components/Footer';
+import { RfStorageNoticeBanner } from './components/legal/RfStorageNoticeBanner';
 import { PerformanceMonitor } from './components/PerformanceMonitor';
 import { HomePage } from './components/pages/HomePage';
+import { StudioLegalConfigProvider } from './context/StudioLegalConfigContext';
 import { BrandDomainVariant } from './data/brandKitData';
 import {
   OrderDraftSnapshot,
@@ -81,6 +84,11 @@ const OrderPage = lazy(() =>
 const PricingPage = lazy(() =>
   import('./components/pages/PricingPage').then((m) => ({
     default: m.PricingPage,
+  }))
+);
+const PrivacyPolicyPage = lazy(() =>
+  import('./components/pages/PrivacyPolicyPage').then((m) => ({
+    default: m.PrivacyPolicyPage,
   }))
 );
 const SoundEngineerDropPage = lazy(() =>
@@ -197,9 +205,11 @@ function FmworksExperience() {
       );
       if (next.kind === 'admin' || next.kind === 'sound-drop') {
         casePlayerEngine.stop();
+        fmTunerAudioEngine.stopAll();
         contrastAudioEngine.stopAll();
         broadcastAircheckEngine.stop();
       } else if (next.kind !== 'home') {
+        fmTunerAudioEngine.stopAll();
         contrastAudioEngine.stopAll();
         broadcastAircheckEngine.stop();
       }
@@ -264,10 +274,12 @@ function FmworksExperience() {
         effectiveRoute.kind === 'sound-drop'
       ) {
         casePlayerEngine.stop();
+        fmTunerAudioEngine.stopAll();
         contrastAudioEngine.stopAll();
         broadcastAircheckEngine.stop();
       } else if (effectiveRoute.kind !== 'home') {
-        // Останавливаем только локальный краш-тест и эфирный стенд главного экрана, а глобальный плеер кейсов продолжает играть между страницами!
+        // Останавливаем локальное сравнение и эфирный стенд главного экрана, а глобальный плеер кейсов продолжает играть между страницами
+        fmTunerAudioEngine.stopAll();
         contrastAudioEngine.stopAll();
         broadcastAircheckEngine.stop();
       }
@@ -293,7 +305,9 @@ function FmworksExperience() {
       }
     }
     setRoute(effectiveRoute);
-    setNavigationTick((prev) => prev + 1);
+    if (!options?.replace) {
+      setNavigationTick((prev) => prev + 1);
+    }
   };
 
   useLayoutEffect(() => {
@@ -327,6 +341,7 @@ function FmworksExperience() {
             onToggleTheme={() => setIsDark((prev) => !prev)}
           />
         </Suspense>
+        <RfStorageNoticeBanner onNavigate={navigateTo} />
       </>
     );
   }
@@ -340,10 +355,19 @@ function FmworksExperience() {
             brandVariant={brandVariant}
             onSelectBrandVariant={setBrandVariant}
             onOpenBrandKit={() => setIsBrandKitOpen(true)}
+            onOpenRadioAdmin={
+              AIRTIME_SALES_ENABLED ? () => setIsRadioAdminOpen(true) : undefined
+            }
             isDark={isDark}
             onToggleTheme={() => setIsDark((prev) => !prev)}
             onNavigateHome={() => navigateTo({ kind: 'home' })}
           />
+          {AIRTIME_SALES_ENABLED && isRadioAdminOpen && (
+            <RadioInventoryAdmin
+              isOpen={isRadioAdminOpen}
+              onClose={() => setIsRadioAdminOpen(false)}
+            />
+          )}
           {isBrandKitOpen && (
             <BrandKitModal
               isOpen={isBrandKitOpen}
@@ -419,6 +443,7 @@ function FmworksExperience() {
         onNavigate={navigateTo}
         onOpenOrder={handleHeaderOrderClick}
         brandVariant={brandVariant}
+        onOpenBrandKit={() => setIsBrandKitOpen(true)}
         {...(AIRTIME_SALES_ENABLED
           ? {
               hasActiveHold: orderDraft.mediaReservation !== null,
@@ -437,12 +462,10 @@ function FmworksExperience() {
             <HomePage
               scrollAnchor={route.scrollAnchor}
               navigationTick={navigationTick}
-              brandVariant={brandVariant}
               playerSnap={caseSnap}
               onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
               onSeekCase={(item, ratio) => casePlayerEngine.seekToRatio(ratio, item)}
               onWarmCasePlayer={() => void casePlayerEngine.preload()}
-              onStartPreview={() => {}}
               onStopPreview={(caseId) => casePlayerEngine.stopPreview(caseId)}
               onNavigate={navigateTo}
               onStartStudioOrder={handleOpenStudioOrder}
@@ -475,7 +498,6 @@ function FmworksExperience() {
               onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
               onSeekCase={(item, ratio) => casePlayerEngine.seekToRatio(ratio, item)}
               onWarmCasePlayer={() => void casePlayerEngine.preload()}
-              onStartPreview={() => {}}
               onStopPreview={(caseId) => casePlayerEngine.stopPreview(caseId)}
               onNavigate={navigateTo}
             />
@@ -511,6 +533,13 @@ function FmworksExperience() {
             />
           )}
 
+          {route.kind === 'privacy' && (
+            <PrivacyPolicyPage
+              initialTab={route.tab}
+              onNavigate={navigateTo}
+            />
+          )}
+
           {route.kind === 'order' && (
             <OrderPage draft={orderDraft} onNavigate={navigateTo} />
           )}
@@ -543,6 +572,11 @@ function FmworksExperience() {
         onSeek={(ratio) => casePlayerEngine.seekToRatio(ratio)}
         onWarmCasePlayer={() => void casePlayerEngine.preload()}
       />
+
+      <RfStorageNoticeBanner
+        liftForFloatingPlayer={Boolean(caseSnap.activeCase)}
+        onNavigate={navigateTo}
+      />
     
 
       {AIRTIME_SALES_ENABLED && isRadioAdminOpen && (
@@ -550,6 +584,17 @@ function FmworksExperience() {
           <RadioInventoryAdmin
             isOpen={isRadioAdminOpen}
             onClose={() => setIsRadioAdminOpen(false)}
+          />
+        </Suspense>
+      )}
+
+      {isBrandKitOpen && (
+        <Suspense fallback={null}>
+          <BrandKitModal
+            isOpen={isBrandKitOpen}
+            onClose={() => setIsBrandKitOpen(false)}
+            activeSiteVariant={brandVariant}
+            onSelectSiteVariant={setBrandVariant}
           />
         </Suspense>
       )}
@@ -573,13 +618,15 @@ function FmworksExperience() {
 export default function App() {
   return (
     <AppErrorBoundary>
-      <LayaDecisionProvider>
-        <StudioCmsProvider>
-          <SiteTextBlocksProvider>
-            <FmworksExperience />
-          </SiteTextBlocksProvider>
-        </StudioCmsProvider>
-      </LayaDecisionProvider>
+      <StudioLegalConfigProvider>
+        <LayaDecisionProvider>
+          <StudioCmsProvider>
+            <SiteTextBlocksProvider>
+              <FmworksExperience />
+            </SiteTextBlocksProvider>
+          </StudioCmsProvider>
+        </LayaDecisionProvider>
+      </StudioLegalConfigProvider>
     </AppErrorBoundary>
   );
 }

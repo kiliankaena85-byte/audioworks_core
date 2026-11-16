@@ -255,6 +255,8 @@ class LazyContrastAudioEngine {
       isMuted: readInitialHeroMuted(),
       hasCompletedCrashTest: false,
       isPausedMidSession: false,
+      pausedInClutter: false,
+      audioError: null,
     };
   }
 

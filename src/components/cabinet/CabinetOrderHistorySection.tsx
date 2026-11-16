@@ -7,6 +7,7 @@ import {
   Clock,
   Download,
   ExternalLink,
+  FileCheck2,
   FileSpreadsheet,
   FileText,
   FolderOpen,
@@ -25,13 +26,14 @@ import {
   isOrderCompletedAndPaid,
   resolveCabinetOrderVisualStatus,
 } from '../../data/clientCabinetArchitecture';
-import { CabinetAudioVersionHistory } from './CabinetAudioVersionHistory';
 import {
   type ClientCabinetOrderSummary,
   formatFileSizeReadable,
   type OrderDeliverableFile,
 } from '../../data/clientCabinetHelpers';
 import { formatRubCompact } from '../../data/radioInventory';
+import type { BrandedDocumentKind } from '../../data/studioDocumentsCore';
+import { CabinetAudioVersionHistory } from './CabinetAudioVersionHistory';
 
 const SUPPLEMENTARY_KIND_LABELS: Record<OrderDeliverableFile['kind'], string> = {
   audio_master: 'Мастер WAV',
@@ -55,10 +57,13 @@ function formatHistoryDate(iso: string): string {
   }
 }
 
-function renderVisualStatusInline(statusId: CabinetHistoryVisualStatusId, label: string) {
+function renderVisualStatusInline(
+  statusId: CabinetHistoryVisualStatusId,
+  label: string
+) {
   if (statusId === 'ready') {
     return (
-      <span className="inline-flex items-center gap-1 font-semibold text-[#16A34A] dark:text-[#4ADE80]">
+      <span className="inline-flex items-center gap-1 font-semibold text-[#166534] dark:text-[#4ADE80]">
         <CheckCircle2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
         <span>{label}</span>
       </span>
@@ -66,14 +71,14 @@ function renderVisualStatusInline(statusId: CabinetHistoryVisualStatusId, label:
   }
   if (statusId === 'in_review') {
     return (
-      <span className="inline-flex items-center gap-1 font-semibold text-[#D97706] dark:text-[#FBBF24]">
+      <span className="inline-flex items-center gap-1 font-semibold text-[#B45309] dark:text-[#FBBF24]">
         <ClipboardCheck className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
         <span>{label}</span>
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 font-semibold text-[#FF4820]">
+    <span className="inline-flex items-center gap-1 font-semibold text-[#C83210] dark:text-[#FF6B47]">
       <Clock className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
       <span>{label}</span>
     </span>
@@ -95,12 +100,18 @@ export interface CabinetOrderHistorySectionProps {
   onToggleOnlyWithMasters: () => void;
   hideOlderThanSixMonths?: boolean;
   onToggleHideOlderThanSixMonths?: () => void;
+  showArchivedOnly?: boolean;
+  onToggleShowArchivedOnly?: () => void;
   completedOlderThanSixMonthsCount?: number;
+  manuallyArchivedCount?: number;
   hiddenByArchiveCount?: number;
   manuallyArchivedOrderNumbers?: readonly string[];
   onToggleManualArchiveOrder?: (orderNumber: string) => void;
   onResetFilters: () => void;
-  onOpenInvoiceModal: (order: ClientCabinetOrderSummary) => void;
+  onOpenDocumentModal: (
+    order: ClientCabinetOrderSummary,
+    initialDoc?: BrandedDocumentKind
+  ) => void;
   onRepeatOrder: (order: ClientCabinetOrderSummary) => void;
   onManageActiveOrder?: (orderNumber: string) => void;
 }
@@ -120,23 +131,30 @@ export function CabinetOrderHistorySection({
   onToggleOnlyWithMasters,
   hideOlderThanSixMonths = false,
   onToggleHideOlderThanSixMonths,
+  showArchivedOnly = false,
+  onToggleShowArchivedOnly,
   completedOlderThanSixMonthsCount = 0,
+  manuallyArchivedCount = 0,
   hiddenByArchiveCount = 0,
   manuallyArchivedOrderNumbers = [],
   onToggleManualArchiveOrder,
   onResetFilters,
-  onOpenInvoiceModal,
+  onOpenDocumentModal,
   onRepeatOrder,
   onManageActiveOrder,
 }: CabinetOrderHistorySectionProps) {
   const manualArchiveSet = new Set(manuallyArchivedOrderNumbers);
+  const totalArchivableItems =
+    completedOlderThanSixMonthsCount + manuallyArchivedCount;
   const hasActiveFilter =
     Boolean(searchQuery.trim()) ||
     onlyWithMasters ||
     statusFilter !== 'all' ||
+    showArchivedOnly ||
     hideOlderThanSixMonths ||
     manualArchiveSet.size > 0;
 
+  const showSubStatusTabs = inWorkCount > 0 || inReviewCount > 0;
   const statusFilterItems: readonly {
     id: CabinetHistoryStatusFilter;
     label: string;
@@ -154,17 +172,11 @@ export function CabinetOrderHistorySection({
       aria-labelledby="cabinet-history-heading"
       className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 divide-y divide-[#111111]/10 dark:divide-white/10"
     >
-      {/* Шапка раздела «История заказов» со сводкой статусов, фильтрами и поиском */}
+      {/* Шапка раздела «История завершённых заказов» */}
       <div className="p-5 sm:p-7 space-y-5">
         <div className="space-y-1.5">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium text-[#111111]/60 dark:text-[#F4F3EF]/60 tabular-nums">
-            <span>Проектов: {totalHistoryOrdersCount}</span>
-            <span aria-hidden="true">·</span>
-            <span>В работе: {inWorkCount}</span>
-            <span aria-hidden="true">·</span>
-            <span>На согласовании: {inReviewCount}</span>
-            <span aria-hidden="true">·</span>
-            <span>Готово: {readyCount}</span>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 tabular-nums">
+            <span>Завершено проектов: {totalHistoryOrdersCount}</span>
             <span aria-hidden="true">·</span>
             <span>Мастер-файлов WAV: {totalHistoryMastersCount}</span>
             {completedOlderThanSixMonthsCount > 0 && (
@@ -173,56 +185,63 @@ export function CabinetOrderHistorySection({
                 <span>Старше 6 мес.: {completedOlderThanSixMonthsCount}</span>
               </>
             )}
+            {manuallyArchivedCount > 0 && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>В ручном архиве: {manuallyArchivedCount}</span>
+              </>
+            )}
           </div>
 
           <h2
             id="cabinet-history-heading"
             className="text-xl sm:text-2xl font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF]"
           >
-            История заказов
+            История завершённых заказов и мастер-файлы
           </h2>
-          <p className="text-xs sm:text-sm text-[#111111]/66 dark:text-[#F4F3EF]/66 max-w-2xl leading-relaxed">
-            Единый реестр ваших проектов с наглядным прогрессом по этапам, историей всех версий аудиоролика (v1, v2, master), прямым скачиванием WAV и доступом к документам.
+          <p className="text-xs sm:text-sm text-[#111111]/74 dark:text-[#F4F3EF]/74 max-w-2xl leading-relaxed">
+            Архив сданных проектов с доступом ко всем итерациям аудиоролика (v1, v2, master WAV −14 LUFS), закрывающим актам сдачи-приёмки, паспортам прав РАО/ВОИС и повтором заказа в 1 клик.
           </p>
         </div>
 
         {totalHistoryOrdersCount > 0 && (
           <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 pt-1">
-            {/* Сегментированный фильтр по визуальному статусу */}
-            <div
-              role="group"
-              aria-label="Фильтр по статусу проектов"
-              className="inline-flex flex-wrap items-center gap-1 p-1 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 self-start"
-            >
-              {statusFilterItems.map((item) => {
-                const active = statusFilter === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    aria-pressed={active}
-                    data-testid={`cabinet-history-status-filter-${item.id}`}
-                    onClick={() => onChangeStatusFilter(item.id)}
-                    className={`min-h-[34px] px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 tabular-nums ${
-                      active
-                        ? 'bg-white dark:bg-[#141418] text-[#111111] dark:text-[#F4F3EF] border border-[#111111]/12 dark:border-white/14'
-                        : 'text-[#111111]/66 dark:text-[#F4F3EF]/66 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                );
-              })}
-            </div>
+            {showSubStatusTabs ? (
+              <div
+                role="group"
+                aria-label="Фильтр по статусу проектов"
+                className="inline-flex flex-wrap items-center gap-1 p-1 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 self-start"
+              >
+                {statusFilterItems.map((item) => {
+                  const active = statusFilter === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      aria-pressed={active}
+                      data-testid={`cabinet-history-status-filter-${item.id}`}
+                      onClick={() => onChangeStatusFilter(item.id)}
+                      className={`min-h-[44px] sm:min-h-[34px] px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
+                        active
+                          ? 'bg-white dark:bg-[#141418] text-[#111111] dark:text-[#F4F3EF] border border-[#111111]/12 dark:border-white/14'
+                          : 'text-[#111111]/74 dark:text-[#F4F3EF]/74 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
 
-            {/* Поиск, фильтр мастер-файлов и архивация проектов старше 6 месяцев */}
+            {/* Поиск, фильтр мастер-файлов и управление архивом */}
             <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2.5 w-full xl:w-auto">
               <div className="relative flex-1 sm:w-72">
                 <label htmlFor="cabinet-history-search" className="sr-only">
-                  Поиск по проектам и мастер-файлам
+                  Поиск по завершённым проектам и мастер-файлам
                 </label>
                 <Search
-                  className="w-4 h-4 text-[#111111]/45 dark:text-[#F4F3EF]/45 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                  className="w-4 h-4 text-[#111111]/60 dark:text-[#F4F3EF]/60 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
                   aria-hidden="true"
                 />
                 <input
@@ -231,15 +250,15 @@ export function CabinetOrderHistorySection({
                   data-testid="cabinet-history-search-input"
                   value={searchQuery}
                   onChange={(e) => onChangeSearchQuery(e.target.value)}
-                  placeholder="Номер, ИНН, версия (v1, v2, master) или файл…"
-                  className="w-full min-h-[40px] pl-9 pr-8 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 focus:border-[#FF4820] focus:outline-none text-xs sm:text-sm text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/45 dark:placeholder:text-[#F4F3EF]/45 transition-colors"
+                  placeholder="Номер, ИНН, версия (v1, master) или файл…"
+                  className="w-full min-h-[44px] sm:min-h-[40px] pl-9 pr-10 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 focus:border-[#FF4820] focus:outline-none text-xs sm:text-sm text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/60 dark:placeholder:text-[#F4F3EF]/60 transition-colors"
                 />
                 {searchQuery && (
                   <button
                     type="button"
                     aria-label="Очистить поисковый запрос"
                     onClick={() => onChangeSearchQuery('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-[#111111]/50 dark:text-[#F4F3EF]/50 hover:text-[#111111] dark:hover:text-[#F4F3EF] cursor-pointer"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 min-w-[40px] min-h-[40px] inline-flex items-center justify-center text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:text-[#111111] dark:hover:text-[#F4F3EF] cursor-pointer rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                   >
                     <X className="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
@@ -251,33 +270,53 @@ export function CabinetOrderHistorySection({
                 aria-pressed={onlyWithMasters}
                 data-testid="cabinet-history-masters-only-btn"
                 onClick={onToggleOnlyWithMasters}
-                className={`min-h-[40px] px-3.5 py-2 rounded-xl border text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                className={`min-h-[44px] sm:min-h-[40px] px-3.5 py-2 rounded-xl border text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
                   onlyWithMasters
                     ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:border-[#F4F3EF]'
-                    : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/78 dark:text-[#F4F3EF]/78 border-[#111111]/12 dark:border-white/12 hover:border-[#FF4820]'
+                    : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/82 dark:text-[#F4F3EF]/82 border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820]'
                 }`}
               >
                 Только с мастер-файлами
               </button>
 
-              {onToggleHideOlderThanSixMonths && (
+              {onToggleHideOlderThanSixMonths && completedOlderThanSixMonthsCount > 0 && !showArchivedOnly && (
                 <button
                   type="button"
                   aria-pressed={hideOlderThanSixMonths}
                   data-testid="cabinet-history-hide-older-6m-btn"
                   onClick={onToggleHideOlderThanSixMonths}
-                  title="Скрывать завершённые и оплаченные проекты старше 6 месяцев для минималистичного списка"
-                  className={`min-h-[40px] px-3.5 py-2 rounded-xl border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 tabular-nums ${
+                  className={`min-h-[44px] sm:min-h-[40px] px-3.5 py-2 rounded-xl border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
                     hideOlderThanSixMonths
                       ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:border-[#F4F3EF]'
-                      : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/78 dark:text-[#F4F3EF]/78 border-[#111111]/12 dark:border-white/12 hover:border-[#FF4820]'
+                      : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/82 dark:text-[#F4F3EF]/82 border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820]'
                   }`}
                 >
                   <Archive className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                   <span>
                     {hideOlderThanSixMonths
-                      ? `Скрыты > 6 мес.${completedOlderThanSixMonthsCount > 0 ? ` (${completedOlderThanSixMonthsCount})` : ''}`
-                      : `Скрыть > 6 мес.${completedOlderThanSixMonthsCount > 0 ? ` (${completedOlderThanSixMonthsCount})` : ''}`}
+                      ? `Скрыты > 6 мес. (${completedOlderThanSixMonthsCount})`
+                      : `Скрыть > 6 мес. (${completedOlderThanSixMonthsCount})`}
+                  </span>
+                </button>
+              )}
+
+              {onToggleShowArchivedOnly && (totalArchivableItems > 0 || showArchivedOnly) && (
+                <button
+                  type="button"
+                  aria-pressed={showArchivedOnly}
+                  data-testid="cabinet-history-archive-view-btn"
+                  onClick={onToggleShowArchivedOnly}
+                  className={`min-h-[44px] sm:min-h-[40px] px-3.5 py-2 rounded-xl border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
+                    showArchivedOnly
+                      ? 'bg-[#C83210] text-white border-[#C83210]'
+                      : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/82 dark:text-[#F4F3EF]/82 border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820]'
+                  }`}
+                >
+                  <ArchiveRestore className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  <span>
+                    {showArchivedOnly
+                      ? 'Выйти из архива'
+                      : `Архив (${hiddenByArchiveCount > 0 ? hiddenByArchiveCount : totalArchivableItems})`}
                   </span>
                 </button>
               )}
@@ -285,50 +324,53 @@ export function CabinetOrderHistorySection({
           </div>
         )}
 
-        {/* Минималистичная строка уведомления о скрытых архивных проектах (> 6 месяцев или скрытых вручную) */}
-        {hiddenByArchiveCount > 0 && (
+        {/* Уведомление о скрытых архивных проектах (> 6 мес. или скрытых вручную) */}
+        {!showArchivedOnly && hiddenByArchiveCount > 0 && (
           <div
             data-testid="cabinet-history-archive-banner"
-            className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 px-4 py-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 text-xs"
+            className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 px-4 py-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 text-xs"
           >
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[#111111]/72 dark:text-[#F4F3EF]/72 tabular-nums">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[#111111]/78 dark:text-[#F4F3EF]/78 tabular-nums">
               <Archive
-                className="w-3.5 h-3.5 text-[#111111]/55 dark:text-[#F4F3EF]/55 shrink-0"
+                className="w-3.5 h-3.5 text-[#111111]/68 dark:text-[#F4F3EF]/68 shrink-0"
                 aria-hidden="true"
               />
               <span>
-                Для минималистичного списка скрыто завершённых и оплаченных проектов старше 6 мес.:{' '}
+                В архиве скрыто завершённых проектов:{' '}
                 <strong className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
                   {hiddenByArchiveCount}
                 </strong>
               </span>
             </div>
-            {onToggleHideOlderThanSixMonths && hideOlderThanSixMonths && (
-              <button
-                type="button"
-                data-testid="cabinet-history-show-archived-btn"
-                onClick={onToggleHideOlderThanSixMonths}
-                className="text-xs font-semibold text-[#FF4820] hover:underline inline-flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0 self-start sm:self-auto"
-              >
-                <ArchiveRestore className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                <span>Показать все (включая старше 6 мес.)</span>
-              </button>
-            )}
+
+            <div className="flex flex-wrap items-center gap-3">
+              {onToggleShowArchivedOnly && (
+                <button
+                  type="button"
+                  data-testid="cabinet-history-show-archived-btn"
+                  onClick={onToggleShowArchivedOnly}
+                  className="min-h-[36px] text-xs font-semibold text-[#C83210] dark:text-[#FF6B47] hover:underline inline-flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+                >
+                  <ArchiveRestore className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  <span>Открыть скрытые в архиве ({hiddenByArchiveCount})</span>
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
 
-      {/* Список проектов клиента с визуальными статусами и шкалой прогресса */}
+      {/* Список завершённых проектов клиента */}
       {totalHistoryOrdersCount === 0 ? (
         <div
           data-testid="cabinet-history-empty"
           className="p-6 sm:p-8 text-center space-y-2"
         >
           <p className="text-sm font-semibold text-[#111111] dark:text-[#F4F3EF]">
-            В истории пока нет проектов
+            В истории пока нет завершённых проектов
           </p>
-          <p className="text-xs sm:text-sm text-[#111111]/62 dark:text-[#F4F3EF]/62 max-w-lg mx-auto leading-relaxed">
-            Оформленные заказы сразу появятся здесь со статусом «В работе», «На согласовании» или «Готово» и доступом к мастер-файлам WAV.
+          <p className="text-xs sm:text-sm text-[#111111]/72 dark:text-[#F4F3EF]/72 max-w-lg mx-auto leading-relaxed">
+            После приёмки ролика заказ автоматически перейдёт сюда с полным архивом мастер-файлов WAV, паспортом прав РАО/ВОИС и закрывающим актом A4.
           </p>
         </div>
       ) : filteredHistoryOrders.length === 0 ? (
@@ -339,23 +381,32 @@ export function CabinetOrderHistorySection({
           <p className="text-sm font-semibold text-[#111111] dark:text-[#F4F3EF]">
             По выбранным фильтрам проекты не найдены
           </p>
-          <p className="text-xs text-[#111111]/60 dark:text-[#F4F3EF]/60">
-            {hiddenByArchiveCount > 0
-              ? `В архиве скрыто завершённых и оплаченных проектов старше 6 мес.: ${hiddenByArchiveCount}. Отключите фильтр архива или сбросьте параметры поиска.`
-              : 'Проверьте поисковый запрос или переключите фильтр статуса проекта.'}
+          <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
+            {hiddenByArchiveCount > 0 && !showArchivedOnly
+              ? `В архиве скрыто завершённых проектов: ${hiddenByArchiveCount}. Откройте архив или сбросьте фильтры.`
+              : 'Проверьте поисковый запрос или сбросьте фильтры истории.'}
           </p>
-          {hasActiveFilter && (
-            <div className="pt-1">
+          <div className="pt-1 flex flex-wrap items-center justify-center gap-2.5">
+            {hiddenByArchiveCount > 0 && !showArchivedOnly && onToggleShowArchivedOnly && (
+              <button
+                type="button"
+                onClick={onToggleShowArchivedOnly}
+                className="min-h-[44px] sm:min-h-[38px] px-4 py-2 rounded-xl bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+              >
+                Открыть архив ({hiddenByArchiveCount})
+              </button>
+            )}
+            {hasActiveFilter && (
               <button
                 type="button"
                 data-testid="cabinet-history-reset-filters-btn"
                 onClick={onResetFilters}
-                className="min-h-[38px] px-4 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                className="min-h-[44px] sm:min-h-[38px] px-4 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
               >
                 Сбросить фильтры
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       ) : (
         <div className="divide-y divide-[#111111]/10 dark:divide-white/10">
@@ -376,10 +427,10 @@ export function CabinetOrderHistorySection({
                 data-older-than-6m={isOlderThan6m ? 'true' : 'false'}
                 className="p-5 sm:p-7 space-y-5 hover:bg-[#111111]/[0.012] dark:hover:bg-white/[0.015] transition-colors"
               >
-                {/* Верхняя строка проекта: номер, визуальный статус, дата, реквизиты, бюджет и действия */}
+                {/* Верхняя строка проекта */}
                 <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
                   <div className="space-y-1.5 min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium text-[#111111]/62 dark:text-[#F4F3EF]/62 tabular-nums">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 tabular-nums">
                       <span className="font-bold text-[#111111] dark:text-[#F4F3EF]">
                         #{order.orderNumber}
                       </span>
@@ -400,9 +451,17 @@ export function CabinetOrderHistorySection({
                           <span aria-hidden="true">·</span>
                           <span
                             data-testid={`cabinet-history-older-6m-tag-${order.orderNumber}`}
-                            className="text-[#111111]/72 dark:text-[#F4F3EF]/72"
+                            className="text-[#111111]/78 dark:text-[#F4F3EF]/78"
                           >
                             Архив &gt; 6 мес. (оплачен)
+                          </span>
+                        </>
+                      )}
+                      {isManuallyArchived && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span className="font-semibold text-[#C83210] dark:text-[#FF6B47]">
+                            Скрыт в архив
                           </span>
                         </>
                       )}
@@ -421,7 +480,7 @@ export function CabinetOrderHistorySection({
                     </h3>
 
                     {order.briefText && (
-                      <p className="text-xs sm:text-sm text-[#111111]/70 dark:text-[#F4F3EF]/70 leading-relaxed max-w-3xl">
+                      <p className="text-xs sm:text-sm text-[#111111]/76 dark:text-[#F4F3EF]/76 leading-relaxed max-w-3xl">
                         {order.briefText}
                       </p>
                     )}
@@ -438,11 +497,21 @@ export function CabinetOrderHistorySection({
                       <button
                         type="button"
                         data-testid={`cabinet-history-invoice-${order.orderNumber}`}
-                        onClick={() => onOpenInvoiceModal(order)}
-                        className="min-h-[36px] px-3 py-1.5 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                        onClick={() => onOpenDocumentModal(order, 'invoice')}
+                        className="min-h-[44px] sm:min-h-[36px] px-3 py-1.5 rounded-lg border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                       >
                         <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                        <span>Счёт и акт (A4)</span>
+                        <span>Счёт и договор (A4)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        data-testid={`cabinet-history-act-${order.orderNumber}`}
+                        onClick={() => onOpenDocumentModal(order, 'act')}
+                        className="min-h-[44px] sm:min-h-[36px] px-3 py-1.5 rounded-lg border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+                      >
+                        <FileCheck2 className="w-3.5 h-3.5 text-[#166534] dark:text-[#4ADE80] shrink-0" aria-hidden="true" />
+                        <span>Акт сдачи (A4)</span>
                       </button>
 
                       {order.cloudDiskUrl && (
@@ -451,9 +520,9 @@ export function CabinetOrderHistorySection({
                           target="_blank"
                           rel="noopener noreferrer"
                           data-testid={`cabinet-history-cloud-${order.orderNumber}`}
-                          className="min-h-[36px] px-3 py-1.5 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                          className="min-h-[44px] sm:min-h-[36px] px-3 py-1.5 rounded-lg border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                         >
-                          <FolderOpen className="w-3.5 h-3.5 shrink-0 text-[#FF4820]" aria-hidden="true" />
+                          <FolderOpen className="w-3.5 h-3.5 shrink-0 text-[#C83210] dark:text-[#FF6B47]" aria-hidden="true" />
                           <span>Папка на диске</span>
                           <ExternalLink className="w-3 h-3 shrink-0" aria-hidden="true" />
                         </a>
@@ -464,11 +533,16 @@ export function CabinetOrderHistorySection({
                           type="button"
                           data-testid={`cabinet-history-manual-archive-${order.orderNumber}`}
                           onClick={() => onToggleManualArchiveOrder(order.orderNumber)}
-                          title="Скрыть завершённый проект в архив, чтобы оставить в списке только актуальные заказы"
-                          className="min-h-[36px] px-3 py-1.5 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-xs font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78 inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                          className="min-h-[44px] sm:min-h-[36px] px-3 py-1.5 rounded-lg border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111]/82 dark:text-[#F4F3EF]/82 inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                         >
-                          <Archive className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                          <span>{isManuallyArchived ? 'Вернуть из архива' : 'Скрыть в архив'}</span>
+                          {isManuallyArchived ? (
+                            <ArchiveRestore className="w-3.5 h-3.5 shrink-0 text-[#C83210] dark:text-[#FF6B47]" aria-hidden="true" />
+                          ) : (
+                            <Archive className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                          )}
+                          <span>
+                            {isManuallyArchived ? 'Вернуть из архива' : 'Скрыть в архив'}
+                          </span>
                         </button>
                       )}
 
@@ -476,7 +550,7 @@ export function CabinetOrderHistorySection({
                         type="button"
                         data-testid={`cabinet-history-repeat-${order.orderNumber}`}
                         onClick={() => onRepeatOrder(order)}
-                        className="min-h-[36px] px-3 py-1.5 rounded-lg bg-[#FF4820]/10 hover:bg-[#FF4820]/18 text-xs font-semibold text-[#FF4820] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                        className="min-h-[44px] sm:min-h-[36px] px-3 py-1.5 rounded-lg border border-[#C83210]/30 bg-[#C83210]/8 hover:bg-[#C83210]/14 text-xs font-semibold text-[#C83210] dark:text-[#FF6B47] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                       >
                         <Repeat className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                         <span>Повторить проект</span>
@@ -485,66 +559,8 @@ export function CabinetOrderHistorySection({
                   </div>
                 </div>
 
-                {/* Наглядная 3-этапная шкала прогресса проекта («В работе» → «На согласовании» → «Готово») */}
-                <div
-                  role="progressbar"
-                  aria-valuenow={visualStatus.progressPercent}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-label={`Прогресс проекта ${order.orderNumber}: ${visualStatus.label} (${visualStatus.progressPercent}%)`}
-                  data-testid={`cabinet-history-progress-${order.orderNumber}`}
-                  className="pt-3 border-t border-[#111111]/8 dark:border-white/8 space-y-2"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <span className="text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                      {visualStatus.stageSummary}
-                    </span>
-                    <span className="font-semibold text-[#111111]/62 dark:text-[#F4F3EF]/62 tabular-nums shrink-0">
-                      Этап {visualStatus.currentStepNumber} из {visualStatus.totalSteps} ·{' '}
-                      {visualStatus.progressPercent}%
-                    </span>
-                  </div>
-
-                  <ol className="grid grid-cols-3 gap-2 sm:gap-3">
-                    {visualStatus.steps.map((step) => {
-                      const barClass =
-                        step.state === 'done'
-                          ? 'bg-[#16A34A] dark:bg-[#4ADE80]'
-                          : step.state === 'current'
-                            ? step.id === 'in_review'
-                              ? 'bg-[#D97706] dark:bg-[#FBBF24]'
-                              : 'bg-[#FF4820]'
-                            : 'bg-[#111111]/10 dark:bg-white/12';
-
-                      const labelClass =
-                        step.state === 'done'
-                          ? 'text-[#15803D] dark:text-[#4ADE80] font-medium'
-                          : step.state === 'current'
-                            ? 'text-[#111111] dark:text-[#F4F3EF] font-semibold'
-                            : 'text-[#111111]/45 dark:text-[#F4F3EF]/45';
-
-                      return (
-                        <li key={step.id} className="space-y-1.5 min-w-0">
-                          <div className="h-1.5 w-full rounded-full bg-[#111111]/8 dark:bg-white/10 overflow-hidden">
-                            <div
-                              className={`h-full rounded-full transition-opacity ${barClass} ${
-                                step.state === 'upcoming' ? 'w-0' : 'w-full'
-                              }`}
-                            />
-                          </div>
-                          <p
-                            className={`text-[11px] sm:text-xs truncate tabular-nums ${labelClass}`}
-                          >
-                            {step.stepNumber}. {step.label}
-                          </p>
-                        </li>
-                      );
-                    })}
-                  </ol>
-                </div>
-
-                {/* История версий аудиоролика (v1, v2, master) или контекстный статус активного этапа */}
-                <div className="pt-3 border-t border-[#111111]/8 dark:border-white/8 space-y-2.5">
+                {/* История версий аудиоролика (v1, v2, master) */}
+                <div className="pt-3 border-t border-[#111111]/10 dark:border-white/10 space-y-2.5">
                   {audioHistory.hasAudioVersions ? (
                     <CabinetAudioVersionHistory
                       orderNumber={order.orderNumber}
@@ -554,20 +570,16 @@ export function CabinetOrderHistorySection({
                       variant="history_row"
                     />
                   ) : (
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-[#111111]/62 dark:text-[#F4F3EF]/62">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
                       <span>
-                        {visualStatus.statusId === 'in_review'
-                          ? 'Ожидается согласование концепции — первая аудиоверсия (v1) появится здесь сразу после записи дубля.'
-                          : visualStatus.statusId === 'in_work'
-                            ? 'Проект в производстве — все итерации аудиоролика (v1, v2 и финальный master WAV) будут появляться здесь по мере готовности.'
-                            : 'Мастер-файлы по этому проекту были переданы по выбранному внешнему каналу.'}
+                        Мастер-файлы по этому проекту были переданы по выбранному внешнему каналу.
                       </span>
                       {!isArchived && onManageActiveOrder && (
                         <button
                           type="button"
                           data-testid={`cabinet-history-manage-${order.orderNumber}`}
                           onClick={() => onManageActiveOrder(order.orderNumber)}
-                          className="text-xs font-semibold text-[#FF4820] hover:underline inline-flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0 self-start sm:self-auto"
+                          className="min-h-[44px] sm:min-h-[34px] text-xs font-semibold text-[#C83210] dark:text-[#FF6B47] hover:underline inline-flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0 self-start sm:self-auto"
                         >
                           <span>Управление и файлы ТЗ</span>
                           <ArrowDownRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
@@ -587,15 +599,15 @@ export function CabinetOrderHistorySection({
                         return (
                           <li
                             key={file.id}
-                            className="flex flex-wrap items-center justify-between gap-2 py-1 text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72"
+                            className="flex flex-wrap items-center justify-between gap-2 py-1 text-xs text-[#111111]/78 dark:text-[#F4F3EF]/78"
                           >
                             <span className="inline-flex items-center gap-2 min-w-0">
                               <FileText
-                                className="w-3.5 h-3.5 shrink-0 text-[#111111]/48 dark:text-[#F4F3EF]/48"
+                                className="w-3.5 h-3.5 shrink-0 text-[#111111]/66 dark:text-[#F4F3EF]/66"
                                 aria-hidden="true"
                               />
                               <span className="truncate">{file.title}</span>
-                              <span className="text-[#111111]/48 dark:text-[#F4F3EF]/48 tabular-nums shrink-0">
+                              <span className="text-[#111111]/68 dark:text-[#F4F3EF]/68 tabular-nums shrink-0">
                                 · {SUPPLEMENTARY_KIND_LABELS[file.kind] ?? 'Файл'} ·{' '}
                                 {formatFileSizeReadable(file.sizeBytes)}
                               </span>
@@ -604,7 +616,7 @@ export function CabinetOrderHistorySection({
                               href={downloadHref}
                               download={file.fileName}
                               data-testid={`cabinet-history-download-${file.id}`}
-                              className="text-xs font-semibold text-[#FF4820] hover:underline inline-flex items-center gap-1 whitespace-nowrap shrink-0"
+                              className="min-h-[36px] inline-flex items-center gap-1 text-xs font-semibold text-[#C83210] dark:text-[#FF6B47] hover:underline whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                             >
                               <Download className="w-3 h-3 shrink-0" aria-hidden="true" />
                               <span>Скачать</span>

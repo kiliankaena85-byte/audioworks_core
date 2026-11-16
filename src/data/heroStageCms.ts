@@ -437,7 +437,7 @@ export function resolveHeroStagePlayback(
           mode: 'builtin_stream',
           audioUrl: AUDIOWORKS_WAV_URL,
           fileName: null,
-          startSec: 1.6,
+          startSec: hero.clutterStartSec,
           durationSec: hero.clutterDurationSec,
           roadNoiseOnClutter: hero.clutterRoadNoiseDefault,
         };

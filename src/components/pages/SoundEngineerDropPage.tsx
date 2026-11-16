@@ -8,6 +8,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useStudioLegalConfig } from '../../context/StudioLegalConfigContext';
 import { formatFileSizeReadable } from '../../data/clientCabinetHelpers';
 import {
   evaluateBroadcastSlotFit,
@@ -85,6 +86,7 @@ export function SoundEngineerDropPage({
   isDark,
   onToggleTheme,
 }: SoundEngineerDropPageProps) {
+  const { inlineRequisites } = useStudioLegalConfig();
   const [task, setTask] = useState<SoundDropTaskPublicView | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [sessionError, setSessionError] = useState<string | null>(null);
@@ -569,6 +571,18 @@ export function SoundEngineerDropPage({
           </section>
         )}
       </main>
+
+      <footer className="border-t border-[#111111]/10 dark:border-white/10 py-4 px-5 sm:px-6 text-xs text-[#111111]/64 dark:text-[#F4F3EF]/64">
+        <div className="max-w-3xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-2 tabular-nums">
+          <span>{inlineRequisites}</span>
+          <a
+            href="/privacy"
+            className="font-semibold underline underline-offset-3 text-[#111111]/80 dark:text-[#F4F3EF]/80 hover:text-[#C83210] dark:hover:text-[#FF6B47] whitespace-nowrap shrink-0"
+          >
+            Политика обработки ПДн (152-ФЗ)
+          </a>
+        </div>
+      </footer>
     </div>
   );
 }

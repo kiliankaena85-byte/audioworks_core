@@ -4,6 +4,8 @@ import test from 'node:test';
 import {
   buildClientSessionClearCookieHeader,
   buildClientSessionSetCookieHeader,
+  canDirectBindOrdersToEmailSession,
+  canExposeMagicLinkLocalPreview,
   CLIENT_SESSION_COOKIE_NAME,
   collectOrdersForClientEmail,
   createSeedClientAccounts,
@@ -269,4 +271,85 @@ test('cookie builders set HttpOnly, Path=/api, SameSite=Lax, and Secure when req
   const clearHdr = buildClientSessionClearCookieHeader(false);
   assert.match(clearHdr, /Max-Age=0/);
   assert.doesNotMatch(clearHdr, /Secure/);
+});
+
+test('canDirectBindOrdersToEmailSession blocks unverified account takeover and allows same-email session', () => {
+  assert.equal(
+    canDirectBindOrdersToEmailSession({
+      verifiedSessionEmail: null,
+      targetEmail: 'victim@company.ru',
+    }),
+    false
+  );
+  assert.equal(
+    canDirectBindOrdersToEmailSession({
+      verifiedSessionEmail: 'attacker@evil.ru',
+      targetEmail: 'victim@company.ru',
+    }),
+    false
+  );
+  assert.equal(
+    canDirectBindOrdersToEmailSession({
+      verifiedSessionEmail: 'Director@TransFlot-Leasing.ru',
+      targetEmail: '  director@transflot-leasing.ru ',
+    }),
+    true
+  );
+});
+
+test('canExposeMagicLinkLocalPreview blocks JSON token leakage on production and gateway failures', () => {
+  // Production + real customer email + gateway failure => MUST NOT leak magicLinkUrl in JSON
+  assert.equal(
+    canExposeMagicLinkLocalPreview({
+      nodeEnv: 'production',
+      email: 'cfo@company.ru',
+      hasConfiguredGateway: true,
+      gatewayFailed: true,
+    }),
+    false
+  );
+
+  // Production + real customer email + no gateway configured (unless explicit preview flag) => false
+  assert.equal(
+    canExposeMagicLinkLocalPreview({
+      nodeEnv: 'production',
+      email: 'cfo@company.ru',
+      hasConfiguredGateway: false,
+      gatewayFailed: false,
+    }),
+    false
+  );
+
+  // Production + isolated studio demo email without gateway => allowed for demo showcase
+  assert.equal(
+    canExposeMagicLinkLocalPreview({
+      nodeEnv: 'production',
+      email: DEMO_CLIENT_CABINET_EMAIL,
+      hasConfiguredGateway: false,
+      gatewayFailed: false,
+    }),
+    true
+  );
+
+  // Development without external gateway => allowed for local testing
+  assert.equal(
+    canExposeMagicLinkLocalPreview({
+      nodeEnv: 'development',
+      email: 'cfo@company.ru',
+      hasConfiguredGateway: false,
+      gatewayFailed: false,
+    }),
+    true
+  );
+
+  // Development when configured gateway fails for non-demo email => blocked
+  assert.equal(
+    canExposeMagicLinkLocalPreview({
+      nodeEnv: 'development',
+      email: 'cfo@company.ru',
+      hasConfiguredGateway: true,
+      gatewayFailed: true,
+    }),
+    false
+  );
 });

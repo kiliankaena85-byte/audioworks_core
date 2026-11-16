@@ -15,6 +15,7 @@ import {
   extractMagicTokenFromCabinetHref,
   extractOrderMasterFiles,
   filterCabinetHistoryOrders,
+  inferOrderRepeatParameters,
   isCompletedOrderOlderThanSixMonths,
   isOrderArchivedInHistory,
   isOrderCompletedAndPaid,
@@ -25,8 +26,10 @@ import {
   resolveCabinetOrderVisualStatus,
   resolveWorkspaceFilterFromRoute,
   SIX_MONTHS_MS,
+  sortActiveOrdersByClientTurn,
   summarizeCabinetHistoryArchive,
   summarizeCabinetHistoryStatuses,
+  verifyClientAttachmentMagicBytes,
 } from './clientCabinetArchitecture';
 import type {
   ClientCabinetOrderSummary,
@@ -746,5 +749,120 @@ test('Архивация и фильтрация истории заказов: 
     }).map((o) => o.orderNumber),
     ['FM-2948', 'FM-2301']
   );
+
+  // Режим «Архив» (showArchivedOnly: true) показывает и проекты > 6 мес., и вручную скрытые завершённые заказы
+  assert.deepEqual(
+    filterCabinetHistoryOrders(orders, {
+      showArchivedOnly: true,
+      manuallyArchivedOrderNumbers: ['FM-2418'],
+      nowMs,
+    }).map((o) => o.orderNumber),
+    ['FM-2418', 'FM-2309']
+  );
+});
+
+test('inferOrderRepeatParameters и sortActiveOrdersByClientTurn сохраняют точный тариф/хронометраж и поднимают заказы «Ваш ход» наверх', () => {
+  assert.deepEqual(
+    inferOrderRepeatParameters({
+      formatLabel: 'Игровой ролик / Мини-кино (25 сек) — 35 000 ₽',
+      totalBudgetRub: 35_000,
+      documentMeta: null,
+    }),
+    { formatId: 'cinema', spotDurationSec: 25 }
+  );
+
+  assert.deepEqual(
+    inferOrderRepeatParameters({
+      formatLabel: 'Голос и стиль (15 сек) — 15 000 ₽',
+      totalBudgetRub: 15_000,
+      documentMeta: { spotExactDurationSec: 15 },
+    }),
+    { formatId: 'voice_style', spotDurationSec: 15 }
+  );
+
+  assert.deepEqual(
+    inferOrderRepeatParameters({
+      formatLabel: 'Эфирная адаптация и ресайз',
+      totalBudgetRub: 12_000,
+      documentMeta: null,
+      approvalWorkflow: {
+        targetSlotSec: 10,
+        phase: 'accepted',
+        externalStep: '03_spot',
+        whoseTurnActor: 'completed',
+        whoseTurnLabel: 'Готово',
+        scriptVersions: [],
+        lockedScript: null,
+        serviceRoundUsed: false,
+        serviceRoundUsedAt: null,
+        serviceRoundSummary: null,
+        spotRevisions: [],
+        hasPendingQcTake: false,
+        acceptedAt: '2026-11-10T10:00:00.000Z',
+        acceptedDeliverableId: null,
+      },
+    }),
+    { formatId: 'adaptation', spotDurationSec: 10 }
+  );
+
+  assert.deepEqual(
+    inferOrderRepeatParameters({
+      formatLabel: 'Индивидуальный проект (договорная цена)',
+      totalBudgetRub: 0,
+      documentMeta: null,
+    }),
+    { formatId: 'custom_consult', spotDurationSec: 20 }
+  );
+
+  const sorted = sortActiveOrdersByClientTurn([
+    {
+      id: 'studio-newer',
+      createdAt: '2026-11-15T15:00:00.000Z',
+      approvalWorkflow: { whoseTurnActor: 'studio' as const } as never,
+    },
+    {
+      id: 'client-older',
+      createdAt: '2026-11-12T09:00:00.000Z',
+      approvalWorkflow: { whoseTurnActor: 'client' as const } as never,
+    },
+    {
+      id: 'client-newer',
+      createdAt: '2026-11-14T11:00:00.000Z',
+      approvalWorkflow: { whoseTurnActor: 'client' as const } as never,
+    },
+  ]);
+  assert.deepEqual(
+    sorted.map((item) => item.id),
+    ['client-newer', 'client-older', 'studio-newer']
+  );
+});
+
+test('verifyClientAttachmentMagicBytes пропускает валидные документы/аудио и блокирует поддельные сигнатуры', () => {
+  const validPdf = Buffer.from('%PDF-1.7\n1 0 obj\n', 'utf8');
+  const fakePdfHtml = Buffer.from('<script>alert(1)</script>', 'utf8');
+  assert.equal(verifyClientAttachmentMagicBytes(validPdf, '.pdf').ok, true);
+  assert.equal(verifyClientAttachmentMagicBytes(fakePdfHtml, '.pdf').ok, false);
+
+  const validPng = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+  const fakePngSvg = Buffer.from('<svg onload="evil()"/>', 'utf8');
+  assert.equal(verifyClientAttachmentMagicBytes(validPng, '.png').ok, true);
+  assert.equal(verifyClientAttachmentMagicBytes(fakePngSvg, '.png').ok, false);
+
+  const validWav = Buffer.from('RIFF\x24\x00\x00\x00WAVEfmt ', 'binary');
+  assert.equal(verifyClientAttachmentMagicBytes(validWav, '.wav').ok, true);
+  assert.equal(verifyClientAttachmentMagicBytes(fakePdfHtml, '.wav').ok, false);
+
+  const validMp3Id3 = Buffer.from('ID3\x04\x00\x00\x00\x00\x00\x00', 'binary');
+  assert.equal(verifyClientAttachmentMagicBytes(validMp3Id3, '.mp3').ok, true);
+  assert.equal(verifyClientAttachmentMagicBytes(fakePdfHtml, '.mp3').ok, false);
+
+  const validDocxZip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00]);
+  assert.equal(verifyClientAttachmentMagicBytes(validDocxZip, '.docx').ok, true);
+  assert.equal(verifyClientAttachmentMagicBytes(fakePdfHtml, '.docx').ok, false);
+
+  const cleanTxt = Buffer.from('Текст сценария аудиоролика 20 сек', 'utf8');
+  const binaryInTxt = new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03]);
+  assert.equal(verifyClientAttachmentMagicBytes(cleanTxt, '.txt').ok, true);
+  assert.equal(verifyClientAttachmentMagicBytes(binaryInTxt, '.txt').ok, false);
 });
 

@@ -217,6 +217,17 @@ class DuelAudioStore {
 
   private applyServerPayload(data: ServerDuelTracksResponse): void {
     if (data.radio?.url) {
+      if (
+        this.radioTrack &&
+        this.radioTrack.objectUrl.startsWith('blob:') &&
+        this.radioTrack.objectUrl !== data.radio.url
+      ) {
+        try {
+          URL.revokeObjectURL(this.radioTrack.objectUrl);
+        } catch {
+          // Ignore revoke error
+        }
+      }
       this.radioTrack = {
         objectUrl: data.radio.url,
         fileName: data.radio.fileName ?? 'zerno_radio_15.wav',
@@ -225,6 +236,17 @@ class DuelAudioStore {
       };
     }
     if (data.audioworks?.url) {
+      if (
+        this.audioworksTrack &&
+        this.audioworksTrack.objectUrl.startsWith('blob:') &&
+        this.audioworksTrack.objectUrl !== data.audioworks.url
+      ) {
+        try {
+          URL.revokeObjectURL(this.audioworksTrack.objectUrl);
+        } catch {
+          // Ignore revoke error
+        }
+      }
       this.audioworksTrack = {
         objectUrl: data.audioworks.url,
         fileName: data.audioworks.fileName ?? 'zerno_audioworks_15.mp3',

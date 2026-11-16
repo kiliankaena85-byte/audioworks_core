@@ -12,15 +12,18 @@ import {
   deriveCabinetLifecycleState,
   extractMagicTokenFromCabinetHref,
   filterCabinetHistoryOrders,
+  inferOrderRepeatParameters,
   mergeAuthenticatedAndDeviceOrders,
   partitionCabinetOrders,
   pickUnboundDeviceOrderTokens,
   resolveWorkspaceFilterFromRoute,
+  sortActiveOrdersByClientTurn,
   summarizeCabinetHistoryArchive,
   summarizeCabinetHistoryStatuses,
 } from '../../data/clientCabinetArchitecture';
 import {
   type ClientCabinetOrderSummary,
+  type ClientCabinetStoredEntry,
   type ClientDeliveryChannel,
   parseDeliveryDetailSelection,
   readClientCabinetEntries,
@@ -28,9 +31,13 @@ import {
   upsertClientCabinetEntry,
   validateDeliveryEmail,
 } from '../../data/clientCabinetHelpers';
+import { resolveOfflineCounterpartyByInn } from '../../data/konturIntegrationCore';
 import { orderDraftStore } from '../../data/orderDraftStore';
 import type { CabinetSubrouteMode, PlatformRoute } from '../../data/platformRouter';
-import type { StudioLegalProfilesConfig } from '../../data/studioDocumentsCore';
+import type {
+  BrandedDocumentKind,
+  StudioLegalProfilesConfig,
+} from '../../data/studioDocumentsCore';
 import {
   inspectInnDigits,
   parseCompanyNameAndInn,
@@ -70,6 +77,18 @@ export interface MagicLinkDispatchPreview {
   deliveryMode: 'email_gateway' | 'local_preview';
   magicLinkPath?: string;
   magicLinkUrl?: string;
+}
+
+export interface PendingBindEmailVerification {
+  email: string;
+  deliveryMode: 'email_gateway' | 'local_preview';
+  magicLinkPath?: string;
+}
+
+export interface AudioSeekRequest {
+  timeSec: number;
+  versionCode?: string;
+  nonce: number;
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -166,7 +185,9 @@ function readManuallyArchivedOrderNumbers(): string[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+    return parsed.filter(
+      (item): item is string => typeof item === 'string' && item.trim().length > 0
+    );
   } catch {
     return [];
   }
@@ -208,7 +229,7 @@ export function useClientCabinetController({
   const [statusError, setStatusError] = useState<string | null>(null);
   const [authBanner, setAuthBanner] = useState<string | null>(null);
 
-  // Панель доступа: авто-регистрация по почте / сброс доступа по magic-ссылке / поиск заказа по номеру
+  // Панель доступа: вход по почте / сброс доступа по magic-ссылке / поиск заказа по номеру
   const [showLookupForm, setShowLookupForm] = useState<boolean>(
     subroute === 'reset'
   );
@@ -225,6 +246,10 @@ export function useClientCabinetController({
   const [isVerifyingMagic, setIsVerifyingMagic] = useState<boolean>(false);
   const consumedMagicTokenRef = useRef<string | null>(null);
   const loadSeqRef = useRef<number>(0);
+  const onNavigateRef = useRef<CabinetNavigateFn>(onNavigate);
+  onNavigateRef.current = onNavigate;
+  const subrouteRef = useRef<CabinetSubrouteMode | undefined>(subroute);
+  subrouteRef.current = subroute;
 
   // Одноразовая ссылка для переноса сессии на другое устройство
   const [crossDeviceLink, setCrossDeviceLink] = useState<{
@@ -235,10 +260,12 @@ export function useClientCabinetController({
   const [isIssuingCrossDeviceLink, setIsIssuingCrossDeviceLink] =
     useState<boolean>(false);
 
-  // Привязка анонимных заказов устройства к почте в 1 клик (авто-регистрация)
+  // Привязка анонимных заказов устройства к почте (с подтверждением владения почтой)
   const [bindEmailInput, setBindEmailInput] = useState<string>('');
   const [isBindingEmail, setIsBindingEmail] = useState<boolean>(false);
   const [bindEmailError, setBindEmailError] = useState<string | null>(null);
+  const [pendingBindVerification, setPendingBindVerification] =
+    useState<PendingBindEmailVerification | null>(null);
 
   // Поиск заказа по номеру + телефону / ИНН / @Telegram
   const [orderNumberInput, setOrderNumberInput] = useState<string>('');
@@ -254,6 +281,7 @@ export function useClientCabinetController({
   const [innCompanyNameDraft, setInnCompanyNameDraft] = useState<string>('');
   const [innDigitsDraft, setInnDigitsDraft] = useState<string>('');
   const [innSaveError, setInnSaveError] = useState<string | null>(null);
+  const [isLookingUpInn, setIsLookingUpInn] = useState<boolean>(false);
   const [isSavingPrefsFor, setIsSavingPrefsFor] = useState<string | null>(null);
 
   // Загрузка клиентского файла
@@ -263,22 +291,96 @@ export function useClientCabinetController({
     Record<string, { kind: 'ok' | 'error'; text: string }>
   >({});
 
-  // Модальное окно счёта A4
-  const [invoiceModalOrder, setInvoiceModalOrder] =
-    useState<ClientCabinetOrderSummary | null>(null);
+  // Модальное окно пакета документов A4 (Счёт / Договор / Акт сдачи / Паспорт прав / КП)
+  const [documentModalState, setDocumentModalState] = useState<{
+    order: ClientCabinetOrderSummary;
+    initialDoc: BrandedDocumentKind;
+  } | null>(null);
+
+  const openOrderDocumentModal = useCallback(
+    (order: ClientCabinetOrderSummary, initialDoc: BrandedDocumentKind = 'invoice') => {
+      setDocumentModalState({ order, initialDoc });
+    },
+    []
+  );
+
+  const setInvoiceModalOrder = useCallback(
+    (order: ClientCabinetOrderSummary | null) => {
+      setDocumentModalState(order ? { order, initialDoc: 'invoice' } : null);
+    },
+    []
+  );
+
+  // Безопасное скрытие заказа с устройства с возможностью отмены (Undo)
+  const [forgottenDeviceOrderUndo, setForgottenDeviceOrderUndo] = useState<{
+    order: ClientCabinetOrderSummary;
+    entry: Pick<
+      ClientCabinetStoredEntry,
+      'orderNumber' | 'rescueToken' | 'contactLine' | 'companyLine'
+    >;
+  } | null>(null);
+
+  // Синхронизация таймкода между студийным аудиоплеером и конвейером согласования
+  const [activePlayerTimeByOrder, setActivePlayerTimeByOrder] = useState<
+    Record<string, number>
+  >({});
+  const [audioSeekRequestByOrder, setAudioSeekRequestByOrder] = useState<
+    Record<string, AudioSeekRequest>
+  >({});
+  const [highlightedVersionByOrder, setHighlightedVersionByOrder] = useState<
+    Record<string, string>
+  >({});
+
+  const handleAudioPlayerTimeUpdate = useCallback(
+    (orderNumber: string, timeSec: number) => {
+      if (!Number.isFinite(timeSec) || timeSec < 0) return;
+      const rounded = Math.round(timeSec * 10) / 10;
+      setActivePlayerTimeByOrder((prev) => {
+        if (prev[orderNumber] === rounded) return prev;
+        return { ...prev, [orderNumber]: rounded };
+      });
+    },
+    []
+  );
+
+  const handleRequestAudioSeek = useCallback(
+    (orderNumber: string, timeSec: number, versionCode?: string) => {
+      if (!Number.isFinite(timeSec) || timeSec < 0) return;
+      setAudioSeekRequestByOrder((prev) => ({
+        ...prev,
+        [orderNumber]: {
+          timeSec,
+          versionCode,
+          nonce: (prev[orderNumber]?.nonce ?? 0) + 1,
+        },
+      }));
+    },
+    []
+  );
+
+  const highlightOrderVersion = useCallback(
+    (orderNumber: string, versionCode?: string) => {
+      if (!versionCode) return;
+      setHighlightedVersionByOrder((prev) => ({
+        ...prev,
+        [orderNumber]: versionCode,
+      }));
+    },
+    []
+  );
 
   // Отправка решений по конвейеру согласования сценария и готового ролика
   const [submittingApprovalOrderNum, setSubmittingApprovalOrderNum] =
     useState<string | null>(null);
 
-  // Аватар профиля клиента (фото профиля или сгенерированный абстрактный аватар по инициалам)
+  // Аватар профиля клиента
   const [isAvatarEditorOpen, setIsAvatarEditorOpen] = useState<boolean>(false);
   const [isSavingAvatar, setIsSavingAvatar] = useState<boolean>(false);
   const [avatarError, setAvatarError] = useState<string | null>(null);
   const [deviceAvatarPrefs, setDeviceAvatarPrefs] =
     useState<DeviceAvatarPreferences>(() => readDeviceAvatarPreferences());
 
-  // Фильтрация рабочего пространства и поиск по разделу «История заказов»
+  // Фильтрация рабочего пространства и поиск по разделу «История завершённых заказов»
   const [workspaceFilter, setWorkspaceFilter] =
     useState<CabinetWorkspaceSectionFilter>(() =>
       resolveWorkspaceFilterFromRoute(subroute)
@@ -290,6 +392,8 @@ export function useClientCabinetController({
     useState<boolean>(false);
   const [historyHideOlderThanSixMonths, setHistoryHideOlderThanSixMonthsState] =
     useState<boolean>(() => readHideOlderThanSixMonthsPreference());
+  const [historyShowArchivedOnly, setHistoryShowArchivedOnly] =
+    useState<boolean>(false);
   const [manuallyArchivedOrderNumbers, setManuallyArchivedOrderNumbersState] =
     useState<string[]>(() => readManuallyArchivedOrderNumbers());
 
@@ -310,7 +414,7 @@ export function useClientCabinetController({
     });
   }, []);
 
-  // Синхронизация подмаршрутов `/cabinet/reset` и `/cabinet/history` из `platformRouter.ts` / `App.tsx`
+  // Синхронизация подмаршрутов `/cabinet/reset` и `/cabinet/history`
   useEffect(() => {
     if (subroute === 'reset') {
       setAccessTab('access_reset');
@@ -344,6 +448,7 @@ export function useClientCabinetController({
     setHistoryStatusFilter('all');
     setHistorySearchQuery('');
     setHistoryOnlyWithMasters(false);
+    setHistoryShowArchivedOnly(false);
     setHistoryHideOlderThanSixMonthsState(false);
     writeHideOlderThanSixMonthsPreference(false);
   }, []);
@@ -407,15 +512,40 @@ export function useClientCabinetController({
         if (json.legalProfiles) {
           setLegalProfiles(json.legalProfiles);
         }
-        setClientAccount(json.account ?? null);
+
+        let nextAccount = json.account ?? null;
+        if (
+          nextAccount &&
+          (deviceAvatarPrefs.photoDataUrl || deviceAvatarPrefs.presetId)
+        ) {
+          try {
+            nextAccount = await updateClientAvatarApi({
+              ...(deviceAvatarPrefs.photoDataUrl
+                ? { dataBase64: deviceAvatarPrefs.photoDataUrl }
+                : {}),
+              ...(deviceAvatarPrefs.presetId
+                ? { avatarPresetId: deviceAvatarPrefs.presetId }
+                : {}),
+            });
+            const cleared = { presetId: null, photoDataUrl: null };
+            setDeviceAvatarPrefs(cleared);
+            writeDeviceAvatarPreferences(cleared);
+          } catch {
+            // Non-fatal avatar sync
+          }
+        }
+
+        setClientAccount(nextAccount);
         setOrders(verifiedOrders);
         setMagicDispatchResult(null);
+        setPendingBindVerification(null);
+        setBindEmailInput('');
         setMagicEmailInput('');
         setCrossDeviceLink(null);
         setAuthBanner(
           json.sessionsReset
-            ? `Доступ восстановлен для ${json.account?.email ?? 'профиля'} · Старые сессии на других устройствах отозваны`
-            : `Вход по одноразовой magic-ссылке выполнен (${json.account?.email ?? ''})`
+            ? `Доступ восстановлен для ${nextAccount?.email ?? 'профиля'} · Старые сессии на других устройствах завершены`
+            : `Вход по защищённой ссылке выполнен (${nextAccount?.email ?? ''})`
         );
         setAccessTab('magic_email');
         setShowLookupForm(verifiedOrders.length === 0);
@@ -426,14 +556,14 @@ export function useClientCabinetController({
             ? err.message
             : 'Не удалось выполнить вход по одноразовой ссылке';
         setStatusError(errMsg);
-        setAccessTab(subroute === 'reset' ? 'access_reset' : 'magic_email');
+        setAccessTab(subrouteRef.current === 'reset' ? 'access_reset' : 'magic_email');
         setShowLookupForm(true);
         return { ok: false as const, error: errMsg };
       } finally {
         setIsVerifyingMagic(false);
       }
     },
-    [subroute]
+    [deviceAvatarPrefs.photoDataUrl, deviceAvatarPrefs.presetId]
   );
 
   const loadStoredOrders = useCallback(
@@ -446,8 +576,7 @@ export function useClientCabinetController({
         consumedMagicTokenRef.current = candidateMagic;
         setIsLoading(true);
         const magicResult = await verifyAndConsumeMagicToken(candidateMagic);
-        // Очищаем одноразовый ?magic= из адресной строки после установки cookie сессии и сохранения токенов
-        onNavigate({ kind: 'cabinet' }, { replace: true });
+        onNavigateRef.current({ kind: 'cabinet' }, { replace: true });
         if (magicResult.ok) {
           if (requestSeq === loadSeqRef.current) {
             setIsLoading(false);
@@ -516,7 +645,7 @@ export function useClientCabinetController({
               if (requestSeq !== loadSeqRef.current) {
                 return;
               }
-              if (bindJson.ok && Array.isArray(bindJson.orders)) {
+              if (bindJson.ok && bindJson.authenticated && Array.isArray(bindJson.orders)) {
                 for (const ord of bindJson.orders) {
                   upsertClientCabinetEntry({
                     orderNumber: ord.orderNumber,
@@ -574,7 +703,7 @@ export function useClientCabinetController({
         }
       }
     },
-    [onNavigate, verifyAndConsumeMagicToken]
+    [verifyAndConsumeMagicToken]
   );
 
   useEffect(() => {
@@ -626,7 +755,7 @@ export function useClientCabinetController({
         setMagicRequestError(
           err instanceof Error
             ? err.message
-            : 'Не удалось сформировать одноразовую magic-ссылку'
+            : 'Не удалось сформировать одноразовую ссылку входа'
         );
       } finally {
         setIsRequestingMagic(false);
@@ -648,7 +777,6 @@ export function useClientCabinetController({
       magicDispatchResult?.magicLinkPath
     );
     if (!extracted.token) return;
-    // Переходим по типизированному маршруту `PlatformRoute` — `App.tsx` передаст `magicToken` в контроллер
     onNavigate(
       {
         kind: 'cabinet',
@@ -658,6 +786,20 @@ export function useClientCabinetController({
       { replace: true }
     );
   }, [magicDispatchResult?.magicLinkPath, onNavigate]);
+
+  const handleConfirmPendingBindMagicLink = useCallback(() => {
+    const extracted = extractMagicTokenFromCabinetHref(
+      pendingBindVerification?.magicLinkPath
+    );
+    if (!extracted.token) return;
+    onNavigate(
+      {
+        kind: 'cabinet',
+        magicToken: extracted.token,
+      },
+      { replace: true }
+    );
+  }, [onNavigate, pendingBindVerification?.magicLinkPath]);
 
   const handleIssueCrossDeviceMagicLink = useCallback(async () => {
     if (!clientAccount?.email || isIssuingCrossDeviceLink) return;
@@ -710,6 +852,7 @@ export function useClientCabinetController({
 
       setIsBindingEmail(true);
       setBindEmailError(null);
+      setPendingBindVerification(null);
       try {
         const json = await bindClientEmailApi({
           email: cleanEmail,
@@ -718,6 +861,22 @@ export function useClientCabinetController({
             rescueToken: o.rescueToken,
           })),
         });
+
+        if (json.verificationRequired || !json.authenticated) {
+          const deliveryMode = json.deliveryMode ?? 'email_gateway';
+          setPendingBindVerification({
+            email: json.email || cleanEmail,
+            deliveryMode,
+            magicLinkPath: json.magicLinkPath,
+          });
+          if (deliveryMode === 'email_gateway') {
+            setAuthBanner(
+              `На ${json.email || cleanEmail} отправлена одноразовая ссылка подтверждения (30 мин). Перейдите по ней, чтобы завершить привязку заказов.`
+            );
+          }
+          return;
+        }
+
         const nextOrders = Array.isArray(json.orders) ? json.orders : orders;
         for (const ord of nextOrders) {
           upsertClientCabinetEntry({
@@ -755,7 +914,7 @@ export function useClientCabinetController({
         setOrders(nextOrders);
         setBindEmailInput('');
         setAuthBanner(
-          `Автоматическая регистрация завершена: заказы привязаны к ${cleanEmail}`
+          `Заказы привязаны к подтверждённому профилю ${cleanEmail}`
         );
       } catch (err) {
         setBindEmailError(
@@ -784,6 +943,8 @@ export function useClientCabinetController({
     setClientAccount(null);
     setOrders([]);
     setCrossDeviceLink(null);
+    setPendingBindVerification(null);
+    setForgottenDeviceOrderUndo(null);
     setAuthBanner(null);
     setMagicDispatchResult(null);
     setAccessTab('magic_email');
@@ -902,10 +1063,68 @@ export function useClientCabinetController({
     setInnSaveError(null);
   }, []);
 
+  const handleLookupCompanyByInn = useCallback(async () => {
+    const innInfo = inspectInnDigits(innDigitsDraft);
+    if (!innInfo.isCompleteLength || !innInfo.checksumValid) {
+      setInnSaveError(
+        innInfo.statusMessage ??
+          'Введите корректный ИНН (10 цифр для юрлица или 12 цифр для ИП)'
+      );
+      return;
+    }
+
+    setIsLookingUpInn(true);
+    setInnSaveError(null);
+    try {
+      const offline = resolveOfflineCounterpartyByInn(innInfo.digits);
+      if (offline?.shortName) {
+        setInnCompanyNameDraft(offline.shortName);
+      }
+
+      const resp = await fetch(
+        `/api/public/counterparty-by-inn?inn=${encodeURIComponent(innInfo.digits)}`,
+        { credentials: 'same-origin' }
+      );
+      if (resp.ok) {
+        const data = (await resp.json().catch(() => null)) as {
+          found?: boolean;
+          counterparty?: { shortName?: string; fullName?: string } | null;
+        } | null;
+        const resolvedName =
+          data?.counterparty?.shortName || data?.counterparty?.fullName || '';
+        if (resolvedName) {
+          setInnCompanyNameDraft(resolvedName);
+          return;
+        }
+      }
+
+      if (!offline?.shortName && !innCompanyNameDraft.trim()) {
+        setInnSaveError(
+          'Организация не найдена в справочнике — укажите наименование вручную'
+        );
+      }
+    } catch {
+      const offline = resolveOfflineCounterpartyByInn(innInfo.digits);
+      if (offline?.shortName) {
+        setInnCompanyNameDraft(offline.shortName);
+      }
+    } finally {
+      setIsLookingUpInn(false);
+    }
+  }, [innCompanyNameDraft, innDigitsDraft]);
+
   const handleSaveCompanyInnForOrder = useCallback(
     async (order: ClientCabinetOrderSummary) => {
-      const cleanName = innCompanyNameDraft.trim();
+      let cleanName = innCompanyNameDraft.trim();
       const innInfo = inspectInnDigits(innDigitsDraft);
+      if (!cleanName && innInfo.isCompleteLength && innInfo.checksumValid) {
+        const offline = resolveOfflineCounterpartyByInn(innInfo.digits);
+        if (offline?.shortName) {
+          cleanName = offline.shortName.trim();
+          setInnCompanyNameDraft(cleanName);
+        }
+      }
+
       if (cleanName.length < 2) {
         setInnSaveError('Укажите название компании или ИП (от 2 символов)');
         return;
@@ -1009,7 +1228,10 @@ export function useClientCabinetController({
 
   const handleRepeatOrder = useCallback(
     (order: ClientCabinetOrderSummary) => {
+      const repeatParams = inferOrderRepeatParameters(order);
       orderDraftStore.prepareProductionOrder({
+        formatId: repeatParams.formatId,
+        spotDurationSec: repeatParams.spotDurationSec,
         briefHint: order.briefText,
         returnPath: '/cabinet',
       });
@@ -1019,10 +1241,15 @@ export function useClientCabinetController({
         order.preferredDeliveryDetail
       );
       orderDraftStore.updateDraft({
+        selectedFormat: repeatParams.formatId,
+        isFormatPreselected: true,
+        spotDurationSec: repeatParams.spotDurationSec,
+        briefText: order.briefText || '',
         contactLine: order.contact,
         companyLine: order.companyOrInn,
         companyName: parsedCompany.companyName,
         companyInn: parsedCompany.companyInn,
+        resolvedCounterpartyMeta: order.documentMeta ?? null,
         preferredDeliveryChannel: order.preferredDeliveryChannel,
         deliveryMessenger: parsedDelivery.messenger,
         deliveryMessengerOther: parsedDelivery.messengerOther,
@@ -1037,16 +1264,48 @@ export function useClientCabinetController({
     [clientAccount?.email, onNavigate]
   );
 
-  const handleForgetOrderFromDevice = useCallback((orderNumber: string) => {
-    removeClientCabinetEntry(orderNumber);
-    setOrders((prev) => {
-      const next = prev.filter((o) => o.orderNumber !== orderNumber);
-      if (next.length === 0) {
-        setShowLookupForm(true);
+  const handleForgetOrderFromDevice = useCallback(
+    (orderNumber: string) => {
+      const targetOrder = orders.find((o) => o.orderNumber === orderNumber);
+      if (targetOrder) {
+        setForgottenDeviceOrderUndo({
+          order: targetOrder,
+          entry: {
+            orderNumber: targetOrder.orderNumber,
+            rescueToken: targetOrder.rescueToken,
+            contactLine: targetOrder.contact,
+            companyLine: targetOrder.companyOrInn,
+          },
+        });
       }
-      return next;
+      removeClientCabinetEntry(orderNumber);
+      setOrders((prev) => {
+        const next = prev.filter((o) => o.orderNumber !== orderNumber);
+        if (next.length === 0) {
+          setShowLookupForm(true);
+        }
+        return next;
+      });
+    },
+    [orders]
+  );
+
+  const handleUndoForgetOrderFromDevice = useCallback(() => {
+    if (!forgottenDeviceOrderUndo) return;
+    const { order, entry } = forgottenDeviceOrderUndo;
+    upsertClientCabinetEntry({
+      orderNumber: entry.orderNumber,
+      rescueToken: entry.rescueToken,
+      contactLine: entry.contactLine,
+      companyLine: entry.companyLine,
     });
-  }, []);
+    setOrders((prev) => [
+      order,
+      ...prev.filter((o) => o.orderNumber !== order.orderNumber),
+    ]);
+    setForgottenDeviceOrderUndo(null);
+    setShowLookupForm(false);
+  }, [forgottenDeviceOrderUndo]);
 
   const handleClientApproveScript = useCallback(
     async (order: ClientCabinetOrderSummary, conceptId?: string) => {
@@ -1126,7 +1385,7 @@ export function useClientCabinetController({
           prev.map((o) => (o.orderNumber === updated.orderNumber ? updated : o))
         );
         setAuthBanner(
-          `Готовый ролик по заказу #${updated.orderNumber} официально принят. Эфирный мастер WAV и паспорт прав доступны в карточке.`
+          `Готовый ролик по заказу #${updated.orderNumber} официально принят. Мастер-файл WAV, акт сдачи-приёмки и паспорт прав доступны в карточке.`
         );
       } catch (err) {
         setStatusError(
@@ -1163,7 +1422,7 @@ export function useClientCabinetController({
           prev.map((o) => (o.orderNumber === updated.orderNumber ? updated : o))
         );
         setAuthBanner(
-          routedTo === 'service_round'
+          routedTo === 'sound_engineer_included_round'
             ? `Поправка по заказу #${updated.orderNumber} принята в работу в рамках включённого сервисного раунда (без доплат и новых счетов).`
             : `Запрос по заказу #${updated.orderNumber} передан продюсеру для быстрого согласования.`
         );
@@ -1318,47 +1577,75 @@ export function useClientCabinetController({
     [orders]
   );
 
-  const historyStatusSummary = useMemo(
+  const sortedActiveOrders = useMemo(
+    () => sortActiveOrdersByClientTurn(partitionedOrders.activeOrders),
+    [partitionedOrders.activeOrders]
+  );
+
+  const clientTurnActiveCount = useMemo(
+    () =>
+      sortedActiveOrders.filter(
+        (o) => o.approvalWorkflow?.whoseTurnActor === 'client'
+      ).length,
+    [sortedActiveOrders]
+  );
+
+  // Каноническая сводка по всему кабинету (для верхней строки прогресса)
+  const overallStatusSummary = useMemo(
     () => summarizeCabinetHistoryStatuses(orders),
     [orders]
   );
 
-  const historyArchiveSummary = useMemo(
-    () =>
-      summarizeCabinetHistoryArchive(orders, {
-        hideOlderThanSixMonths: historyHideOlderThanSixMonths,
-        manuallyArchivedOrderNumbers,
-      }),
-    [historyHideOlderThanSixMonths, manuallyArchivedOrderNumbers, orders]
+  // Каноническая сводка строго по завершённым проектам в «Истории заказов» (без дублирования активных)
+  const historyStatusSummary = useMemo(
+    () => summarizeCabinetHistoryStatuses(partitionedOrders.historyOrders),
+    [partitionedOrders.historyOrders]
   );
 
-  const filteredHistoryOrders = useMemo(
+  const historyArchiveSummary = useMemo(
     () =>
-      filterCabinetHistoryOrders(orders, {
-        searchQuery: historySearchQuery,
-        onlyWithMasters: historyOnlyWithMasters,
-        statusFilter: historyStatusFilter,
+      summarizeCabinetHistoryArchive(partitionedOrders.historyOrders, {
         hideOlderThanSixMonths: historyHideOlderThanSixMonths,
         manuallyArchivedOrderNumbers,
       }),
     [
       historyHideOlderThanSixMonths,
+      manuallyArchivedOrderNumbers,
+      partitionedOrders.historyOrders,
+    ]
+  );
+
+  const filteredHistoryOrders = useMemo(
+    () =>
+      filterCabinetHistoryOrders(partitionedOrders.historyOrders, {
+        searchQuery: historySearchQuery,
+        onlyWithMasters: historyOnlyWithMasters,
+        statusFilter: historyStatusFilter,
+        hideOlderThanSixMonths: historyHideOlderThanSixMonths,
+        manuallyArchivedOrderNumbers,
+        showArchivedOnly: historyShowArchivedOnly,
+      }),
+    [
+      historyHideOlderThanSixMonths,
       historyOnlyWithMasters,
       historySearchQuery,
+      historyShowArchivedOnly,
       historyStatusFilter,
       manuallyArchivedOrderNumbers,
-      orders,
+      partitionedOrders.historyOrders,
     ]
   );
 
   return {
     lifecycleState,
     orders,
-    activeOrders: partitionedOrders.activeOrders,
+    activeOrders: sortedActiveOrders,
+    clientTurnActiveCount,
     historyOrders: partitionedOrders.historyOrders,
+    overallStatusSummary,
     historyStatusSummary,
     historyArchiveSummary,
-    totalHistoryMastersCount: historyStatusSummary.totalMasterFilesCount,
+    totalHistoryMastersCount: partitionedOrders.totalHistoryMastersCount,
     filteredHistoryOrders,
     workspaceFilter,
     selectWorkspaceFilter,
@@ -1370,6 +1657,8 @@ export function useClientCabinetController({
     setHistoryOnlyWithMasters,
     historyHideOlderThanSixMonths,
     setHistoryHideOlderThanSixMonths,
+    historyShowArchivedOnly,
+    setHistoryShowArchivedOnly,
     manuallyArchivedOrderNumbers,
     toggleManualArchiveOrder,
     resetHistoryFilters,
@@ -1410,6 +1699,9 @@ export function useClientCabinetController({
     isBindingEmail,
     bindEmailError,
     setBindEmailError,
+    pendingBindVerification,
+    setPendingBindVerification,
+    handleConfirmPendingBindMagicLink,
     orderNumberInput,
     setOrderNumberInput,
     verifierInput,
@@ -1426,13 +1718,27 @@ export function useClientCabinetController({
     setInnDigitsDraft,
     innDraftInspection,
     innSaveError,
+    isLookingUpInn,
+    handleLookupCompanyByInn,
     isSavingPrefsFor,
     uploadNoteByOrder,
     setUploadNoteByOrder,
     uploadingOrderNum,
     uploadFeedbackByOrder,
-    invoiceModalOrder,
+    documentModalState,
+    openOrderDocumentModal,
+    closeOrderDocumentModal: () => setDocumentModalState(null),
+    invoiceModalOrder: documentModalState?.order ?? null,
     setInvoiceModalOrder,
+    forgottenDeviceOrderUndo,
+    dismissForgottenOrderUndo: () => setForgottenDeviceOrderUndo(null),
+    handleUndoForgetOrderFromDevice,
+    activePlayerTimeByOrder,
+    audioSeekRequestByOrder,
+    highlightedVersionByOrder,
+    handleAudioPlayerTimeUpdate,
+    handleRequestAudioSeek,
+    highlightOrderVersion,
     reloadCabinet: () => loadStoredOrders(),
     executeRequestMagicLink,
     handleMagicLinkSubmit,

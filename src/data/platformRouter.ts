@@ -48,6 +48,8 @@ export type TopNavSectionKey =
 
 export type CabinetSubrouteMode = 'orders' | 'history' | 'reset';
 
+export type LegalPageSectionTab = 'policy' | 'consent' | 'rf_security';
+
 export type PlatformRoute =
   | { kind: 'home'; scrollAnchor?: string }
   | { kind: 'hot-air' }
@@ -59,6 +61,7 @@ export type PlatformRoute =
   | { kind: 'approach'; scrollAnchor?: string }
   | { kind: 'mistake-detail'; articleSlug: string }
   | { kind: 'faq'; scrollAnchor?: string }
+  | { kind: 'privacy'; tab?: LegalPageSectionTab }
   | { kind: 'order' }
   | {
       kind: 'cabinet';
@@ -291,6 +294,27 @@ export function parsePlatformRoute(
     };
   }
 
+  if (
+    normalizedPath === '/privacy' ||
+    normalizedPath === '/policy' ||
+    normalizedPath === '/personal-data' ||
+    normalizedPath === '/152-fz'
+  ) {
+    const rawTab = (params.get('tab') || normalizedHash).trim().toLowerCase();
+    const tab: LegalPageSectionTab | undefined =
+      rawTab === 'consent' || rawTab === 'pdn-consent'
+        ? 'consent'
+        : rawTab === 'rf_security' || rawTab === 'security' || rawTab === 'cookies'
+          ? 'rf_security'
+          : rawTab === 'policy' || rawTab === 'pdn-policy'
+            ? 'policy'
+            : undefined;
+    return {
+      kind: 'privacy',
+      ...(tab ? { tab } : {}),
+    };
+  }
+
   // Обратная совместимость старых прямых ссылок с корневой страницы (`/?case=...`, `/#hot-air`, `/#work` и т.д.)
   const sharedCaseParam = sanitizeSlugSegment(params.get('case') ?? '');
   if (sharedCaseParam) {
@@ -365,6 +389,10 @@ export function buildPlatformPath(route: PlatformRoute): string {
       return `/approach/${encodeURIComponent(route.articleSlug)}`;
     case 'faq':
       return route.scrollAnchor ? `/faq#${route.scrollAnchor}` : '/faq';
+    case 'privacy':
+      return route.tab && route.tab !== 'policy'
+        ? `/privacy?tab=${encodeURIComponent(route.tab)}`
+        : '/privacy';
     case 'order':
       return '/order';
     case 'cabinet': {
@@ -413,6 +441,7 @@ export function resolveActiveTopNavSection(
       return 'approach';
     case 'faq':
       return 'faq';
+    case 'privacy':
     case 'order':
     case 'cabinet':
     case 'sound-drop':
@@ -603,6 +632,20 @@ export function resolveRouteSeoMeta(
         breadcrumbs: [
           { name: 'Главная', path: '/' },
           { name: 'FAQ', path: '/faq' },
+        ],
+      };
+    case 'privacy':
+      return {
+        title:
+          'Политика обработки персональных данных (152-ФЗ) и согласие — FMWorks',
+        description:
+          'Официальная Политика в отношении обработки персональных данных на сайте fmworks.ru по ст. 18.1 Закона № 152-ФЗ: цели, сроки хранения, локализация в РФ и cookie.',
+        canonicalPath: '/privacy',
+        schemaType: 'Article',
+        noindex: false,
+        breadcrumbs: [
+          { name: 'Главная', path: '/' },
+          { name: 'Политика обработки персональных данных', path: '/privacy' },
         ],
       };
     case 'order':
@@ -901,6 +944,10 @@ export function applyRouteSeoToDocument(meta: RouteSeoMetadata): void {
   upsertMeta('property', 'og:image:type', 'image/png');
   upsertMeta('property', 'og:image:alt', meta.title);
   upsertMeta('property', 'og:site_name', 'FMWorks');
+  upsertMeta('name', 'twitter:card', 'summary_large_image');
+  upsertMeta('name', 'twitter:title', meta.title);
+  upsertMeta('name', 'twitter:description', meta.description);
+  upsertMeta('name', 'twitter:image', ogImageUrl);
 
   let canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
   if (!canonical) {

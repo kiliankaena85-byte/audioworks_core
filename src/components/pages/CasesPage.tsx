@@ -41,7 +41,6 @@ interface CasesPageProps {
   onToggleCase: (item: BrandCasePoster) => void;
   onSeekCase?: (item: BrandCasePoster, ratio: number) => void;
   onWarmCasePlayer?: () => void;
-  onStartPreview: (item: BrandCasePoster) => void;
   onStopPreview: (caseId: CaseId) => void;
   onNavigate: (route: PlatformRoute) => void;
 }
@@ -55,7 +54,6 @@ export function CasesPage({
   onToggleCase,
   onSeekCase,
   onWarmCasePlayer,
-  onStartPreview,
   onStopPreview,
   onNavigate,
 }: CasesPageProps) {
@@ -140,7 +138,6 @@ export function CasesPage({
         onToggleCase={onToggleCase}
         onSeekCase={onSeekCase}
         onWarmCasePlayer={onWarmCasePlayer}
-        onStartPreview={onStartPreview}
         onStopPreview={onStopPreview}
         onOpenCaseDetail={(id) => onNavigate({ kind: 'case-detail', caseSlug: id })}
       />

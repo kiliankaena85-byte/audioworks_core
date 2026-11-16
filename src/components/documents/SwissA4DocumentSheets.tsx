@@ -1026,6 +1026,191 @@ function RadioPassportSheet({ suite }: { suite: AssembledDocumentSuite }) {
   );
 }
 
+function AcceptanceActSheet({ suite }: { suite: AssembledDocumentSuite }) {
+  const { studio, customer, scope, tax } = suite;
+  const studioOgrnLabel = studio.entityKind === 'ip' ? 'ОГРНИП' : 'ОГРН';
+  const customerOgrnLabel = customer.isIpByInn ? 'ОГРНИП' : 'ОГРН';
+
+  return (
+    <article
+      data-testid="a4-sheet-act"
+      className="fmworks-a4-sheet bg-white text-[#111111] w-full max-w-[794px] mx-auto p-4 sm:p-8 lg:p-10 border border-[#E5E2DC] shadow-sm text-xs leading-relaxed"
+    >
+      <SheetBrandHeader
+        suite={suite}
+        kicker="Закрывающий первичный учётный документ (ст. 9 ФЗ № 402-ФЗ «О бухгалтерском учёте»)"
+        title={`Акт сдачи-приёмки оказанных услуг № ${suite.actNumber} от ${suite.issueDateRu}`}
+        docNumberLine={`К Приложению № ${suite.appendixNumber} к Договору № ${suite.contractNumber} от ${suite.contractDateRu} · ${suite.city}`}
+      />
+
+      {/* Стороны акта */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 bg-[#FAF9F6] border border-[#E5E2DC] mb-5 text-[11px] tabular-nums">
+        <div className="space-y-1 min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-[#5C5852]">
+            Исполнитель
+          </p>
+          <p className="font-bold text-[#111111] [overflow-wrap:anywhere]">
+            {glueLegalHeaderText(studio.legalName)}
+          </p>
+          <p className="text-[#5C5852]">
+            ИНН {studio.inn}
+            {studio.entityKind === 'ooo' && studio.kpp ? ` · КПП ${studio.kpp}` : ''} ·{' '}
+            {studioOgrnLabel} {studio.ogrnOrOgrnip}
+          </p>
+          <p className="text-[#5C5852] [overflow-wrap:anywhere]">{studio.legalAddress}</p>
+        </div>
+
+        <div className="space-y-1 min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-[#5C5852]">
+            Заказчик
+          </p>
+          <p className="font-bold text-[#111111] [overflow-wrap:anywhere]">
+            {glueLegalHeaderText(customer.displayName)}
+          </p>
+          <p className="text-[#5C5852]">
+            {customer.inn ? `ИНН ${customer.inn}` : 'ИНН Заказчика уточняется'}
+            {customer.kpp ? ` · КПП ${customer.kpp}` : ''}
+            {customer.ogrn ? ` · ${customerOgrnLabel} ${customer.ogrn}` : ''}
+          </p>
+          {customer.address ? (
+            <p className="text-[#5C5852] [overflow-wrap:anywhere]">{customer.address}</p>
+          ) : (
+            <p className="text-[#5C5852] [overflow-wrap:anywhere]">{customer.contact}</p>
+          )}
+        </div>
+      </div>
+
+      {/* Таблица выполненных работ и переданных прав */}
+      <div className="overflow-x-auto mb-5">
+        <table className="w-full border-collapse border border-[#111111] text-[11px] tabular-nums min-w-[480px]">
+          <thead>
+            <tr className="bg-[#FAF9F6] border-b border-[#111111] font-bold">
+              <th scope="col" className="p-2 text-left w-10 border-r border-[#E5E2DC]">
+                №
+              </th>
+              <th scope="col" className="p-2 text-left border-r border-[#E5E2DC]">
+                Наименование выполненных работ / передаваемых прав
+              </th>
+              <th scope="col" className="p-2 text-center w-20 border-r border-[#E5E2DC]">
+                Ед. изм.
+              </th>
+              <th scope="col" className="p-2 text-center w-14 border-r border-[#E5E2DC]">
+                Кол-во
+              </th>
+              <th scope="col" className="p-2 text-right w-28">
+                Сумма, ₽
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#E5E2DC]">
+            <tr>
+              <td className="p-2.5 font-mono text-[#5C5852] border-r border-[#E5E2DC] align-top">
+                1
+              </td>
+              <td className="p-2.5 text-[#111111] border-r border-[#E5E2DC] align-top space-y-1">
+                <p className="font-semibold">
+                  Производство рекламного аудиоролика «{suite.spotWorkingTitle}» и отчуждение
+                  исключительных прав на мастер-фонограмму (ст. 1234, 1285 ГК РФ)
+                </p>
+                <p className="text-[#5C5852]">
+                  Тариф «{scope.tierTitle}» · Хронометраж {suite.spotDurationSec} сек (
+                  {suite.spotDurationFormatted}) · Мастер-файл: {suite.spotMasterFileName} ·
+                  Паспорт ролика (РАО / ВОИС) № {suite.passportNumber}
+                </p>
+              </td>
+              <td className="p-2.5 text-center border-r border-[#E5E2DC] align-top">усл.</td>
+              <td className="p-2.5 text-center border-r border-[#E5E2DC] align-top">1</td>
+              <td className="p-2.5 text-right font-semibold align-top whitespace-nowrap">
+                {suite.isNegotiablePendingPrice ? 'По смете' : tax.formattedTotalRub}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* Итоговая сумма и правовое подтверждение отсутствия претензий */}
+      <div className="p-4 bg-[#FAF9F6] border border-[#111111] mb-5 space-y-1.5 tabular-nums">
+        {suite.isNegotiablePendingPrice ? (
+          <p className="font-bold text-sm text-[#111111]">
+            Стоимость оказанных услуг фиксируется в согласованном Приложении №{' '}
+            {suite.appendixNumber} к Договору № {suite.contractNumber}.
+          </p>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="font-bold text-[#111111]">
+                Всего оказано услуг и передано прав на сумму:
+              </span>
+              <span className="text-base font-bold text-[#111111]">
+                {tax.formattedTotalRub}
+              </span>
+            </div>
+            <p className="text-[11px] text-[#5C5852]">
+              Сумма прописью: <strong className="text-[#111111]">{tax.totalInWordsRu}</strong>.{' '}
+              {tax.taxLegalLabel}.
+            </p>
+          </>
+        )}
+      </div>
+
+      <div className="space-y-2 text-[11px] text-[#111111] mb-6">
+        <p>
+          1. Перечисленные выше услуги (работы) по созданию рекламного аудиоролика выполнены
+          Исполнителем полностью, в установленный срок и с соблюдением эфирного технического
+          стандарта РФ (Раздел 3 Договора: WAV PCM + MP3 320 kbps, громкость -14…-11 LUFS,
+          True Peak ≤ -0.5 dBTP).
+        </p>
+        <p>
+          2. С момента подписания настоящего Акта (при условии 100% оплаты по Счёту №{' '}
+          {suite.invoiceNumber}) Заказчику переходят исключительные имущественные права на
+          готовую мастер-фонограмму «{suite.spotMasterFileName}» в объёме Приложения №{' '}
+          {suite.appendixNumber}, а также передаётся Паспорт рекламного аудиоролика №{' '}
+          {suite.passportNumber} для радиовещателей, РАО и ВОИС. Заказчик претензий по объёму,
+          качеству и срокам оказания услуг не имеет.
+        </p>
+      </div>
+
+      {/* Двусторонние подписи Сторон */}
+      <div className="pt-4 border-t border-[#111111] grid grid-cols-1 sm:grid-cols-2 gap-6 text-[11px]">
+        <div className="space-y-2">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-[#5C5852]">
+            От Исполнителя (сдал)
+          </p>
+          <p className="font-semibold text-[#111111]">
+            {glueLegalHeaderText(studio.legalName)}
+          </p>
+          <div className="pt-6 border-b border-[#111111]/45 flex justify-between font-semibold">
+            <span>{studio.signatoryRoleTitle}</span>
+            <span>/ {studio.signatoryShortName} /</span>
+          </div>
+          <p className="text-[10px] text-[#5C5852]">
+            М.П. (при наличии) · ЭДО: {studio.edoOperatorLabel}
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-[#5C5852]">
+            От Заказчика (принял)
+          </p>
+          <p className="font-semibold text-[#111111]">
+            {glueLegalHeaderText(customer.displayName)}
+          </p>
+          <div className="pt-6 border-b border-[#111111]/45 flex justify-between font-semibold">
+            <span>{customer.signatory || 'Уполномоченный представитель'}</span>
+            <span>/ ________________ /</span>
+          </div>
+          <p className="text-[10px] text-[#5C5852]">
+            М.П. (при наличии)
+            {customer.edoBoxId ? ` · Диадок ID: ${customer.edoBoxId}` : ''}
+          </p>
+        </div>
+      </div>
+
+      <SheetBrandFooter suite={suite} sheetCode={`Акт № ${suite.actNumber}`} />
+    </article>
+  );
+}
+
 export function SwissA4DocumentSheets({
   suite,
   activeDoc,
@@ -1046,5 +1231,9 @@ export function SwissA4DocumentSheets({
   if (activeDoc === 'invoice') {
     return <InvoiceSheet suite={suite} />;
   }
+  if (activeDoc === 'act') {
+    return <AcceptanceActSheet suite={suite} />;
+  }
   return <RadioPassportSheet suite={suite} />;
 }
+

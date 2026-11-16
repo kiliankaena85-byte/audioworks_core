@@ -50,6 +50,12 @@ export interface VerifyMagicLinkResponse {
 export interface BindEmailResponse {
   ok: boolean;
   authenticated?: boolean;
+  verificationRequired?: boolean;
+  email?: string;
+  deliveryMode?: 'email_gateway' | 'local_preview';
+  magicLinkPath?: string;
+  magicLinkUrl?: string;
+  expiresAt?: string;
   account?: ClientAccountPublicProfile;
   orders?: ClientCabinetOrderSummary[];
   legalProfiles?: StudioLegalProfilesConfig;
@@ -451,7 +457,10 @@ export async function submitClientSpotDecisionApi(params: {
   comment?: string;
 }): Promise<{
   order: ClientCabinetOrderSummary;
-  routedTo: 'accepted' | 'service_round' | 'producer_escalation';
+  routedTo:
+    | 'accepted'
+    | 'sound_engineer_included_round'
+    | 'producer_escalation';
 }> {
   const { orderNumber, ...body } = params;
   const res = await fetch(
@@ -466,7 +475,10 @@ export async function submitClientSpotDecisionApi(params: {
   const json = (await res.json()) as {
     ok?: boolean;
     order?: ClientCabinetOrderSummary;
-    routedTo?: 'accepted' | 'service_round' | 'producer_escalation';
+    routedTo?:
+      | 'accepted'
+      | 'sound_engineer_included_round'
+      | 'producer_escalation';
     error?: string;
   };
   if (!res.ok || !json.ok || !json.order) {
@@ -474,7 +486,7 @@ export async function submitClientSpotDecisionApi(params: {
   }
   return {
     order: json.order,
-    routedTo: json.routedTo ?? 'service_round',
+    routedTo: json.routedTo ?? 'sound_engineer_included_round',
   };
 }
 

@@ -296,6 +296,12 @@ export function collectSitemapRouteEntries(
       priority: '0.8',
     },
     { path: '/faq', category: 'core', changefreq: 'monthly', priority: '0.9' },
+    {
+      path: '/privacy',
+      category: 'core',
+      changefreq: 'monthly',
+      priority: '0.5',
+    },
   ];
 
   if (airtimeEnabled) {
@@ -507,8 +513,7 @@ export function resolveServerRouteLookup(
 
 function buildSsrFallbackMarkup(
   route: PlatformRoute,
-  meta: RouteSeoMetadata,
-  cleanOrigin: string
+  meta: RouteSeoMetadata
 ): string {
   if (meta.noindex) {
     return '';
@@ -753,6 +758,10 @@ export function injectRouteSeoIntoHtml(
   out = upsertHeadMetaTag(out, 'property', 'og:image:type', 'image/png');
   out = upsertHeadMetaTag(out, 'property', 'og:image:alt', meta.title);
   out = upsertHeadMetaTag(out, 'property', 'og:site_name', 'FMWorks');
+  out = upsertHeadMetaTag(out, 'name', 'twitter:card', 'summary_large_image');
+  out = upsertHeadMetaTag(out, 'name', 'twitter:title', meta.title);
+  out = upsertHeadMetaTag(out, 'name', 'twitter:description', meta.description);
+  out = upsertHeadMetaTag(out, 'name', 'twitter:image', ogImageUrl);
   out = upsertHeadLinkTag(out, 'canonical', fullUrl);
   out = upsertHeadSitemapLink(out, `${cleanOrigin}/sitemap.xml`);
   out = upsertHeadTurboRssLink(out, `${cleanOrigin}/turbo-pages.xml`);
@@ -800,7 +809,7 @@ export function injectRouteSeoIntoHtml(
     out = upsertHeadJsonLdScript(out, 'fmworks-faqpage-jsonld', faqSchema);
   }
 
-  const ssrFallbackHtml = buildSsrFallbackMarkup(route, meta, cleanOrigin);
+  const ssrFallbackHtml = buildSsrFallbackMarkup(route, meta);
   if (ssrFallbackHtml) {
     out = out.replace(/<\/body>/i, `    ${ssrFallbackHtml}\n  </body>`);
   }

@@ -74,6 +74,7 @@ const DOC_TABS: readonly {
     desktopLabel: 'Договор и Приложение №1',
   },
   { id: 'invoice', shortLabel: 'Счёт', desktopLabel: 'Счёт на оплату' },
+  { id: 'act', shortLabel: 'Акт сдачи', desktopLabel: 'Акт сдачи-приёмки' },
   {
     id: 'passport',
     shortLabel: 'Паспорт прав',
@@ -945,7 +946,7 @@ export function SuiteTriggerBadge({
       className="w-full sm:w-auto min-h-[44px] px-4 py-2 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] text-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer text-center leading-snug"
     >
       <FileText className="w-4 h-4 shrink-0" aria-hidden="true" />
-      <span>Фирменные бланки A4 (КП · Договор · Счёт · Паспорт)</span>
+      <span>Фирменные бланки A4 (КП · Договор · Счёт · Акт · Паспорт)</span>
     </button>
   );
 }

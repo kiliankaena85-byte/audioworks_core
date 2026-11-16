@@ -52,6 +52,16 @@
     </image:image>
   </url>
   <url>
+    <loc>https://fmworks.ru/privacy</loc>
+    <lastmod>2026-11-15</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+    <image:image>
+      <image:loc>https://fmworks.ru/api/og.png?route=%2Fprivacy</image:loc>
+      <image:title>FMWorks — студия коммерческого аудиопродакшна для радио и бизнеса</image:title>
+    </image:image>
+  </url>
+  <url>
     <loc>https://fmworks.ru/cases/industry/real-estate</loc>
     <lastmod>2026-11-15</lastmod>
     <changefreq>monthly</changefreq>

@@ -740,3 +740,206 @@ export function filterCabinetHistoryOrders(
     );
   });
 }
+
+export type RepeatOrderFormatId =
+  | 'voice_style'
+  | 'turnkey'
+  | 'cinema'
+  | 'adaptation'
+  | 'custom_consult';
+
+/**
+ * Восстанавливает точный тариф (`selectedFormat`) и хронометраж (`spotDurationSec`) заказа
+ * для функции «Повторить заказ за 1 минуту», чтобы повторный заказ не сбрасывался на дефолтные 20 сек / «Под ключ».
+ */
+export function inferOrderRepeatParameters(
+  order: Pick<
+    ClientCabinetOrderSummary,
+    'formatLabel' | 'totalBudgetRub' | 'documentMeta' | 'approvalWorkflow'
+  >
+): {
+  formatId: RepeatOrderFormatId;
+  spotDurationSec: number;
+} {
+  const lower = (order.formatLabel || '').toLowerCase();
+  const durationMatch = (order.formatLabel || '').match(/(\d{1,2})\s*сек/i);
+  const parsedFromLabel = durationMatch ? Number(durationMatch[1]) : undefined;
+
+  const rawDuration =
+    order.documentMeta?.spotExactDurationSec ??
+    order.approvalWorkflow?.targetSlotSec ??
+    parsedFromLabel ??
+    20;
+  const spotDurationSec = Math.max(5, Math.min(60, Math.round(rawDuration)));
+
+  let formatId: RepeatOrderFormatId = 'turnkey';
+  if (lower.includes('игров') || lower.includes('кино') || lower.includes('cinema')) {
+    formatId = 'cinema';
+  } else if (lower.includes('голос') || lower.includes('voice')) {
+    formatId = 'voice_style';
+  } else if (lower.includes('адаптац') || lower.includes('ресайз')) {
+    formatId = 'adaptation';
+  } else if (
+    lower.includes('индивидуальн') ||
+    lower.includes('договорн') ||
+    lower.includes('консультац') ||
+    order.totalBudgetRub <= 0
+  ) {
+    formatId = 'custom_consult';
+  } else if (lower.includes('под ключ') || lower.includes('turnkey')) {
+    formatId = 'turnkey';
+  } else if (order.totalBudgetRub >= 33_000) {
+    formatId = 'cinema';
+  } else if (order.totalBudgetRub > 0 && order.totalBudgetRub <= 17_000) {
+    formatId = 'voice_style';
+  }
+
+  return { formatId, spotDurationSec };
+}
+
+/**
+ * Сортирует активные заказы так, чтобы проекты, ожидающие действия самого клиента
+ * («Ваш ход»: утверждение сценария или приёмка готового ролика), всегда отображались первыми.
+ */
+export function sortActiveOrdersByClientTurn<
+  T extends Pick<ClientCabinetOrderSummary, 'createdAt' | 'approvalWorkflow'>,
+>(activeOrders: readonly T[]): T[] {
+  return [...activeOrders].sort((a, b) => {
+    const aTurn = a.approvalWorkflow?.whoseTurnActor === 'client' ? 1 : 0;
+    const bTurn = b.approvalWorkflow?.whoseTurnActor === 'client' ? 1 : 0;
+    if (aTurn !== bTurn) {
+      return bTurn - aTurn;
+    }
+    return (b.createdAt || '').localeCompare(a.createdAt || '');
+  });
+}
+
+/**
+ * Проверяет сигнатуру содержимого файла (magic bytes) при загрузке клиентских материалов в заказ,
+ * исключая подмену исполняемых или HTML/SVG-скриптов под видом документов, изображений и аудио.
+ */
+export function verifyClientAttachmentMagicBytes(
+  bytes: Uint8Array,
+  extWithDot: string
+): { ok: true } | { ok: false; error: string } {
+  const ext = extWithDot.trim().toLowerCase();
+  if (bytes.length === 0) {
+    return { ok: false, error: 'Файл пуст (0 байт)' };
+  }
+
+  const startsWithAscii = (prefix: string): boolean => {
+    if (bytes.length < prefix.length) return false;
+    for (let i = 0; i < prefix.length; i += 1) {
+      if (bytes[i] !== prefix.charCodeAt(i)) return false;
+    }
+    return true;
+  };
+
+  if (ext === '.pdf') {
+    return startsWithAscii('%PDF-')
+      ? { ok: true }
+      : { ok: false, error: 'Файл не соответствует формату PDF (нарушена сигнатура %PDF)' };
+  }
+
+  if (ext === '.png') {
+    const pngSig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    const valid =
+      bytes.length >= 8 && pngSig.every((b, idx) => bytes[idx] === b);
+    return valid
+      ? { ok: true }
+      : { ok: false, error: 'Файл не является корректным изображением PNG' };
+  }
+
+  if (ext === '.jpg' || ext === '.jpeg') {
+    const valid =
+      bytes.length >= 3 &&
+      bytes[0] === 0xff &&
+      bytes[1] === 0xd8 &&
+      bytes[2] === 0xff;
+    return valid
+      ? { ok: true }
+      : { ok: false, error: 'Файл не является корректным изображением JPEG' };
+  }
+
+  if (ext === '.wav') {
+    const valid =
+      bytes.length >= 12 &&
+      startsWithAscii('RIFF') &&
+      bytes[8] === 0x57 &&
+      bytes[9] === 0x41 &&
+      bytes[10] === 0x56 &&
+      bytes[11] === 0x45;
+    return valid
+      ? { ok: true }
+      : { ok: false, error: 'Файл не является корректным аудиофайлом WAV (RIFF/WAVE)' };
+  }
+
+  if (ext === '.ogg') {
+    return startsWithAscii('OggS')
+      ? { ok: true }
+      : { ok: false, error: 'Файл не является корректным аудиофайлом OGG' };
+  }
+
+  if (ext === '.mp3') {
+    const hasId3 = startsWithAscii('ID3');
+    const hasMpegSync =
+      bytes.length >= 2 && bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0;
+    return hasId3 || hasMpegSync
+      ? { ok: true }
+      : { ok: false, error: 'Файл не является корректным аудиофайлом MP3' };
+  }
+
+  if (ext === '.m4a') {
+    const hasFtyp =
+      bytes.length >= 8 &&
+      bytes[4] === 0x66 &&
+      bytes[5] === 0x74 &&
+      bytes[6] === 0x79 &&
+      bytes[7] === 0x70;
+    return hasFtyp
+      ? { ok: true }
+      : { ok: false, error: 'Файл не является корректным контейнером M4A (MP4 Audio)' };
+  }
+
+  if (ext === '.docx' || ext === '.zip') {
+    const valid =
+      bytes.length >= 4 &&
+      bytes[0] === 0x50 &&
+      bytes[1] === 0x4b &&
+      (bytes[2] === 0x03 || bytes[2] === 0x05 || bytes[2] === 0x07);
+    return valid
+      ? { ok: true }
+      : { ok: false, error: 'Файл не соответствует контейнеру DOCX / ZIP' };
+  }
+
+  if (ext === '.doc') {
+    const oleSig = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+    const valid =
+      bytes.length >= 8 && oleSig.every((b, idx) => bytes[idx] === b);
+    return valid
+      ? { ok: true }
+      : { ok: false, error: 'Файл не соответствует формату документа MS Word (.doc)' };
+  }
+
+  if (ext === '.rtf') {
+    return startsWithAscii('{\\rtf')
+      ? { ok: true }
+      : { ok: false, error: 'Файл не соответствует формату RTF' };
+  }
+
+  if (ext === '.txt') {
+    const sampleLen = Math.min(bytes.length, 4096);
+    for (let i = 0; i < sampleLen; i += 1) {
+      if (bytes[i] === 0x00) {
+        return {
+          ok: false,
+          error: 'Текстовый файл (.txt) содержит бинарные нулевые байты',
+        };
+      }
+    }
+    return { ok: true };
+  }
+
+  return { ok: true };
+}
+

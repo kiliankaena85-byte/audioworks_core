@@ -9,7 +9,6 @@ import { promisify } from 'node:util';
 import zlib from 'node:zlib';
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
-import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { AIRTIME_SALES_ENABLED } from './src/data/platformFeatures.ts';
 import {
   buildLlmsTxt,
@@ -18,10 +17,19 @@ import {
   injectRouteSeoIntoHtml,
   resolveServerRouteLookup,
 } from './src/data/seoServerTemplates.ts';
+import { requestGeminiMediaAdvisorHint } from './src/server/geminiMediaAdvisor.ts';
 import {
   renderOgPngForRoute,
   renderOgSvgForRoute,
 } from './src/server/ogImageRenderer.ts';
+import {
+  evictExcessSseClients,
+  MAX_CHALLENGE_NONCE_ENTRIES,
+  MAX_CONCURRENT_CABINET_SSE_CLIENTS,
+  MAX_RECENT_FINGERPRINT_ENTRIES,
+  pruneExpiredTtlEntries,
+  setBoundedTtlEntry,
+} from './src/server/runtimeMemoryGuard.ts';
 import { convertRasterFileToWebp } from './scripts/generate-webp.mjs';
 import { buildTurboPagesXml } from './src/data/turboFeed.ts';
 import {
@@ -210,6 +218,8 @@ import { sanitizeClientAvatarPresetId } from './src/data/clientAvatarLogic.ts';
 import {
   buildClientSessionClearCookieHeader,
   buildClientSessionSetCookieHeader,
+  canDirectBindOrdersToEmailSession,
+  canExposeMagicLinkLocalPreview,
   CLIENT_SESSION_COOKIE_NAME,
   CLIENT_SESSION_MAX_AGE_SEC,
   collectOrdersForClientEmail,
@@ -226,6 +236,7 @@ import {
   verifyClientSessionToken,
 } from './src/data/clientAuthCore.ts';
 import type { ClientAccountRecord } from './src/data/clientAuthCore.ts';
+import { verifyClientAttachmentMagicBytes } from './src/data/clientCabinetArchitecture.ts';
 
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
@@ -364,7 +375,16 @@ function persistClientAuthNonces(): void {
 
 hydratePersistedRevocations();
 
+function isAiStudioDevPreview(): boolean {
+  const kService = (process.env.K_SERVICE ?? '').trim();
+  const appUrl = (process.env.APP_URL ?? '').trim();
+  return kService.startsWith('ais-dev-') || appUrl.includes('//ais-dev-');
+}
+
 function isStrictProductionDeployment(): boolean {
+  if (process.env.npm_lifecycle_event === 'dev' || isAiStudioDevPreview()) {
+    return false;
+  }
   return (
     process.env.NODE_ENV === 'production' ||
     process.env.npm_lifecycle_event === 'start'
@@ -1162,6 +1182,9 @@ function canClientAccessOrder(
   providedRescueToken: string | undefined | null,
   crmStore: PersistedOrdersCrmStore
 ): boolean {
+  if (order.pdnAnonymizedAt) {
+    return false;
+  }
   if (verifyOrderRescueToken(order.orderNumber, providedRescueToken)) {
     return true;
   }
@@ -1191,6 +1214,12 @@ const clientTestPushLimiter = new RateLimiter({
   maxAttempts: 12,
   windowMs: 5 * 60 * 1000,
   minIntervalMs: 400,
+});
+
+const clientOrderUploadLimiter = new RateLimiter({
+  maxAttempts: 16,
+  windowMs: 10 * 60 * 1000,
+  minIntervalMs: 350,
 });
 
 const soundDropUploadLimiter = new RateLimiter({
@@ -1550,6 +1579,10 @@ function saveBase64OrderAttachment(params: {
       ok: false,
       error: `Размер файла превышает лимит ${maxMb} МБ`,
     };
+  }
+  const magicCheck = verifyClientAttachmentMagicBytes(decoded.buffer, ext);
+  if (!magicCheck.ok) {
+    return { ok: false, error: magicCheck.error };
   }
   const safeStem = sanitizeSafeFileStem(originalBase, params.fallbackPrefix);
   const safeFileName = `${safeStem}${ext}`;
@@ -2456,9 +2489,7 @@ function verifyLeadChallengeToken(rawToken: string): {
       return { valid: false, nonce: '', salt: '', difficulty: LEAD_POW_DIFFICULTY, alreadyUsed: false };
     }
     const now = Date.now();
-    for (const [k, expTs] of consumedChallengeNonces.entries()) {
-      if (expTs < now) consumedChallengeNonces.delete(k);
-    }
+    pruneExpiredTtlEntries(consumedChallengeNonces, now);
     const alreadyUsed = consumedChallengeNonces.has(parsed.nonce);
     return {
       valid: true,
@@ -3139,9 +3170,7 @@ async function startServer() {
       );
 
     const now = Date.now();
-    for (const [fpKey, expTs] of recentLeadFingerprints.entries()) {
-      if (expTs < now) recentLeadFingerprints.delete(fpKey);
-    }
+    pruneExpiredTtlEntries(recentLeadFingerprints, now);
     const fingerprint = computeLeadPayloadFingerprint(contactLine, companyLine, briefText);
     const isDuplicateRecentPayload = recentLeadFingerprints.has(fingerprint);
 
@@ -3223,7 +3252,13 @@ async function startServer() {
     }
 
     if (tokenState.valid && tokenState.nonce) {
-      consumedChallengeNonces.set(tokenState.nonce, now + LEAD_CHALLENGE_TTL_MS);
+      setBoundedTtlEntry(
+        consumedChallengeNonces,
+        tokenState.nonce,
+        now + LEAD_CHALLENGE_TTL_MS,
+        MAX_CHALLENGE_NONCE_ENTRIES,
+        now
+      );
     }
 
     const store = readSecurityStore();
@@ -3266,7 +3301,13 @@ async function startServer() {
     }
 
     // Верифицированная заявка реального клиента
-    recentLeadFingerprints.set(fingerprint, now + 10 * 60 * 1000);
+    setBoundedTtlEntry(
+      recentLeadFingerprints,
+      fingerprint,
+      now + 10 * 60 * 1000,
+      MAX_RECENT_FINGERPRINT_ENTRIES,
+      now
+    );
     store.verifiedCount += 1;
     const resolvedBudgetRub =
       typeof body.totalBudgetRub === 'number' && Number.isFinite(body.totalBudgetRub)
@@ -3910,6 +3951,7 @@ async function startServer() {
       const magicLinkUrl = `${publicOrigin}${magicLinkPath}`;
 
       const configuredGatewayUrl = process.env.MAGIC_LINK_WEBHOOK_URL?.trim() || '';
+      let gatewayFailed = false;
       if (configuredGatewayUrl) {
         const targetCheck = validateOutboundWebhookTarget(configuredGatewayUrl, {
           allowInternalLoopbackSink: false,
@@ -3949,10 +3991,31 @@ async function startServer() {
               });
               return;
             }
+            gatewayFailed = true;
           } catch {
-            // Fall through to local preview link if mail gateway is unreachable in dev
+            gatewayFailed = true;
           }
+        } else {
+          gatewayFailed = true;
         }
+      }
+
+      const allowLocalPreview = canExposeMagicLinkLocalPreview({
+        nodeEnv: process.env.NODE_ENV,
+        email,
+        hasConfiguredGateway: Boolean(configuredGatewayUrl),
+        gatewayFailed,
+        allowPreviewMagicLinks: process.env.ALLOW_PREVIEW_MAGIC_LINKS === 'true',
+      });
+
+      if (!allowLocalPreview) {
+        res.status(503).json({
+          ok: false,
+          error: configuredGatewayUrl
+            ? 'Почтовый сервис временно недоступен. Повторите отправку ссылки через минуту или войдите по номеру заказа.'
+            : 'Отправка писем для этого адреса на сервере ещё не подключена. Воспользуйтесь входом по номеру заказа.',
+        });
+        return;
       }
 
       res.json({
@@ -4105,11 +4168,22 @@ async function startServer() {
   app.post(
     '/api/client-auth/bind-email',
     express.json({ limit: '32kb' }),
-    (req, res) => {
+    async (req, res) => {
       if (isBlockedCrossOriginMutation(req)) {
         res.status(403).json({
           ok: false,
           error: 'Кросс-доменный запрос отклонён политикой безопасности',
+        });
+        return;
+      }
+
+      const clientIp = resolveClientIp(req);
+      const ipRate = clientMagicLinkIpLimiter.consume(clientIp);
+      if (!ipRate.allowed) {
+        res.setHeader('Retry-After', String(ipRate.retryAfterSec));
+        res.status(429).json({
+          ok: false,
+          error: `Слишком много запросов привязки почты. Подождите ${ipRate.retryAfterSec} сек.`,
         });
         return;
       }
@@ -4144,9 +4218,7 @@ async function startServer() {
       const crmStore = readOrdersCrmStore();
       const legalProfiles = sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles);
       const nowIso = new Date().toISOString();
-      const boundNumbers: string[] = [];
-      let primaryContact = '';
-      let primaryCompany = '';
+      const verifiedOrderIndices: number[] = [];
 
       for (const item of candidateItems) {
         const ordNum =
@@ -4157,24 +4229,143 @@ async function startServer() {
         const idx = crmStore.orders.findIndex(
           (o) => o.orderNumber === ordNum && !o.pdnAnonymizedAt
         );
-        if (idx >= 0) {
-          crmStore.orders[idx] = {
-            ...crmStore.orders[idx],
-            clientEmail: email,
-            updatedAt: nowIso,
-          };
-          boundNumbers.push(ordNum);
-          if (!primaryContact) primaryContact = crmStore.orders[idx].contact;
-          if (!primaryCompany) primaryCompany = crmStore.orders[idx].companyOrInn;
+        if (idx >= 0 && !verifiedOrderIndices.includes(idx)) {
+          verifiedOrderIndices.push(idx);
         }
       }
 
-      if (boundNumbers.length === 0) {
+      if (verifiedOrderIndices.length === 0) {
         res.status(403).json({
           ok: false,
           error: 'Не удалось подтвердить ключ доступа к заказу для привязки почты',
         });
         return;
+      }
+
+      const activeSession = getVerifiedClientSession(req);
+      const allowDirectBind = canDirectBindOrdersToEmailSession({
+        verifiedSessionEmail: activeSession?.email ?? null,
+        targetEmail: email,
+      });
+
+      // Защита P0: если владение e-mail ещё не подтверждено активной сессией —
+      // НЕ выдаём чужую сессию, а отправляем одноразовую ссылку подтверждения (при переходе verify-magic-link склеит localItems).
+      if (!allowDirectBind) {
+        const emailRate = clientMagicLinkEmailLimiter.consume(email);
+        if (!emailRate.allowed) {
+          res.setHeader('Retry-After', String(emailRate.retryAfterSec));
+          res.status(429).json({
+            ok: false,
+            error: `Ссылка подтверждения на этот адрес уже запрашивалась недавно. Подождите ${emailRate.retryAfterSec} сек.`,
+          });
+          return;
+        }
+
+        const magic = issueClientMagicLinkToken(email, getSessionSecret(), {
+          revokeSessions: false,
+        });
+        const publicOrigin = resolveSafePublicOrigin({
+          configuredOrigin: process.env.APP_URL,
+          hostHeader: req.headers.host,
+          forwardedHost: req.headers['x-forwarded-host'],
+          protocol: req.protocol,
+          forwardedProto: req.headers['x-forwarded-proto'],
+          trustProxy: process.env.TRUST_PROXY === 'true',
+          fallbackOrigin: `http://localhost:${PORT}`,
+        });
+        const magicLinkPath = `/cabinet?magic=${encodeURIComponent(magic.token)}`;
+        const magicLinkUrl = `${publicOrigin}${magicLinkPath}`;
+
+        const configuredGatewayUrl = process.env.MAGIC_LINK_WEBHOOK_URL?.trim() || '';
+        let gatewayFailed = false;
+        if (configuredGatewayUrl) {
+          const targetCheck = validateOutboundWebhookTarget(configuredGatewayUrl, {
+            allowInternalLoopbackSink: false,
+            localPort: PORT,
+          });
+          const rfSafety = evaluateWebhookEndpointRfSafety(configuredGatewayUrl);
+          if (
+            targetCheck.ok &&
+            rfSafety.isValidUrl &&
+            !rfSafety.isBannedForeignService
+          ) {
+            try {
+              const mailRes = await fetch(configuredGatewayUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  event: 'client.bind_email_confirm',
+                  to: email,
+                  subject: 'Подтверждение почты и привязка заказов в кабинете FMWorks',
+                  magicLinkUrl,
+                  revokeOtherSessions: false,
+                  expiresInMinutes: 30,
+                }),
+                signal: AbortSignal.timeout(5000),
+              });
+              if (mailRes.ok) {
+                res.json({
+                  ok: true,
+                  authenticated: false,
+                  verificationRequired: true,
+                  email,
+                  deliveryMode: 'email_gateway',
+                  expiresAt: new Date(magic.expiresAt).toISOString(),
+                });
+                return;
+              }
+              gatewayFailed = true;
+            } catch {
+              gatewayFailed = true;
+            }
+          } else {
+            gatewayFailed = true;
+          }
+        }
+
+        const allowLocalPreview = canExposeMagicLinkLocalPreview({
+          nodeEnv: process.env.NODE_ENV,
+          email,
+          hasConfiguredGateway: Boolean(configuredGatewayUrl),
+          gatewayFailed,
+          allowPreviewMagicLinks: process.env.ALLOW_PREVIEW_MAGIC_LINKS === 'true',
+        });
+
+        if (!allowLocalPreview) {
+          res.status(503).json({
+            ok: false,
+            error:
+              'Не удалось отправить письмо подтверждения привязки почты. Попробуйте позже.',
+          });
+          return;
+        }
+
+        res.json({
+          ok: true,
+          authenticated: false,
+          verificationRequired: true,
+          email,
+          deliveryMode: 'local_preview',
+          magicLinkPath,
+          magicLinkUrl,
+          expiresAt: new Date(magic.expiresAt).toISOString(),
+        });
+        return;
+      }
+
+      const boundNumbers: string[] = [];
+      let primaryContact = '';
+      let primaryCompany = '';
+
+      for (const idx of verifiedOrderIndices) {
+        crmStore.orders[idx] = {
+          ...crmStore.orders[idx],
+          clientEmail: email,
+          updatedAt: nowIso,
+        };
+        boundNumbers.push(crmStore.orders[idx].orderNumber);
+        if (!primaryContact) primaryContact = crmStore.orders[idx].contact;
+        if (!primaryCompany) primaryCompany = crmStore.orders[idx].companyOrInn;
       }
 
       const upserted = upsertClientAccountRecord(crmStore.clientAccounts, {
@@ -4192,18 +4383,6 @@ async function startServer() {
         crmStore.orders,
         email,
         upserted.account
-      );
-
-      const sessionToken = issueClientSessionToken(email, getSessionSecret(), {
-        epoch: upserted.account.sessionEpoch ?? 1,
-      });
-      res.setHeader(
-        'Set-Cookie',
-        buildClientSessionSetCookieHeader(
-          sessionToken.token,
-          CLIENT_SESSION_MAX_AGE_SEC,
-          isHttpsRequest(req)
-        )
       );
 
       const summaries = matchedOrders.map((ord) =>
@@ -4561,7 +4740,9 @@ async function startServer() {
         if (!ordNum || !token || !verifyOrderRescueToken(ordNum, token)) {
           continue;
         }
-        const found = crmStore.orders.find((o) => o.orderNumber === ordNum);
+        const found = crmStore.orders.find(
+          (o) => o.orderNumber === ordNum && !o.pdnAnonymizedAt
+        );
         if (found) {
           orders.push(toClientCabinetOrderSummary(found, token, legalProfiles));
         }
@@ -4624,6 +4805,10 @@ async function startServer() {
       heartbeatTimer.unref();
     }
 
+    evictExcessSseClients(
+      cabinetNotificationSseClients,
+      MAX_CONCURRENT_CABINET_SSE_CLIENTS
+    );
     cabinetNotificationSseClients.set(clientId, {
       id: clientId,
       res,
@@ -4905,6 +5090,14 @@ async function startServer() {
     '/api/orders/:orderNumber/preferences',
     express.json({ limit: '32kb' }),
     async (req, res) => {
+      if (isBlockedCrossOriginMutation(req)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Кросс-доменный запрос отклонён политикой безопасности',
+        });
+        return;
+      }
+
       const orderNumber = String(req.params.orderNumber || '').trim();
       const body = (req.body ?? {}) as {
         rescueToken?: string;
@@ -5071,6 +5264,25 @@ async function startServer() {
     '/api/orders/:orderNumber/client-upload',
     express.json({ limit: '12mb' }),
     (req, res) => {
+      if (isBlockedCrossOriginMutation(req)) {
+        res.status(403).json({
+          ok: false,
+          error: 'Кросс-доменный запрос загрузки файла отклонён политикой безопасности',
+        });
+        return;
+      }
+
+      const clientIp = resolveClientIp(req);
+      const uploadRate = clientOrderUploadLimiter.consume(clientIp);
+      if (!uploadRate.allowed) {
+        res.setHeader('Retry-After', String(uploadRate.retryAfterSec));
+        res.status(429).json({
+          ok: false,
+          error: `Слишком частая загрузка файлов. Подождите ${uploadRate.retryAfterSec} сек.`,
+        });
+        return;
+      }
+
       const orderNumber = String(req.params.orderNumber || '').trim();
       const body = (req.body ?? {}) as {
         rescueToken?: string;
@@ -6892,7 +7104,7 @@ async function startServer() {
             effectiveRescueToken,
             sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles)
           ),
-          soundEngineerEmail: scriptApprovedEmail,
+          dispatchedToEngineer: Boolean(scriptApprovedEmail),
         });
       } catch (err) {
         res.status(400).json({
@@ -7093,7 +7305,7 @@ async function startServer() {
             effectiveRescueToken,
             sanitizeStudioLegalProfilesConfig(crmStore.legalProfiles)
           ),
-          soundEngineerEmail: spotRevisionEmail,
+          dispatchedToEngineer: Boolean(spotRevisionEmail),
         });
       } catch (err) {
         res.status(400).json({
@@ -7883,134 +8095,24 @@ async function startServer() {
       const spotSeconds = typeof body.spotSeconds === 'number' ? body.spotSeconds : 15;
 
       try {
-        const ai = new GoogleGenAI({
+        const hint = await requestGeminiMediaAdvisorHint(
           apiKey,
-          httpOptions: {
-            headers: {
-              'User-Agent': 'aistudio-build',
-            },
+          {
+            niche,
+            segment,
+            ageCore,
+            listeningContext,
+            budgetRub,
+            spotSeconds,
+            productNote,
           },
-        });
-
-        const promptText = [
-          'Проанализируй рекламную задачу клиента для радиоразмещения FMWorks и верни приоритеты выбора станций и тайм-слотов.',
-          `Отраслевая ниша: ${niche}`,
-          `Сегмент ЦА: ${segment}, возраст: ${ageCore}, контекст прослушивания: ${listeningContext}`,
-          `Бюджет клиента: ${Math.round(budgetRub)} ₽, хронометраж ролика: ${Math.round(spotSeconds)} сек`,
-          `Описание продукта / акции клиента: ${productNote || 'Не указано дополнительно'}`,
-          'Доступные идентификаторы радиостанций: bfm (Business FM), montecarlo (Радио Monte Carlo), avtoradio (Авторадио), europaplus (Европа Плюс), comedy (Comedy Radio), kommersant (Коммерсантъ FM), dorozhnoe (Дорожное Радио), retrofm (Ретро FM), silverrain (Серебряный Дождь), jazz (Радио JAZZ).',
-          'Доступные коды тайм-слотов: morning_prime (утренний прайм), daytime_block (дневной блок), evening_drive (вечерний драйв), weekend_air (выходные Сб-Вс), traffic_weather (спонсорство погоды и трафика).',
-          'Не упоминай конкретные названия городов в ответах.',
-        ].join('\n');
-
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents: promptText,
-          config: {
-            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-            systemInstruction:
-              'Ты главный медиабайер радиоагентства FMWorks. Подбирай самые целевые радиостанции и конкретные временные окна под продукт и портрет ЦА без воды, не упоминая географические города и жаргон звукозаписи. Пиши лаконично по-русски.',
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                preferredDayparts: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING },
-                  description: '1-2 самых подходящих кода тайм-слотов из списка.',
-                },
-                avoidedDayparts: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING },
-                  description: 'Коды тайм-слотов, которые хуже подходят задаче (или пустой массив).',
-                },
-                boostedStationIds: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING },
-                  description: 'До 3 наиболее релевантных stationId под продукт и ЦА.',
-                },
-                stationReasons: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      stationId: { type: Type.STRING },
-                      reason: {
-                        type: Type.STRING,
-                        description: 'Короткая причина релевантности (до 9 слов).',
-                      },
-                    },
-                    required: ['stationId', 'reason'],
-                  },
-                },
-              },
-              required: [
-                'preferredDayparts',
-                'avoidedDayparts',
-                'boostedStationIds',
-                'stationReasons',
-              ],
-            },
-          },
-        });
-
-        const rawJson = (response.text ?? '{}').trim();
-        const parsed = JSON.parse(rawJson) as {
-          preferredDayparts?: string[];
-          avoidedDayparts?: string[];
-          boostedStationIds?: string[];
-          stationReasons?: { stationId: string; reason: string }[];
-        };
-
-        const validDayparts = new Set([
-          'morning_prime',
-          'daytime_block',
-          'evening_drive',
-          'weekend_air',
-          'traffic_weather',
-        ]);
-        const validStations = new Set([
-          'bfm',
-          'montecarlo',
-          'avtoradio',
-          'europaplus',
-          'comedy',
-          'kommersant',
-          'dorozhnoe',
-          'retrofm',
-          'silverrain',
-          'jazz',
-        ]);
-
-        const slotReasonsByStationId: Record<string, string> = {};
-        for (const item of parsed.stationReasons ?? []) {
-          if (
-            item &&
-            typeof item.stationId === 'string' &&
-            validStations.has(item.stationId) &&
-            typeof item.reason === 'string' &&
-            scanEditorialWarnings(item.reason).length === 0
-          ) {
-            slotReasonsByStationId[item.stationId] = item.reason.trim().slice(0, 95);
-          }
-        }
+          (reason) => scanEditorialWarnings(reason).length === 0
+        );
 
         res.json({
           ok: true,
           usedGeminiModel: true,
-          hint: {
-            preferredDayparts: (parsed.preferredDayparts ?? []).filter((d) =>
-              validDayparts.has(d)
-            ),
-            avoidedDayparts: (parsed.avoidedDayparts ?? []).filter((d) =>
-              validDayparts.has(d)
-            ),
-            boostedStationIds: (parsed.boostedStationIds ?? []).filter((s) =>
-              validStations.has(s)
-            ),
-            slotReasonsByStationId,
-            usedGeminiModel: true,
-          },
+          hint,
         });
       } catch {
         // При недоступности внешнего ключа или лимите квоты плавно переключаемся на локальную матрицу ЦА
@@ -8665,9 +8767,15 @@ async function startServer() {
     res.status(status >= 400 && status < 600 ? status : 500).type('text/plain').send('Error');
   });
 
-  // Фоновый сторожевой таймер SLA (проверка опозданий звонка каждые 30 секунд)
+  // Фоновый сторожевой таймер SLA и очистки TTL-реестров в памяти (каждые 30 секунд)
   const slaSweepInterval = setInterval(() => {
     try {
+      const nowMs = Date.now();
+      pruneExpiredTtlEntries(consumedChallengeNonces, nowMs);
+      pruneExpiredTtlEntries(recentLeadFingerprints, nowMs);
+      sessionRevocationRegistry.exportEntries();
+      clientSessionRevocationRegistry.exportEntries();
+      consumedMagicLinkRegistry.exportEntries();
       runSlaEscalationSweep();
     } catch {
       // Не прерываем цикл сервера при фоновой сверке SLA
