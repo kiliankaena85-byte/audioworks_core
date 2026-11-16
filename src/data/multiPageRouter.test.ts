@@ -34,6 +34,7 @@ import {
   resolveActiveTopNavSection,
   resolveRouteScrollAnchor,
   resolveRouteSeoMeta,
+  resolveRouteSkeletonVariant,
   resolveRouteTransitionKey,
 } from './platformRouter';
 import { BANNED_EDITORIAL_TERMS } from './studioCmsTypes';
@@ -80,6 +81,14 @@ test('parsePlatformRoute в студийном режиме перенаправ
   assert.deepEqual(parsePlatformRoute('/', '', '#hot-air'), { kind: 'home' });
 
   assert.deepEqual(parsePlatformRoute('/cases'), { kind: 'cases' });
+  assert.deepEqual(parsePlatformRoute('/cases', '?q=дмитрогорский', ''), {
+    kind: 'cases',
+    searchQuery: 'дмитрогорский',
+  });
+  assert.equal(
+    buildPlatformPath({ kind: 'cases', searchQuery: 'клиника' }),
+    '/cases?q=%D0%BA%D0%BB%D0%B8%D0%BD%D0%B8%D0%BA%D0%B0'
+  );
   assert.deepEqual(parsePlatformRoute('/cases', '', '#industry-solutions-hub'), {
     kind: 'cases',
     scrollAnchor: 'industry-solutions-hub',
@@ -539,5 +548,38 @@ test('resolveRouteTransitionKey сохраняет ключ для якорны�
   assert.equal(
     resolveRouteTransitionKey({ kind: 'sound-drop', dropToken: 'tok-1' }),
     'sound-drop:tok-1'
+  );
+});
+
+test('resolveRouteSkeletonVariant выбирает точный тип скелетона для всех асинхронных маршрутов', () => {
+  assert.equal(resolveRouteSkeletonVariant({ kind: 'home' }), 'home');
+  assert.equal(resolveRouteSkeletonVariant({ kind: 'cases' }), 'cases');
+  assert.equal(
+    resolveRouteSkeletonVariant({ kind: 'case-detail', caseSlug: 'dmitrogorsky' }),
+    'cases'
+  );
+  assert.equal(
+    resolveRouteSkeletonVariant({ kind: 'industry-detail', industrySlug: 'medicine' }),
+    'cases'
+  );
+  assert.equal(resolveRouteSkeletonVariant({ kind: 'pricing' }), 'pricing');
+  assert.equal(resolveRouteSkeletonVariant({ kind: 'approach' }), 'approach');
+  assert.equal(
+    resolveRouteSkeletonVariant({
+      kind: 'mistake-detail',
+      articleSlug: 'phonebook-syndrome',
+    }),
+    'approach'
+  );
+  assert.equal(resolveRouteSkeletonVariant({ kind: 'faq' }), 'faq');
+  assert.equal(resolveRouteSkeletonVariant({ kind: 'privacy' }), 'privacy');
+  assert.equal(resolveRouteSkeletonVariant({ kind: 'order' }), 'order');
+  assert.equal(resolveRouteSkeletonVariant({ kind: 'cabinet' }), 'cabinet');
+  assert.equal(resolveRouteSkeletonVariant({ kind: 'admin' }), 'admin');
+  assert.equal(resolveRouteSkeletonVariant({ kind: 'sound-drop' }), 'sound-drop');
+  assert.equal(resolveRouteSkeletonVariant({ kind: 'hot-air' }), 'hot-air');
+  assert.equal(
+    resolveRouteSkeletonVariant({ kind: 'station-detail', stationSlug: 'business-fm' }),
+    'hot-air'
   );
 });

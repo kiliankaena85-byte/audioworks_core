@@ -72,6 +72,7 @@ export function RfStorageNoticeBanner({
     <>
       {!dismissed && privacySettings.cookieBannerEnabled && (
         <aside
+          data-nosnippet
           aria-label="Уведомление о технических файлах cookie и локальном хранении по 152-ФЗ"
           data-testid="rf-storage-notice-banner"
           className={`fixed inset-x-3 sm:inset-x-auto sm:right-6 sm:max-w-lg z-40 rounded-2xl bg-[#FFFFFF]/96 dark:bg-[#141418]/96 backdrop-blur-md border border-[#111111]/14 dark:border-white/14 shadow-lg px-3.5 py-2.5 transition-opacity print:hidden ${

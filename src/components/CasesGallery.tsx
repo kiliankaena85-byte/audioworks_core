@@ -32,6 +32,8 @@ const LOCAL_CASE_FALLBACK_IMAGE =
 
 interface CasesGalleryProps {
   playerSnap: CasePlayerSnapshot;
+  searchQuery?: string;
+  onResetSearch?: () => void;
   onToggleCase: (item: BrandCasePoster) => void;
   onSeekCase?: (item: BrandCasePoster, ratio: number) => void;
   onWarmCasePlayer?: () => void;
@@ -749,6 +751,8 @@ function BrandCaseCard({
 
 export function CasesGallery({
   playerSnap,
+  searchQuery,
+  onResetSearch,
   onToggleCase,
   onSeekCase,
   onWarmCasePlayer,
@@ -758,10 +762,18 @@ export function CasesGallery({
   const { decision } = useLayaDecision();
   const { snapshot } = useStudioCms();
   const flagshipReel = snapshot.flagshipReel;
+  const normalizedQuery = (searchQuery ?? '').trim().toLowerCase();
+  const matchesQuery = (item: BrandCasePoster): boolean => {
+    if (!normalizedQuery) return true;
+    const haystack = `${item.id} ${item.client} ${item.headline} ${item.summary} ${item.tag}`.toLowerCase();
+    return haystack.includes(normalizedQuery);
+  };
+  const showFlagshipReel =
+    flagshipReel.published !== false && matchesQuery(flagshipReel);
   const orderedCases = orderPublishedCmsCasesForPersona(
     snapshot.portfolioCases,
     decision.choice
-  );
+  ).filter(matchesQuery);
   const [copiedCaseId, setCopiedCaseId] = useState<CaseId | null>(null);
   const [highlightedCaseId, setHighlightedCaseId] = useState<CaseId | null>(null);
 
@@ -876,7 +888,7 @@ export function CasesGallery({
           </p>
         </div>
 
-        {flagshipReel.published !== false && (
+        {showFlagshipReel && (
           <StudioCommercialStrip
             reel={flagshipReel}
             progress={reelProgress}
@@ -895,34 +907,57 @@ export function CasesGallery({
           />
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
-          {orderedCases.map((item, index) => (
-            <BrandCaseCard
-              key={item.id}
-              item={item}
-              index={index}
-              progress={computeCaseCardProgress(
-                item.id,
-                playerSnap.isPlaying,
-                activeCaseId,
-                playerSnap.progress,
-                playerSnap.playbackMode
-              )}
-              spectrumBands={playerSnap.spectrumBands}
-              isGlobalPlaying={playerSnap.isPlaying}
-              globalPlaybackMode={playerSnap.playbackMode}
-              isThisHighlighted={highlightedCaseId === item.id}
-              isCopied={copiedCaseId === item.id}
-              currentTimeSec={playerSnap.currentTimeSec}
-              onToggleCase={onToggleCase}
-              onSeekCase={onSeekCase}
-              onWarmCasePlayer={onWarmCasePlayer}
-              onStopPreview={onStopPreview}
-              onShare={handleShareCase}
-              onOpenCaseDetail={onOpenCaseDetail}
-            />
-          ))}
-        </div>
+        {!showFlagshipReel && orderedCases.length === 0 ? (
+          <div
+            data-testid="cases-search-empty"
+            className="rounded-3xl border border-[#111111]/12 dark:border-white/12 bg-[#EFECE5]/65 dark:bg-[#15151A] p-8 sm:p-12 text-center space-y-4"
+          >
+            <p className="text-lg font-semibold text-[#111111] dark:text-[#F4F3EF]">
+              По запросу «{searchQuery?.trim()}» ролики не найдены
+            </p>
+            <p className="text-sm text-[#111111]/66 dark:text-[#F4F3EF]/66">
+              Попробуйте ключевые слова «ритейл», «ЖК», «клиника», «Дмитрогорский» или сбросьте фильтр.
+            </p>
+            {onResetSearch && (
+              <button
+                type="button"
+                onClick={onResetSearch}
+                className="min-h-[42px] px-5 py-2 rounded-full bg-[#FF4820] hover:bg-[#E63C17] text-white text-sm font-semibold transition-colors cursor-pointer"
+              >
+                Показать все кейсы
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
+            {orderedCases.map((item, index) => (
+              <BrandCaseCard
+                key={item.id}
+                item={item}
+                index={index}
+                progress={computeCaseCardProgress(
+                  item.id,
+                  playerSnap.isPlaying,
+                  activeCaseId,
+                  playerSnap.progress,
+                  playerSnap.playbackMode
+                )}
+                spectrumBands={playerSnap.spectrumBands}
+                isGlobalPlaying={playerSnap.isPlaying}
+                globalPlaybackMode={playerSnap.playbackMode}
+                isThisHighlighted={highlightedCaseId === item.id}
+                isCopied={copiedCaseId === item.id}
+                currentTimeSec={playerSnap.currentTimeSec}
+                onToggleCase={onToggleCase}
+                onSeekCase={onSeekCase}
+                onWarmCasePlayer={onWarmCasePlayer}
+                onStopPreview={onStopPreview}
+                onShare={handleShareCase}
+                onOpenCaseDetail={onOpenCaseDetail}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );

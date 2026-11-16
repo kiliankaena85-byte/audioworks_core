@@ -5,9 +5,11 @@ import {
   Pause,
   Play,
   Radio,
+  Search,
   ShieldCheck,
+  X,
 } from 'lucide-react';
-import { useLayoutEffect } from 'react';
+import { FormEvent, useEffect, useLayoutEffect, useState } from 'react';
 import type { CasePlayerSnapshot } from '../../audio/lazyAudioEngines';
 import { useStudioCms } from '../../cms/StudioCmsContext';
 import { formatAudioTime } from '../../data/audioworksCommercial';
@@ -36,19 +38,21 @@ interface CasesPageProps {
   caseSlug?: string;
   industrySlug?: IndustryVerticalSlug;
   scrollAnchor?: string;
+  searchQuery?: string;
   navigationTick?: number;
   playerSnap: CasePlayerSnapshot;
   onToggleCase: (item: BrandCasePoster) => void;
   onSeekCase?: (item: BrandCasePoster, ratio: number) => void;
   onWarmCasePlayer?: () => void;
   onStopPreview: (caseId: CaseId) => void;
-  onNavigate: (route: PlatformRoute) => void;
+  onNavigate: (route: PlatformRoute, options?: { replace?: boolean }) => void;
 }
 
 export function CasesPage({
   caseSlug,
   industrySlug,
   scrollAnchor,
+  searchQuery = '',
   navigationTick = 0,
   playerSnap,
   onToggleCase,
@@ -58,6 +62,24 @@ export function CasesPage({
   onNavigate,
 }: CasesPageProps) {
   const { snapshot } = useStudioCms();
+  const [draftQuery, setDraftQuery] = useState(searchQuery);
+
+  useEffect(() => {
+    setDraftQuery(searchQuery);
+  }, [searchQuery]);
+
+  const applyCaseSearch = (nextQuery: string) => {
+    const clean = nextQuery.trim();
+    onNavigate(
+      clean ? { kind: 'cases', searchQuery: clean } : { kind: 'cases' },
+      { replace: true }
+    );
+  };
+
+  const handleSearchSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    applyCaseSearch(draftQuery);
+  };
 
   useLayoutEffect(() => {
     if (caseSlug || industrySlug || !scrollAnchor || typeof document === 'undefined') return;
@@ -117,24 +139,69 @@ export function CasesPage({
             </p>
           </div>
 
-          <a
-            href="#industry-solutions-hub"
-            onClick={(e) => {
-              e.preventDefault();
-              document
-                .getElementById('industry-solutions-hub')
-                ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }}
-            className="min-h-[44px] max-w-full px-4 sm:px-5 py-2.5 rounded-full border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition-colors sm:whitespace-nowrap shrink-0 self-start lg:self-auto"
-          >
-            <span>Отраслевые решения: ЖК, медицина, ритейл, B2B ↓</span>
-          </a>
+          <div className="flex flex-col sm:flex-row lg:flex-col items-stretch sm:items-center lg:items-end gap-3 shrink-0">
+            <form
+              role="search"
+              onSubmit={handleSearchSubmit}
+              className="flex items-center gap-2 rounded-full border border-[#111111]/16 dark:border-white/16 bg-white/80 dark:bg-[#141418] px-3.5 py-1.5 min-h-[44px] w-full sm:w-80 focus-within:border-[#FF4820] transition-colors"
+            >
+              <Search className="w-4 h-4 text-[#111111]/50 dark:text-[#F4F3EF]/50 shrink-0" aria-hidden="true" />
+              <label htmlFor="cases-search-input" className="sr-only">
+                Поиск по кейсам и отраслям
+              </label>
+              <input
+                id="cases-search-input"
+                type="search"
+                data-testid="cases-search-input"
+                value={draftQuery}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setDraftQuery(val);
+                  applyCaseSearch(val);
+                }}
+                placeholder="Поиск по кейсам и нишам..."
+                className="w-full bg-transparent text-sm text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/45 dark:placeholder:text-[#F4F3EF]/45 outline-none"
+              />
+              {draftQuery && (
+                <button
+                  type="button"
+                  data-testid="cases-search-reset"
+                  aria-label="Сбросить поиск по кейсам"
+                  onClick={() => {
+                    setDraftQuery('');
+                    applyCaseSearch('');
+                  }}
+                  className="p-1 rounded-full hover:bg-[#111111]/8 dark:hover:bg-white/10 text-[#111111]/60 dark:text-[#F4F3EF]/60 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
+              )}
+            </form>
+
+            <a
+              href="#industry-solutions-hub"
+              onClick={(e) => {
+                e.preventDefault();
+                document
+                  .getElementById('industry-solutions-hub')
+                  ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }}
+              className="min-h-[44px] max-w-full px-4 sm:px-5 py-2.5 rounded-full border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition-colors sm:whitespace-nowrap shrink-0 self-start lg:self-auto"
+            >
+              <span>Отраслевые решения: ЖК, медицина, ритейл, B2B ↓</span>
+            </a>
+          </div>
         </div>
       </section>
 
       {/* Витрина кейсов с переходом в детальный разбор сценария */}
       <CasesGallery
         playerSnap={playerSnap}
+        searchQuery={draftQuery}
+        onResetSearch={() => {
+          setDraftQuery('');
+          applyCaseSearch('');
+        }}
         onToggleCase={onToggleCase}
         onSeekCase={onSeekCase}
         onWarmCasePlayer={onWarmCasePlayer}

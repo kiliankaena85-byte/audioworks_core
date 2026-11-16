@@ -6,6 +6,7 @@ import { AIRTIME_SALES_ENABLED } from '../../data/platformFeatures';
 import { parsePlatformRoute, PlatformRoute } from '../../data/platformRouter';
 import { OrderFormatId } from '../../data/pricingData';
 import { HeroFMStage } from '../HeroFMStage';
+import { HomeSectionSkeleton } from '../LazySkeletons';
 
 const RealRadioBroadcastBench = lazy(() =>
   import('../RealRadioBroadcastBench').then((m) => ({
@@ -38,9 +39,6 @@ const PricingSection = lazy(() =>
   }))
 );
 
-function SectionPlaceholder() {
-  return <div className="min-h-[280px] w-full" aria-hidden="true" />;
-}
 
 interface HomePageProps {
   scrollAnchor?: string;
@@ -94,12 +92,12 @@ export function HomePage({
       <HeroFMStage />
 
       {/* 1.5. Интерактивный стенд реального регионального радиоэфира (ролик не первым в блоке + проверка своего ролика) */}
-      <Suspense fallback={<SectionPlaceholder />}>
+      <Suspense fallback={<HomeSectionSkeleton variant="broadcast" />}>
         <RealRadioBroadcastBench onStartStudioOrder={onStartStudioOrder} />
       </Suspense>
 
       {/* 2. Избранные студийные работы с мгновенным аудио-превью и мостом в отраслевой архив */}
-      <Suspense fallback={<SectionPlaceholder />}>
+      <Suspense fallback={<HomeSectionSkeleton variant="cases" />}>
         <CasesGallery
           playerSnap={playerSnap}
           onToggleCase={onToggleCase}
@@ -131,12 +129,12 @@ export function HomePage({
       </div>
 
       {/* 3. Слепое сравнение 15 секунд: потоковый шаблон против режиссуры FMWorks */}
-      <Suspense fallback={<SectionPlaceholder />}>
+      <Suspense fallback={<HomeSectionSkeleton variant="duel" />}>
         <FifteenSecDuel />
       </Suspense>
 
       {/* 4. Подход студии, нейроисследования внимания и переход к разбору 5 ошибок */}
-      <Suspense fallback={<SectionPlaceholder />}>
+      <Suspense fallback={<HomeSectionSkeleton variant="approach" />}>
         <ApproachSection />
       </Suspense>
 
@@ -161,7 +159,7 @@ export function HomePage({
       </div>
 
       {/* 5. Отзывы заказчиков и линейка тарифов с переходом к регламенту и FAQ */}
-      <Suspense fallback={<SectionPlaceholder />}>
+      <Suspense fallback={<HomeSectionSkeleton variant="testimonials-pricing" />}>
         <TestimonialsSection
           playerSnap={playerSnap}
           onToggleCase={onToggleCase}

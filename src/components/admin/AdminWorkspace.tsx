@@ -79,9 +79,37 @@ const LayaSimulationConsole = lazy(() =>
 
 function AdminTabSkeleton() {
   return (
-    <div className="space-y-5" role="status" aria-live="polite">
-      <div className="h-[58px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse" />
-      <div className="h-[340px] rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 animate-pulse" />
+    <div
+      className="fmworks-panel-enter space-y-5"
+      role="status"
+      aria-live="polite"
+      aria-label="Загрузка раздела кабинета студии"
+      data-testid="admin-tab-skeleton"
+    >
+      <span className="sr-only">Загрузка раздела кабинета студии…</span>
+      <div
+        aria-hidden="true"
+        className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4"
+      >
+        {Array.from({ length: 4 }).map((_, idx) => (
+          <div
+            key={idx}
+            className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-4 space-y-2.5"
+          >
+            <div className="fmworks-skeleton h-3.5 w-24 rounded-md" />
+            <div className="fmworks-skeleton h-7 w-20 rounded-lg" />
+          </div>
+        ))}
+      </div>
+      <div
+        aria-hidden="true"
+        className="rounded-3xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-6 space-y-3"
+      >
+        <div className="fmworks-skeleton h-6 w-56 rounded-lg" />
+        <div className="fmworks-skeleton h-14 w-full rounded-2xl" />
+        <div className="fmworks-skeleton h-14 w-full rounded-2xl" />
+        <div className="fmworks-skeleton h-14 w-full rounded-2xl" />
+      </div>
     </div>
   );
 }

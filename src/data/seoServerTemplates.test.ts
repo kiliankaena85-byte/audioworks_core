@@ -7,6 +7,7 @@ import {
   buildRouteSchemaGraph,
   resolveRouteSeoMeta,
 } from './platformRouter.ts';
+import { INDEXABLE_ROBOTS_META_CONTENT } from './platformRouter.ts';
 import {
   buildLlmsTxt,
   buildRobotsTxt,
@@ -14,6 +15,7 @@ import {
   collectSitemapRouteEntries,
   DEFAULT_SITEMAP_LASTMOD,
   injectRouteSeoIntoHtml,
+  resolveServerRouteHttpStatus,
   resolveServerRouteLookup,
 } from './seoServerTemplates.ts';
 import {
@@ -27,21 +29,34 @@ import {
   WEBSITE_JSONLD_SCRIPT_ID,
 } from './seoUtils.ts';
 
-test('buildRobotsTxt оптимизирован для Яндекса, YandexAdditionalBot и Google и совпадает с public/robots.txt', () => {
+test('buildRobotsTxt настроен для Яндекса, Google и AI-поисковиков (OAI/Claude/Perplexity/Google-Extended), без устаревших Turbo-правил и совпадает с public/robots.txt', () => {
   const robots = buildRobotsTxt('https://fmworks.ru/', {
     airtimeEnabled: false,
   });
   assert.ok(robots.includes('User-agent: Yandex'));
   assert.ok(robots.includes('User-agent: YandexAdditionalBot'));
   assert.ok(robots.includes('User-agent: Googlebot'));
+  assert.ok(robots.includes('User-agent: OAI-SearchBot'));
+  assert.ok(robots.includes('User-agent: ChatGPT-User'));
+  assert.ok(robots.includes('User-agent: Claude-SearchBot'));
+  assert.ok(robots.includes('User-agent: Claude-User'));
+  assert.ok(robots.includes('User-agent: PerplexityBot'));
+  assert.ok(robots.includes('User-agent: Perplexity-User'));
+  assert.ok(robots.includes('User-agent: GPTBot'));
+  assert.ok(robots.includes('User-agent: ClaudeBot'));
+  assert.ok(robots.includes('User-agent: Google-Extended'));
   assert.ok(robots.includes('User-agent: *'));
   assert.ok(robots.includes('Allow: /cases'));
   assert.ok(robots.includes('Allow: /pricing'));
   assert.ok(robots.includes('Allow: /approach'));
   assert.ok(robots.includes('Allow: /faq'));
+  assert.ok(robots.includes('Allow: /privacy'));
   assert.ok(robots.includes('Allow: /llms.txt'));
+  assert.equal(robots.includes('turbo-pages.xml'), false);
+  assert.equal(robots.includes('turbo.xml'), false);
   assert.ok(robots.includes('Disallow: /admin'));
   assert.ok(robots.includes('Disallow: /order'));
+  assert.ok(robots.includes('Disallow: /sound-drop'));
   assert.ok(robots.includes('Disallow: /api/'));
   assert.ok(robots.includes('Disallow: /hot-air'));
   assert.ok(robots.includes('Clean-param:'));
@@ -58,7 +73,7 @@ test('buildRobotsTxt оптимизирован для Яндекса, YandexAdd
   assert.equal(robotsAirtimeActive.includes('Disallow: /hot-air'), false);
 });
 
-test('buildLlmsTxt формирует структурированный AI-паспорт и совпадает с public/llms.txt', () => {
+test('buildLlmsTxt формирует структурированный AI-паспорт по спецификации llmstxt.org и совпадает с public/llms.txt', () => {
   const llms = buildLlmsTxt('https://fmworks.ru/');
   assert.ok(llms.includes('# FMWorks'));
   assert.ok(llms.includes('15 000 ₽'));
@@ -67,6 +82,8 @@ test('buildLlmsTxt формирует структурированный AI-па
   assert.ok(llms.includes('-14 … -11 LUFS'));
   assert.ok(llms.includes('https://fmworks.ru/pricing'));
   assert.ok(llms.includes('https://fmworks.ru/faq'));
+  assert.ok(llms.includes('## Optional'));
+  assert.ok(llms.includes('https://fmworks.ru/privacy'));
 
   const publicLlmsPath = path.resolve(process.cwd(), 'public', 'llms.txt');
   assert.equal(fs.existsSync(publicLlmsPath), true);
@@ -157,21 +174,39 @@ test('resolveServerRouteLookup находит точные заголовки к
   );
 });
 
-test('injectRouteSeoIntoHtml подставляет метаданные, гео-теги, SSR-таблицы и FAQPage JSON-LD', () => {
-  const baseHtml = `<!doctype html><html><head>
+test('resolveServerRouteHttpStatus исключает Soft-404 на неизвестных маршрутах и битых слагах', () => {
+  assert.equal(resolveServerRouteHttpStatus('/'), 200);
+  assert.equal(resolveServerRouteHttpStatus('/cases/dmitrogorsky'), 200);
+  assert.equal(resolveServerRouteHttpStatus('/cases/industry/medicine'), 200);
+  assert.equal(resolveServerRouteHttpStatus('/approach/phonebook-syndrome'), 200);
+  assert.equal(resolveServerRouteHttpStatus('/admin'), 200);
+
+  assert.equal(resolveServerRouteHttpStatus('/unknown-route-404'), 404);
+  assert.equal(resolveServerRouteHttpStatus('/cases/unknown-case-slug'), 404);
+  assert.equal(resolveServerRouteHttpStatus('/cases/industry/unknown-industry'), 404);
+  assert.equal(resolveServerRouteHttpStatus('/approach/unknown-article'), 404);
+  assert.equal(resolveServerRouteHttpStatus('/hot-air', [], { airtimeEnabled: false }), 404);
+  assert.equal(resolveServerRouteHttpStatus('/hot-air', [], { airtimeEnabled: true }), 200);
+});
+
+test('injectRouteSeoIntoHtml подставляет метаданные, ogp prefix, max-snippet, гео-теги, SSR-таблицы и 404/noindex', () => {
+  const baseHtml = `<!doctype html><html lang="ru"><head>
     <title>Base</title>
     <meta name="description" content="Base desc" />
     <meta name="robots" content="index, follow" />
     <link rel="canonical" href="https://fmworks.ru/" />
+    <link rel="alternate" type="application/rss+xml" title="Яндекс Турбо-страницы — FMWorks" href="https://fmworks.ru/turbo-pages.xml" />
     <meta property="og:title" content="Base" />
     <meta property="og:description" content="Base desc" />
   </head><body><div id="root"></div></body></html>`;
 
   const faqHtml = injectRouteSeoIntoHtml(baseHtml, '/faq', 'https://fmworks.ru');
+  assert.ok(faqHtml.includes('prefix="og: https://ogp.me/ns#"'));
   assert.ok(faqHtml.includes('<title>Частые вопросы (FAQ) по договору, оплате и срокам — FMWorks</title>'));
   assert.ok(faqHtml.includes('<link rel="canonical" href="https://fmworks.ru/faq" />'));
   assert.ok(faqHtml.includes('<link rel="sitemap" type="application/xml" title="Sitemap" href="https://fmworks.ru/sitemap.xml" />'));
-  assert.ok(faqHtml.includes('<meta name="robots" content="index, follow" />'));
+  assert.equal(faqHtml.includes('Яндекс Турбо-страницы'), false);
+  assert.ok(faqHtml.includes(`<meta name="robots" content="${INDEXABLE_ROBOTS_META_CONTENT}" />`));
   assert.ok(faqHtml.includes('<meta name="geo.region" content="RU-TVE" />'));
   assert.ok(faqHtml.includes('<meta property="og:locale" content="ru_RU" />'));
   assert.ok(faqHtml.includes('id="fmworks-route-jsonld"'));
@@ -199,6 +234,13 @@ test('injectRouteSeoIntoHtml подставляет метаданные, гео
   const orderHtml = injectRouteSeoIntoHtml(baseHtml, '/order', 'https://fmworks.ru');
   assert.ok(orderHtml.includes('<meta name="robots" content="noindex, nofollow" />'));
   assert.equal(orderHtml.includes('data-ssr-seo'), false);
+
+  const notFoundHtml = injectRouteSeoIntoHtml(baseHtml, '/nonexistent', 'https://fmworks.ru', {
+    httpStatus: 404,
+  });
+  assert.ok(notFoundHtml.includes('<title>Страница не найдена (404) — FMWorks</title>'));
+  assert.ok(notFoundHtml.includes('<meta name="robots" content="noindex, nofollow" />'));
+  assert.equal(notFoundHtml.includes('data-ssr-seo'), false);
 });
 
 test('buildRouteSchemaGraph формирует коммерческие Offer в RUB и BreadcrumbList', () => {

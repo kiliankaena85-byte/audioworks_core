@@ -11,10 +11,15 @@ import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { AIRTIME_SALES_ENABLED } from './src/data/platformFeatures.ts';
 import {
+  parsePlatformRoute,
+  resolveRouteSeoMeta,
+} from './src/data/platformRouter.ts';
+import {
   buildLlmsTxt,
   buildRobotsTxt,
   buildSitemapXml,
   injectRouteSeoIntoHtml,
+  resolveServerRouteHttpStatus,
   resolveServerRouteLookup,
 } from './src/data/seoServerTemplates.ts';
 import { requestGeminiMediaAdvisorHint } from './src/server/geminiMediaAdvisor.ts';
@@ -8392,8 +8397,10 @@ async function startServer() {
     res: Response,
     contentType: string,
     payload: string,
-    cacheControl?: string
+    cacheControl?: string,
+    statusCode = 200
   ) => {
+    res.status(statusCode);
     res.setHeader('Content-Type', contentType);
     if (cacheControl) {
       res.setHeader('Cache-Control', cacheControl);
@@ -8575,6 +8582,22 @@ async function startServer() {
         const searchIdx = req.originalUrl.indexOf('?');
         const search = searchIdx >= 0 ? req.originalUrl.slice(searchIdx) : '';
         const cms = readPersistedCmsSnapshot();
+        const httpStatus = resolveServerRouteHttpStatus(
+          req.path,
+          cms?.portfolioCases,
+          { airtimeEnabled: AIRTIME_SALES_ENABLED }
+        );
+        const parsedRoute = parsePlatformRoute(req.path, search, '', {
+          airtimeEnabled: AIRTIME_SALES_ENABLED,
+        });
+        const routeMeta = resolveRouteSeoMeta(
+          parsedRoute,
+          {},
+          { airtimeEnabled: AIRTIME_SALES_ENABLED }
+        );
+        if (httpStatus === 404 || routeMeta.noindex) {
+          res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+        }
         const seoHtml = injectRouteSeoIntoHtml(
           transformed,
           req.path,
@@ -8582,6 +8605,7 @@ async function startServer() {
           {
             search,
             airtimeEnabled: AIRTIME_SALES_ENABLED,
+            httpStatus,
             lookup: resolveServerRouteLookup(req.path, cms?.portfolioCases, {
               search,
               airtimeEnabled: AIRTIME_SALES_ENABLED,
@@ -8593,7 +8617,8 @@ async function startServer() {
           res,
           'text/html; charset=utf-8',
           seoHtml,
-          'no-store, no-cache, must-revalidate'
+          'no-store, no-cache, must-revalidate',
+          httpStatus
         );
       } catch (err) {
         vite.ssrFixStacktrace(err as Error);
@@ -8719,6 +8744,22 @@ async function startServer() {
       const searchIdx = req.originalUrl.indexOf('?');
       const search = searchIdx >= 0 ? req.originalUrl.slice(searchIdx) : '';
       const cms = readPersistedCmsSnapshot();
+      const httpStatus = resolveServerRouteHttpStatus(
+        req.path,
+        cms?.portfolioCases,
+        { airtimeEnabled: AIRTIME_SALES_ENABLED }
+      );
+      const parsedRoute = parsePlatformRoute(req.path, search, '', {
+        airtimeEnabled: AIRTIME_SALES_ENABLED,
+      });
+      const routeMeta = resolveRouteSeoMeta(
+        parsedRoute,
+        {},
+        { airtimeEnabled: AIRTIME_SALES_ENABLED }
+      );
+      if (httpStatus === 404 || routeMeta.noindex) {
+        res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+      }
       const seoHtml = injectRouteSeoIntoHtml(
         readFreshProdHtml(),
         req.path,
@@ -8726,6 +8767,7 @@ async function startServer() {
         {
           search,
           airtimeEnabled: AIRTIME_SALES_ENABLED,
+          httpStatus,
           lookup: resolveServerRouteLookup(req.path, cms?.portfolioCases, {
             search,
             airtimeEnabled: AIRTIME_SALES_ENABLED,
@@ -8737,7 +8779,8 @@ async function startServer() {
         res,
         'text/html; charset=utf-8',
         seoHtml,
-        'no-store, no-cache, must-revalidate'
+        'no-store, no-cache, must-revalidate',
+        httpStatus
       );
     });
   }

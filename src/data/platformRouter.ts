@@ -54,7 +54,7 @@ export type PlatformRoute =
   | { kind: 'home'; scrollAnchor?: string }
   | { kind: 'hot-air' }
   | { kind: 'station-detail'; stationSlug: string }
-  | { kind: 'cases'; scrollAnchor?: string }
+  | { kind: 'cases'; scrollAnchor?: string; searchQuery?: string }
   | { kind: 'case-detail'; caseSlug: string }
   | { kind: 'industry-detail'; industrySlug: IndustryVerticalSlug }
   | { kind: 'pricing'; scrollAnchor?: string }
@@ -101,6 +101,38 @@ export function resolveRouteTransitionKey(route: PlatformRoute): string {
       return route.subroute === 'reset' ? 'cabinet:reset' : 'cabinet';
     case 'sound-drop':
       return `sound-drop:${route.dropToken ?? 'default'}`;
+    default:
+      return route.kind;
+  }
+}
+
+export type RouteSkeletonVariant =
+  | 'home'
+  | 'cases'
+  | 'pricing'
+  | 'approach'
+  | 'faq'
+  | 'privacy'
+  | 'order'
+  | 'cabinet'
+  | 'admin'
+  | 'sound-drop'
+  | 'hot-air';
+
+export function resolveRouteSkeletonVariant(
+  route: PlatformRoute
+): RouteSkeletonVariant {
+  switch (route.kind) {
+    case 'cases':
+    case 'case-detail':
+    case 'industry-detail':
+      return 'cases';
+    case 'approach':
+    case 'mistake-detail':
+      return 'approach';
+    case 'hot-air':
+    case 'station-detail':
+      return 'hot-air';
     default:
       return route.kind;
   }
@@ -251,11 +283,13 @@ export function parsePlatformRoute(
   }
 
   if (normalizedPath === '/cases') {
+    const rawSearchQuery = (params.get('q') ?? '').trim().slice(0, 120);
     return {
       kind: 'cases',
       ...(normalizedHash === 'industry-solutions-hub'
         ? { scrollAnchor: normalizedHash }
         : {}),
+      ...(rawSearchQuery ? { searchQuery: rawSearchQuery } : {}),
     };
   }
 
@@ -394,8 +428,12 @@ export function buildPlatformPath(route: PlatformRoute): string {
       return '/hot-air';
     case 'station-detail':
       return `/hot-air/stations/${encodeURIComponent(route.stationSlug)}`;
-    case 'cases':
-      return route.scrollAnchor ? `/cases#${route.scrollAnchor}` : '/cases';
+    case 'cases': {
+      const cleanQuery = route.searchQuery?.trim();
+      const queryPart = cleanQuery ? `?q=${encodeURIComponent(cleanQuery)}` : '';
+      const hashPart = route.scrollAnchor ? `#${route.scrollAnchor}` : '';
+      return `/cases${queryPart}${hashPart}`;
+    }
     case 'case-detail':
       return `/cases/${encodeURIComponent(route.caseSlug)}`;
     case 'industry-detail':
@@ -482,6 +520,9 @@ export interface RouteSeoMetadata {
   noindex?: boolean;
   breadcrumbs?: readonly RouteBreadcrumbItem[];
 }
+
+export const INDEXABLE_ROBOTS_META_CONTENT =
+  'index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1';
 
 export interface RouteSeoLookupTitles {
   stationName?: string;
@@ -944,7 +985,7 @@ export function applyRouteSeoToDocument(meta: RouteSeoMetadata): void {
   upsertMeta(
     'name',
     'robots',
-    meta.noindex ? 'noindex, nofollow' : 'index, follow'
+    meta.noindex ? 'noindex, nofollow' : INDEXABLE_ROBOTS_META_CONTENT
   );
   upsertMeta('name', 'geo.region', 'RU-TVE');
   upsertMeta('name', 'geo.placename', 'Тверь, Россия');

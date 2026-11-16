@@ -149,6 +149,30 @@ class LazyCasePlayerEngine {
     }
   }
 
+  public pause(): void {
+    if (this.instance) {
+      this.instance.pause();
+    }
+  }
+
+  public resume(): void {
+    if (this.instance) {
+      this.instance.resume();
+    }
+  }
+
+  public togglePause(): void {
+    if (this.instance) {
+      this.instance.togglePause();
+    }
+  }
+
+  public seekBySeconds(deltaSec: number): void {
+    if (this.instance) {
+      this.instance.seekBySeconds(deltaSec);
+    }
+  }
+
   public stopPreview(caseId?: CaseId): void {
     if (this.instance) {
       this.instance.stopPreview(caseId);

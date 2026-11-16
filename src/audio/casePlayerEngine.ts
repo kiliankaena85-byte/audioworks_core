@@ -16,6 +16,7 @@ import {
   claimExclusiveAudioFocus,
   onExclusiveAudioFocusClaimed,
 } from './audioFocusCoordinator';
+import { computeSeekRatioDelta } from '../utils/casePlayerHotkeys';
 
 export interface CasePlayerSnapshot {
   activeCase: BrandCasePoster | null;
@@ -59,11 +60,12 @@ class CasePlayerEngine {
   private startCtxTime = 0;
   private durationSec = 15;
   private pendingSeekOffsetSec: number | null = null;
+  private pausedOffsetSec: number | null = null;
   private listeners = new Set<CasePlayerListener>();
 
   constructor() {
     onExclusiveAudioFocusClaimed((channel) => {
-      if (channel !== 'case_player' && this.isPlaying) {
+      if (channel !== 'case_player' && (this.isPlaying || this.activeCase)) {
         this.stop();
       }
     });
@@ -104,8 +106,24 @@ class CasePlayerEngine {
     };
   }
 
+  private computeCurrentElapsedSec(): number {
+    if (!this.isPlaying && this.playbackMode === 'full' && this.pausedOffsetSec !== null) {
+      return this.pausedOffsetSec;
+    }
+    if (this.pendingSeekOffsetSec !== null) {
+      return this.pendingSeekOffsetSec;
+    }
+    if (this.htmlAudio) {
+      return Math.max(0, this.htmlAudio.currentTime - this.clipStartSec);
+    }
+    if (this.ctx) {
+      return Math.max(0, this.ctx.currentTime - this.startCtxTime);
+    }
+    return 0;
+  }
+
   public getSnapshot(): CasePlayerSnapshot {
-    if (!this.isPlaying || !this.activeCase) {
+    if (!this.activeCase || (!this.isPlaying && this.playbackMode !== 'full')) {
       return {
         activeCase: null,
         isPlaying: false,
@@ -118,17 +136,10 @@ class CasePlayerEngine {
       };
     }
 
-    let elapsed = 0;
-    if (this.pendingSeekOffsetSec !== null) {
-      elapsed = this.pendingSeekOffsetSec;
-    } else if (this.htmlAudio) {
-      elapsed = Math.max(0, this.htmlAudio.currentTime - this.clipStartSec);
-    } else if (this.ctx) {
-      elapsed = Math.max(0, this.ctx.currentTime - this.startCtxTime);
-    }
-
-    const clampedElapsed = Math.min(this.durationSec, elapsed);
-    const progress = this.durationSec > 0 ? Math.min(1, clampedElapsed / this.durationSec) : 0;
+    const elapsed = this.computeCurrentElapsedSec();
+    const clampedElapsed = Math.min(this.durationSec, Math.max(0, elapsed));
+    const progress =
+      this.durationSec > 0 ? Math.min(1, clampedElapsed / this.durationSec) : 0;
 
     return {
       activeCase: this.activeCase,
@@ -137,8 +148,10 @@ class CasePlayerEngine {
       currentTimeSec: clampedElapsed,
       durationSec: this.durationSec,
       progress,
-      waveBars: this.sampleWaveBars(clampedElapsed),
-      spectrumBands: this.sampleSpectrumBands(this.activeCase.id, clampedElapsed),
+      waveBars: this.isPlaying ? this.sampleWaveBars(clampedElapsed) : IDLE_BARS,
+      spectrumBands: this.isPlaying
+        ? this.sampleSpectrumBands(this.activeCase.id, clampedElapsed)
+        : IDLE_SPECTRUM_BANDS,
     };
   }
 
@@ -203,7 +216,7 @@ class CasePlayerEngine {
     return this.ctx;
   }
 
-  public stop(): void {
+  private clearTimersAndWebAudioNodes(): void {
     if (this.intervalId !== null) {
       if (typeof window !== 'undefined') {
         window.clearInterval(this.intervalId);
@@ -215,13 +228,6 @@ class CasePlayerEngine {
       this.timers.forEach((t) => window.clearTimeout(t));
     }
     this.timers = [];
-
-    if (this.htmlAudio) {
-      this.htmlAudio.pause();
-      this.htmlAudio = null;
-    }
-    this.clipStartSec = 0;
-    this.clipEndSec = null;
 
     if (this.ctx && this.masterGain) {
       try {
@@ -248,6 +254,34 @@ class CasePlayerEngine {
         });
       }, 70);
     }
+  }
+
+  private startFullPlaybackPolling(): void {
+    if (typeof window === 'undefined') return;
+    if (this.intervalId !== null) {
+      window.clearInterval(this.intervalId);
+    }
+    this.intervalId = window.setInterval(() => {
+      if (!this.isPlaying) return;
+      if (
+        this.htmlAudio &&
+        this.clipEndSec !== null &&
+        this.htmlAudio.currentTime >= this.clipEndSec
+      ) {
+        this.stop();
+        return;
+      }
+      this.emit();
+    }, 65);
+  }
+
+  public stop(): void {
+    this.clearTimersAndWebAudioNodes();
+
+    if (this.htmlAudio) {
+      this.htmlAudio.pause();
+      this.htmlAudio = null;
+    }
 
     this.activeCase = null;
     this.isPlaying = false;
@@ -255,15 +289,92 @@ class CasePlayerEngine {
     this.clipStartSec = 0;
     this.clipEndSec = null;
     this.pendingSeekOffsetSec = null;
+    this.pausedOffsetSec = null;
     this.emit();
+  }
+
+  public pause(): void {
+    if (!this.isPlaying || this.playbackMode !== 'full' || !this.activeCase) {
+      return;
+    }
+    const currentOffsetSec = Math.max(
+      0,
+      Math.min(Math.max(0, this.durationSec - 0.15), this.computeCurrentElapsedSec())
+    );
+    this.clearTimersAndWebAudioNodes();
+    if (this.htmlAudio) {
+      this.htmlAudio.pause();
+    }
+    this.pausedOffsetSec = currentOffsetSec;
+    this.pendingSeekOffsetSec = currentOffsetSec;
+    this.isPlaying = false;
+    this.emit();
+  }
+
+  public resume(): void {
+    if (this.isPlaying || this.playbackMode !== 'full' || !this.activeCase) {
+      return;
+    }
+    const item = this.activeCase;
+    const resumeOffsetSec = Math.max(
+      0,
+      Math.min(Math.max(0, this.durationSec - 0.15), this.pausedOffsetSec ?? 0)
+    );
+
+    if (this.htmlAudio) {
+      claimExclusiveAudioFocus('case_player');
+      const audio = this.htmlAudio;
+      const absTargetSec = this.clipStartSec + resumeOffsetSec;
+      const startResumedAudio = () => {
+        if (this.htmlAudio !== audio) return;
+        try {
+          const maxAudioSec =
+            audio.duration && Number.isFinite(audio.duration)
+              ? Math.max(0, audio.duration - 0.12)
+              : absTargetSec;
+          audio.currentTime = Math.min(absTargetSec, maxAudioSec);
+        } catch {
+          // Ignore seek error before metadata
+        }
+        this.pausedOffsetSec = null;
+        this.pendingSeekOffsetSec = null;
+        this.isPlaying = true;
+        audio.play().catch(() => this.stop());
+        this.startFullPlaybackPolling();
+        this.emit();
+      };
+
+      if (audio.readyState >= 1) {
+        startResumedAudio();
+      } else {
+        this.pausedOffsetSec = null;
+        this.isPlaying = true;
+        audio.addEventListener('loadedmetadata', startResumedAudio, { once: true });
+        this.emit();
+      }
+      return;
+    }
+
+    this.startFullCaseAtOffset(item, resumeOffsetSec);
+  }
+
+  public togglePause(): void {
+    if (this.playbackMode !== 'full' || !this.activeCase) {
+      return;
+    }
+    if (this.isPlaying) {
+      this.pause();
+    } else {
+      this.resume();
+    }
   }
 
   /**
    * Запускает мгновенное короткое превью (3–5 сек) при наведении курсора на карточку кейса.
-   * Никогда не прерывает уже запущенный полный трек (`playbackMode === 'full'`).
+   * Никогда не прерывает уже загруженный в мини-плеер полный трек (`playbackMode === 'full'`).
    */
   public startPreview(item: BrandCasePoster): void {
-    if (this.isPlaying && this.playbackMode === 'full') {
+    if (this.playbackMode === 'full' && this.activeCase !== null) {
       return;
     }
     if (
@@ -413,6 +524,19 @@ class CasePlayerEngine {
     this.startFullCaseAtOffset(item, 0);
   }
 
+  public seekBySeconds(deltaSec: number): void {
+    if (this.playbackMode !== 'full' || !this.activeCase) {
+      return;
+    }
+    const snap = this.getSnapshot();
+    const nextRatio = computeSeekRatioDelta({
+      currentTimeSec: snap.currentTimeSec,
+      durationSec: snap.durationSec,
+      deltaSec,
+    });
+    this.seekToRatio(nextRatio);
+  }
+
   public seekToRatio(ratio: number, targetCase?: BrandCasePoster): void {
     const item = targetCase ?? this.activeCase;
     if (!item) return;
@@ -428,6 +552,35 @@ class CasePlayerEngine {
         ? Math.max(1, Math.round(clipEnd - clipStart))
         : Math.max(1, item.durationSec);
     const targetOffsetSec = clampedRatio * effectiveDur;
+
+    // Если этот кейс сейчас стоит на паузе в мини-плеере — перематываем каретку, сохраняя паузу
+    if (
+      !this.isPlaying &&
+      this.playbackMode === 'full' &&
+      this.activeCase?.id === item.id
+    ) {
+      const safeOffset = Math.max(
+        0,
+        Math.min(Math.max(0, this.durationSec - 0.15), targetOffsetSec)
+      );
+      this.pausedOffsetSec = safeOffset;
+      this.pendingSeekOffsetSec = safeOffset;
+      if (this.htmlAudio && this.htmlAudio.readyState >= 1) {
+        try {
+          const absTargetSec = this.clipStartSec + safeOffset;
+          const maxAudioSec =
+            this.htmlAudio.duration && Number.isFinite(this.htmlAudio.duration)
+              ? Math.max(0, this.htmlAudio.duration - 0.12)
+              : absTargetSec;
+          this.htmlAudio.currentTime = Math.min(absTargetSec, maxAudioSec);
+          this.pendingSeekOffsetSec = null;
+        } catch {
+          // Ignore seek before metadata
+        }
+      }
+      this.emit();
+      return;
+    }
 
     // Если этот кейс уже играет в полном режиме — перематываем на месте без пересоздания плеера
     if (
@@ -568,20 +721,7 @@ class CasePlayerEngine {
     }
 
     this.emit();
-    if (typeof window !== 'undefined') {
-      this.intervalId = window.setInterval(() => {
-        if (!this.isPlaying) return;
-        if (
-          this.htmlAudio &&
-          this.clipEndSec !== null &&
-          this.htmlAudio.currentTime >= this.clipEndSec
-        ) {
-          this.stop();
-          return;
-        }
-        this.emit();
-      }, 65);
-    }
+    this.startFullPlaybackPolling();
   }
 
   public playNextCase(orderedList: BrandCasePoster[] = BRAND_CASES): void {

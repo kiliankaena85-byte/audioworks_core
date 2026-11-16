@@ -12,6 +12,7 @@ import {
   FmTunerAudioSnapshot,
   fmTunerAudioEngine,
 } from '../audio/fmTunerAudioEngine';
+import { lazyCasePlayerEngine } from '../audio/lazyAudioEngines';
 import { useSiteTextBlocks } from '../cms/SiteTextBlocksContext';
 import { useStudioCms } from '../cms/StudioCmsContext';
 import { formatAudioTime } from '../data/audioworksCommercial';
@@ -136,6 +137,10 @@ export function HeroFMStage() {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code !== 'Space') return;
+      const caseSnap = lazyCasePlayerEngine.getSnapshot();
+      if (caseSnap.playbackMode === 'full' && caseSnap.activeCase !== null) {
+        return;
+      }
       if (isInteractiveElementFocused(e.target)) return;
       e.preventDefault();
       if (e.repeat) return;

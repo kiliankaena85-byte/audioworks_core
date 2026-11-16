@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { injectRouteSeoIntoHtml } from '../src/data/seoServerTemplates.ts';
+import {
+  buildRobotsTxt,
+  injectRouteSeoIntoHtml,
+} from '../src/data/seoServerTemplates.ts';
 
 const ROOT_DIR = process.cwd();
 
@@ -145,6 +148,9 @@ function checkSeoAndAssets(failures: AuditFailure[]): void {
   const renderedHome = injectRouteSeoIntoHtml(rawHtml, '/', 'https://fmworks.ru');
 
   const requiredSnippets = [
+    'prefix="og: https://ogp.me/ns#"',
+    'max-snippet:-1',
+    'max-image-preview:large',
     'rel="canonical"',
     'property="og:title"',
     'property="og:description"',
@@ -167,6 +173,23 @@ function checkSeoAndAssets(failures: AuditFailure[]): void {
       failures.push({
         category: 'SEO_SSR',
         message: `В SSR-выводе injectRouteSeoIntoHtml отсутствует тег: ${snippet}`,
+      });
+    }
+  }
+
+  if (rawHtml.includes('Яндекс Турбо') || renderedHome.includes('Яндекс Турбо')) {
+    failures.push({
+      category: 'SEO_DEPRECATED_TURBO',
+      message: 'Обнаружена устаревшая ссылка Яндекс Турбо-страниц (отключены Яндексом в апреле 2025 г.)',
+    });
+  }
+
+  const robots = buildRobotsTxt('https://fmworks.ru/', { airtimeEnabled: false });
+  for (const bot of ['OAI-SearchBot', 'Claude-SearchBot', 'PerplexityBot', 'YandexAdditionalBot', 'Google-Extended']) {
+    if (!robots.includes(`User-agent: ${bot}`)) {
+      failures.push({
+        category: 'SEO_GEO_ROBOTS',
+        message: `В robots.txt отсутствует явное правило для AI-краулера: ${bot}`,
       });
     }
   }

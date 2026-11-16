@@ -137,3 +137,56 @@ test('contrastAudioEngine.seekToRatio maps [0..1] onto active focus showreel win
 
   contrastAudioEngine.stopAll();
 });
+
+test('casePlayerEngine pause, togglePause, and seekBySeconds preserve activeCase and timestamp cleanly', () => {
+  casePlayerEngine.stop();
+  const sampleCase = BRAND_CASES[0];
+  assert.ok(sampleCase, 'Expected at least one initial brand case');
+
+  // Start near 40% via seekToRatio, then pause via togglePause()
+  casePlayerEngine.seekToRatio(0.4, sampleCase);
+  const playingSnap = casePlayerEngine.getSnapshot();
+  assert.equal(playingSnap.isPlaying, true);
+  assert.equal(playingSnap.playbackMode, 'full');
+  const startSec = playingSnap.currentTimeSec;
+
+  casePlayerEngine.togglePause();
+  const pausedSnap = casePlayerEngine.getSnapshot();
+  assert.equal(pausedSnap.isPlaying, false);
+  assert.equal(pausedSnap.playbackMode, 'full');
+  assert.equal(pausedSnap.activeCase?.id, sampleCase.id);
+  assert.ok(
+    Math.abs(pausedSnap.currentTimeSec - startSec) < 0.5,
+    `Expected paused currentTimeSec ~${startSec}, got ${pausedSnap.currentTimeSec}`
+  );
+
+  // Seeking +5s while paused updates timestamp without resuming playback
+  casePlayerEngine.seekBySeconds(5);
+  const pausedSeekedSnap = casePlayerEngine.getSnapshot();
+  assert.equal(pausedSeekedSnap.isPlaying, false);
+  assert.equal(pausedSeekedSnap.activeCase?.id, sampleCase.id);
+  assert.ok(
+    pausedSeekedSnap.currentTimeSec > pausedSnap.currentTimeSec,
+    `Expected seekBySeconds(5) to move forward from ${pausedSnap.currentTimeSec}, got ${pausedSeekedSnap.currentTimeSec}`
+  );
+
+  // Seeking -5s restores closer to earlier timestamp
+  casePlayerEngine.seekBySeconds(-5);
+  const pausedRewoundSnap = casePlayerEngine.getSnapshot();
+  assert.equal(pausedRewoundSnap.isPlaying, false);
+  assert.ok(pausedRewoundSnap.currentTimeSec < pausedSeekedSnap.currentTimeSec);
+
+  // Resume via togglePause() preserves position and restores playing=true
+  casePlayerEngine.togglePause();
+  const resumedSnap = casePlayerEngine.getSnapshot();
+  assert.equal(resumedSnap.isPlaying, true);
+  assert.equal(resumedSnap.activeCase?.id, sampleCase.id);
+  assert.ok(
+    Math.abs(resumedSnap.currentTimeSec - pausedRewoundSnap.currentTimeSec) < 0.5,
+    `Expected resumed currentTimeSec ~${pausedRewoundSnap.currentTimeSec}, got ${resumedSnap.currentTimeSec}`
+  );
+
+  casePlayerEngine.stop();
+  assert.equal(casePlayerEngine.getSnapshot().activeCase, null);
+});
+

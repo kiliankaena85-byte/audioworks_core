@@ -13,6 +13,7 @@ import {
   buildBreadcrumbListJsonLd,
   buildRouteSchemaGraph,
   DEFAULT_OG_IMAGE_PATH,
+  INDEXABLE_ROBOTS_META_CONTENT,
   parsePlatformRoute,
   type PlatformRoute,
   resolveRouteSeoMeta,
@@ -109,9 +110,10 @@ export interface BuildRobotsOptions {
 }
 
 /**
- * Генерирует `robots.txt` для Яндекса, Поиска с Алисой (`YandexAdditionalBot`), Google и других ботов:
- * открывает основные контентные разделы, `/llms.txt` и статику, закрывает админ-панель,
- * API, служебный контур оформления заказа и законсервированный раздел `/hot-air`.
+ * Генерирует `robots.txt` по стандарту RFC 9309 для Яндекса, Поиска с Алисой (`YandexAdditionalBot`),
+ * Google и современных AI-поисковиков (`OAI-SearchBot`, `ChatGPT-User`, `Claude-SearchBot`,
+ * `Claude-User`, `PerplexityBot`, `Perplexity-User`) + явная политика для `GPTBot`, `ClaudeBot`, `Google-Extended`.
+ * Устаревшие ссылки на закрытые Яндекс Турбо-страницы (отключены в апреле 2025 г.) удалены.
  */
 export function buildRobotsTxt(
   origin: string,
@@ -126,9 +128,8 @@ export function buildRobotsTxt(
     'Allow: /pricing',
     'Allow: /approach',
     'Allow: /faq',
+    'Allow: /privacy',
     'Allow: /llms.txt',
-    'Allow: /turbo.xml',
-    'Allow: /turbo-pages.xml',
     ...(airtimeEnabled ? ['Allow: /hot-air'] : []),
   ];
 
@@ -142,12 +143,20 @@ export function buildRobotsTxt(
     'Disallow: /checkout',
     'Disallow: /cabinet',
     'Disallow: /account',
+    'Disallow: /sound-drop',
     'Disallow: /api/',
     ...(!airtimeEnabled ? ['Disallow: /hot-air', 'Disallow: /hot-air/'] : []),
   ];
 
+  const aiSearchAgentBlock = (userAgent: string): string[] => [
+    `User-agent: ${userAgent}`,
+    ...coreAllowLines,
+    ...disallowLines,
+    '',
+  ];
+
   return [
-    '# FMWorks — Правила индексации для Яндекса, Поиска с Алисой (Нейро), Google и других поисковых систем',
+    '# FMWorks — Правила индексации (RFC 9309) для Яндекса, Алисы, Google и AI-поисковиков',
     '',
     'User-agent: Yandex',
     ...coreAllowLines,
@@ -164,6 +173,20 @@ export function buildRobotsTxt(
     ...staticAllowLines,
     ...disallowLines,
     '',
+    '# Поисковые и пользовательские AI-агенты (цитирование и ответы нейропоиска)',
+    ...aiSearchAgentBlock('OAI-SearchBot'),
+    ...aiSearchAgentBlock('ChatGPT-User'),
+    ...aiSearchAgentBlock('Claude-SearchBot'),
+    ...aiSearchAgentBlock('Claude-User'),
+    ...aiSearchAgentBlock('PerplexityBot'),
+    ...aiSearchAgentBlock('Perplexity-User'),
+    '# Краулеры обучения моделей и grounding (публичные материалы открыты, служебные разделы закрыты)',
+    ...aiSearchAgentBlock('GPTBot'),
+    ...aiSearchAgentBlock('ClaudeBot'),
+    'User-agent: Google-Extended',
+    ...coreAllowLines,
+    ...disallowLines,
+    '',
     'User-agent: *',
     ...coreAllowLines,
     ...staticAllowLines,
@@ -175,8 +198,8 @@ export function buildRobotsTxt(
 }
 
 /**
- * Генерирует структурированный Markdown-паспорт `/llms.txt` для нейросетевого поиска
- * (Яндекс Нейро / Поиск с Алисой и LLM-агрегаторов).
+ * Генерирует структурированный Markdown-паспорт `/llms.txt` по спецификации `llmstxt.org`
+ * для нейросетевого поиска (Яндекс Нейро / Поиск с Алисой, ChatGPT Search, Perplexity, Claude).
  */
 export function buildLlmsTxt(origin: string): string {
   const cleanOrigin = normalizeOrigin(origin);
@@ -205,12 +228,16 @@ export function buildLlmsTxt(origin: string): string {
     `- [Главная страница](${cleanOrigin}/): позиционирование, 15-секундная дуэль «до и после», витрина кейсов, калькулятор тарифов.`,
     `- [Тарифы и паспорт прав](${cleanOrigin}/pricing): сравнение пакетов, этапы производства, матрица модерации по ФЗ-38 и технические стандарты сдачи.`,
     `- [Кейсы и отраслевые решения](${cleanOrigin}/cases): разборы проектов с полными сценариями и посекундной партитурой.`,
-    `- [Отрасль: ЖК и девелопмент](${cleanOrigin}/cases/industry/real-estate)`,
-    `- [Отрасль: Медицина и клиники](${cleanOrigin}/cases/industry/medicine)`,
-    `- [Отрасль: Ритейл и FMCG](${cleanOrigin}/cases/industry/retail-fmcg)`,
-    `- [Отрасль: B2B и финансы](${cleanOrigin}/cases/industry/b2b-finance)`,
+    `- [Отрасль: ЖК и девелопмент](${cleanOrigin}/cases/industry/real-estate): стандарты и сценарии для застройщиков.`,
+    `- [Отрасль: Медицина и клиники](${cleanOrigin}/cases/industry/medicine): стандарты и требования ст. 24 ФЗ-38 для медцентров.`,
+    `- [Отрасль: Ритейл и FMCG](${cleanOrigin}/cases/industry/retail-fmcg): офферы и драйв-звучание для сетей и HoReCa.`,
+    `- [Отрасль: B2B и финансы](${cleanOrigin}/cases/industry/b2b-finance): ролики для банков, лизинга, логистики и B2B.`,
     `- [Подход и нейроисследования внимания](${cleanOrigin}/approach): как удерживать внимание в автопотоке и разбор 5 ошибок радиорекламы.`,
     `- [Частые вопросы (FAQ)](${cleanOrigin}/faq): оформление договора и счёта для юрлиц, оплата картой или по СБП, сроки, индивидуальные проекты.`,
+    '',
+    '## Optional',
+    `- [Политика обработки персональных данных (152-ФЗ)](${cleanOrigin}/privacy): условия локализации ПДн в РФ и использования технических cookie.`,
+    `- [Карта сайта XML](${cleanOrigin}/sitemap.xml): полный список канонических индексируемых URL и Open Graph превью.`,
     '',
   ].join('\n');
 }
@@ -511,6 +538,90 @@ export function resolveServerRouteLookup(
   return {};
 }
 
+const EXACT_STATIC_KNOWN_PATHS = new Set<string>([
+  '/',
+  '/cases',
+  '/pricing',
+  '/approach',
+  '/faq',
+  '/privacy',
+  '/policy',
+  '/personal-data',
+  '/152-fz',
+  '/order',
+  '/booking',
+  '/checkout',
+  '/cabinet',
+  '/account',
+  '/cabinet/history',
+  '/cabinet/archive',
+  '/cabinet/reset',
+  '/cabinet/recovery',
+  '/sound-drop',
+  '/admin',
+]);
+
+/**
+ * Определяет точный HTTP-статус ответа для маршрута SPA (предотвращает Soft-404 на битых URL и несуществующих слагах).
+ */
+export function resolveServerRouteHttpStatus(
+  pathname: string,
+  cmsCases: readonly { id: string; published?: boolean }[] = [],
+  options: { airtimeEnabled?: boolean } = {}
+): 200 | 404 {
+  const normalizedPath =
+    (pathname || '/').trim().replace(/\/+$/g, '').toLowerCase() || '/';
+  const airtimeEnabled = isAirtimeSalesEnabled(options.airtimeEnabled);
+
+  if (EXACT_STATIC_KNOWN_PATHS.has(normalizedPath)) {
+    return 200;
+  }
+
+  if (
+    normalizedPath.startsWith('/admin/') ||
+    normalizedPath.startsWith('/sound-drop/')
+  ) {
+    return 200;
+  }
+
+  if (normalizedPath === '/hot-air') {
+    return airtimeEnabled ? 200 : 404;
+  }
+
+  if (normalizedPath.startsWith('/hot-air/stations/')) {
+    if (!airtimeEnabled) return 404;
+    const slug = normalizedPath.slice('/hot-air/stations/'.length).trim();
+    return slug && slug in SEO_STATION_TITLE_BY_SLUG ? 200 : 404;
+  }
+
+  if (normalizedPath.startsWith('/cases/industry/')) {
+    const indSlug = normalizedPath.slice('/cases/industry/'.length).trim();
+    return (VALID_INDUSTRY_SLUGS as readonly string[]).includes(indSlug)
+      ? 200
+      : 404;
+  }
+
+  if (normalizedPath.startsWith('/cases/')) {
+    const caseSlug = normalizedPath.slice('/cases/'.length).trim();
+    if (!caseSlug || caseSlug.includes('/')) return 404;
+    const combined =
+      cmsCases.length > 0
+        ? [FLAGSHIP_STUDIO_REEL, ...cmsCases.filter((c) => c.published !== false)]
+        : [FLAGSHIP_STUDIO_REEL, ...BRAND_CASES];
+    const exists = combined.some((c) => c.id.toLowerCase() === caseSlug);
+    return exists ? 200 : 404;
+  }
+
+  if (normalizedPath.startsWith('/approach/')) {
+    const articleSlug = normalizedPath.slice('/approach/'.length).trim();
+    return articleSlug && STATIC_MISTAKE_ARTICLE_SLUGS.includes(articleSlug)
+      ? 200
+      : 404;
+  }
+
+  return 404;
+}
+
 function buildSsrFallbackMarkup(
   route: PlatformRoute,
   meta: RouteSeoMetadata
@@ -653,16 +764,6 @@ function upsertHeadLinkTag(html: string, rel: string, href: string): string {
   return html.replace('</head>', `    ${tag}\n  </head>`);
 }
 
-function upsertHeadTurboRssLink(html: string, feedUrl: string): string {
-  const escaped = escapeHtmlAttr(feedUrl);
-  const tag = `<link rel="alternate" type="application/rss+xml" title="Яндекс Турбо-страницы — FMWorks" href="${escaped}" />`;
-  const regex = /<link\b[^>]*\btype=["']application\/rss\+xml["'][^>]*>/i;
-  if (regex.test(html)) {
-    return html.replace(regex, tag);
-  }
-  return html.replace('</head>', `    ${tag}\n  </head>`);
-}
-
 function upsertHeadSitemapLink(html: string, sitemapUrl: string): string {
   const escaped = escapeHtmlAttr(sitemapUrl);
   const tag = `<link rel="sitemap" type="application/xml" title="Sitemap" href="${escaped}" />`;
@@ -691,16 +792,30 @@ function upsertHeadJsonLdScript(
   return html.replace('</head>', `    ${tag}\n  </head>`);
 }
 
+function ensureHtmlOpenGraphPrefix(html: string): string {
+  const htmlTagMatch = /<html\b([^>]*)>/i.exec(html);
+  if (!htmlTagMatch) return html;
+  const attrs = htmlTagMatch[1] ?? '';
+  if (/\bprefix\s*=/i.test(attrs)) {
+    return html;
+  }
+  return html.replace(
+    /<html\b([^>]*)>/i,
+    `<html$1 prefix="og: https://ogp.me/ns#">`
+  );
+}
+
 export interface InjectRouteSeoOptions {
   search?: string;
   hash?: string;
   airtimeEnabled?: boolean;
   lookup?: RouteSeoLookupTitles;
+  httpStatus?: number;
 }
 
 /**
- * Подставляет серверные SEO-метаданные, canonical, OpenGraph, геотеги, `robots`, Schema.org JSON-LD
- * и семантический SSR-контент для поисковых роботов и нейропоиска (Яндекс Нейро / Алиса AI).
+ * Подставляет серверные SEO-метаданные, canonical, OpenGraph, геотеги, `robots` (включая `max-snippet:-1` / `max-image-preview:large`),
+ * Schema.org JSON-LD и семантический SSR-контент для поисковых роботов и нейропоиска (Яндекс Нейро / Алиса AI / Google AI Overviews).
  */
 export function injectRouteSeoIntoHtml(
   html: string,
@@ -718,17 +833,29 @@ export function injectRouteSeoIntoHtml(
   const meta = resolveRouteSeoMeta(route, options.lookup ?? {}, {
     airtimeEnabled: options.airtimeEnabled,
   });
+  const isNotFound = options.httpStatus === 404;
+  const effectiveTitle = isNotFound
+    ? 'Страница не найдена (404) — FMWorks'
+    : meta.title;
+  const effectiveDescription = isNotFound
+    ? 'Запрошенный URL не найден на сайте студии аудиопродакшна FMWorks. Перейдите в каталог кейсов, тарифов или на главную страницу.'
+    : meta.description;
 
   const fullUrl = `${cleanOrigin}${meta.canonicalPath}`;
   const ogImageUrl = buildRouteOgImageUrl(cleanOrigin, meta.canonicalPath);
-  const robotsValue = meta.noindex ? 'noindex, nofollow' : 'index, follow';
+  const robotsValue =
+    isNotFound || meta.noindex
+      ? 'noindex, nofollow'
+      : INDEXABLE_ROBOTS_META_CONTENT;
 
-  let out = html.replace(
+  let out = ensureHtmlOpenGraphPrefix(html);
+  out = out.replace(/<link\b[^>]*\btype=["']application\/rss\+xml["'][^>]*>\s*/gi, '');
+  out = out.replace(
     /<title>[\s\S]*?<\/title>/i,
-    `<title>${escapeXmlText(meta.title)}</title>`
+    `<title>${escapeXmlText(effectiveTitle)}</title>`
   );
 
-  out = upsertHeadMetaTag(out, 'name', 'description', meta.description);
+  out = upsertHeadMetaTag(out, 'name', 'description', effectiveDescription);
   out = upsertHeadMetaTag(out, 'name', 'robots', robotsValue);
   out = upsertHeadMetaTag(out, 'name', 'geo.region', 'RU-TVE');
   out = upsertHeadMetaTag(out, 'name', 'geo.placename', 'Тверь, Россия');
@@ -739,8 +866,8 @@ export function injectRouteSeoIntoHtml(
     'og:type',
     meta.schemaType === 'Article' ? 'article' : 'website'
   );
-  out = upsertHeadMetaTag(out, 'property', 'og:title', meta.title);
-  out = upsertHeadMetaTag(out, 'property', 'og:description', meta.description);
+  out = upsertHeadMetaTag(out, 'property', 'og:title', effectiveTitle);
+  out = upsertHeadMetaTag(out, 'property', 'og:description', effectiveDescription);
   out = upsertHeadMetaTag(out, 'property', 'og:url', fullUrl);
   out = upsertHeadMetaTag(out, 'property', 'og:image', ogImageUrl);
   out = upsertHeadMetaTag(
@@ -756,15 +883,14 @@ export function injectRouteSeoIntoHtml(
     String(OG_IMAGE_HEIGHT)
   );
   out = upsertHeadMetaTag(out, 'property', 'og:image:type', 'image/png');
-  out = upsertHeadMetaTag(out, 'property', 'og:image:alt', meta.title);
+  out = upsertHeadMetaTag(out, 'property', 'og:image:alt', effectiveTitle);
   out = upsertHeadMetaTag(out, 'property', 'og:site_name', 'FMWorks');
   out = upsertHeadMetaTag(out, 'name', 'twitter:card', 'summary_large_image');
-  out = upsertHeadMetaTag(out, 'name', 'twitter:title', meta.title);
-  out = upsertHeadMetaTag(out, 'name', 'twitter:description', meta.description);
+  out = upsertHeadMetaTag(out, 'name', 'twitter:title', effectiveTitle);
+  out = upsertHeadMetaTag(out, 'name', 'twitter:description', effectiveDescription);
   out = upsertHeadMetaTag(out, 'name', 'twitter:image', ogImageUrl);
   out = upsertHeadLinkTag(out, 'canonical', fullUrl);
   out = upsertHeadSitemapLink(out, `${cleanOrigin}/sitemap.xml`);
-  out = upsertHeadTurboRssLink(out, `${cleanOrigin}/turbo-pages.xml`);
   out = upsertHeadJsonLdScript(
     out,
     'fmworks-route-jsonld',
@@ -800,7 +926,7 @@ export function injectRouteSeoIntoHtml(
     );
   }
 
-  if (route.kind === 'faq') {
+  if (route.kind === 'faq' && !isNotFound) {
     const faqSchema = buildFaqPageJsonLd(HOME_PROCESS_FAQ_ITEMS, {
       pageUrl: `${cleanOrigin}/faq`,
       name: meta.title,
@@ -809,7 +935,7 @@ export function injectRouteSeoIntoHtml(
     out = upsertHeadJsonLdScript(out, 'fmworks-faqpage-jsonld', faqSchema);
   }
 
-  const ssrFallbackHtml = buildSsrFallbackMarkup(route, meta);
+  const ssrFallbackHtml = isNotFound ? '' : buildSsrFallbackMarkup(route, meta);
   if (ssrFallbackHtml) {
     out = out.replace(/<\/body>/i, `    ${ssrFallbackHtml}\n  </body>`);
   }

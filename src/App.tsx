@@ -10,8 +10,8 @@ import { SiteTextBlocksProvider } from './cms/SiteTextBlocksContext';
 import { StudioCmsProvider, useStudioCms } from './cms/StudioCmsContext';
 import { AppErrorBoundary } from './components/AppErrorBoundary';
 import { CompactHeaderNav } from './components/CompactHeaderNav';
-import { FloatingCasePlayer } from './components/FloatingCasePlayer';
 import { Footer } from './components/Footer';
+import { RouteLoadingSkeleton } from './components/LazySkeletons';
 import { RfStorageNoticeBanner } from './components/legal/RfStorageNoticeBanner';
 import { PerformanceMonitor } from './components/PerformanceMonitor';
 import { HomePage } from './components/pages/HomePage';
@@ -30,7 +30,9 @@ import {
   PlatformRoute,
   resolveRouteScrollAnchor,
   resolveRouteSeoMeta,
+  resolveRouteSkeletonVariant,
   resolveRouteTransitionKey,
+  RouteSkeletonVariant,
 } from './data/platformRouter';
 import { OrderFormatId } from './data/pricingData';
 import { MediaGridReservationPayload } from './data/radioInventory';
@@ -45,6 +47,11 @@ import { LayaDecisionProvider, useLayaDecision } from './engine/LayaContext';
 const AdminWorkspace = lazy(() =>
   import('./components/admin/AdminWorkspace').then((m) => ({
     default: m.AdminWorkspace,
+  }))
+);
+const FloatingCasePlayer = lazy(() =>
+  import('./components/FloatingCasePlayer').then((m) => ({
+    default: m.FloatingCasePlayer,
   }))
 );
 const BrandKitModal = lazy(() =>
@@ -108,16 +115,8 @@ const ReservationConfirmedModal = lazy(() =>
   }))
 );
 
-function RouteLoadingFallback() {
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="fmworks-panel-enter min-h-[45vh] flex items-center justify-center px-6 text-sm text-[#111111]/55 dark:text-[#F4F3EF]/55"
-    >
-      Загрузка раздела FMWorks…
-    </div>
-  );
+function RouteLoadingFallback({ variant }: { variant: RouteSkeletonVariant }) {
+  return <RouteLoadingSkeleton variant={variant} />;
 }
 
 const THEME_STORAGE_KEY = 'fmworks_theme_v1';
@@ -331,6 +330,7 @@ function FmworksExperience() {
 
   const currentRoutePath = buildPlatformPath(route);
   const routeTransitionKey = resolveRouteTransitionKey(route);
+  const routeSkeletonVariant = resolveRouteSkeletonVariant(route);
   const routeTransitionClass =
     navigationTick > 0 ? 'fmworks-route-enter' : undefined;
 
@@ -338,7 +338,7 @@ function FmworksExperience() {
     return (
       <>
         <PerformanceMonitor routeKey={currentRoutePath} />
-        <Suspense fallback={<RouteLoadingFallback />}>
+        <Suspense fallback={<RouteLoadingFallback variant="sound-drop" />}>
           <div
             key={routeTransitionKey}
             data-testid="route-transition-stage"
@@ -361,7 +361,7 @@ function FmworksExperience() {
     return (
       <>
         <PerformanceMonitor routeKey={currentRoutePath} />
-        <Suspense fallback={<RouteLoadingFallback />}>
+        <Suspense fallback={<RouteLoadingFallback variant="admin" />}>
           <div
             key={routeTransitionKey}
             data-testid="route-transition-stage"
@@ -409,9 +409,15 @@ function FmworksExperience() {
       : orderedCases;
 
   const isCasePlayerVisible =
-    caseSnap.isPlaying &&
     caseSnap.playbackMode === 'full' &&
     caseSnap.activeCase !== null;
+  const [hasMountedFloatingPlayer, setHasMountedFloatingPlayer] = useState(isCasePlayerVisible);
+
+  useEffect(() => {
+    if (isCasePlayerVisible && !hasMountedFloatingPlayer) {
+      setHasMountedFloatingPlayer(true);
+    }
+  }, [isCasePlayerVisible, hasMountedFloatingPlayer]);
 
   const currentReturnPath =
     typeof window !== 'undefined' && route.kind !== 'order'
@@ -475,7 +481,7 @@ function FmworksExperience() {
       />
 
       <main id="main-content" tabIndex={-1} className="flex-1 outline-none">
-        <Suspense fallback={<RouteLoadingFallback />}>
+        <Suspense fallback={<RouteLoadingFallback variant={routeSkeletonVariant} />}>
           <div
             key={routeTransitionKey}
             data-testid="route-transition-stage"
@@ -517,6 +523,7 @@ function FmworksExperience() {
                   route.kind === 'industry-detail' ? route.industrySlug : undefined
                 }
                 scrollAnchor={route.kind === 'cases' ? route.scrollAnchor : undefined}
+                searchQuery={route.kind === 'cases' ? route.searchQuery : undefined}
                 navigationTick={navigationTick}
                 playerSnap={caseSnap}
                 onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
@@ -590,13 +597,18 @@ function FmworksExperience() {
         <div className="h-[58px] sm:h-[68px]" aria-hidden="true" />
       )}
 
-      <FloatingCasePlayer
-        playerSnap={caseSnap}
-        onStop={() => casePlayerEngine.stop()}
-        onNext={() => casePlayerEngine.playNextCase(playlistWithReel)}
-        onSeek={(ratio) => casePlayerEngine.seekToRatio(ratio)}
-        onWarmCasePlayer={() => void casePlayerEngine.preload()}
-      />
+      {hasMountedFloatingPlayer && (
+        <Suspense fallback={null}>
+          <FloatingCasePlayer
+            playerSnap={caseSnap}
+            onTogglePause={() => casePlayerEngine.togglePause()}
+            onStop={() => casePlayerEngine.stop()}
+            onNext={() => casePlayerEngine.playNextCase(playlistWithReel)}
+            onSeek={(ratio) => casePlayerEngine.seekToRatio(ratio)}
+            onWarmCasePlayer={() => void casePlayerEngine.preload()}
+          />
+        </Suspense>
+      )}
 
       <RfStorageNoticeBanner
         liftForFloatingPlayer={Boolean(caseSnap.activeCase)}
