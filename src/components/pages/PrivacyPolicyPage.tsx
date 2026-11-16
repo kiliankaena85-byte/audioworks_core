@@ -189,7 +189,9 @@ export function PrivacyPolicyPage({
           aria-labelledby={`privacy-page-tab-${activeTab}`}
           className="rounded-3xl bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 p-5 sm:p-8 lg:p-10"
         >
-          <LegalPolicyDocumentContent activeTab={activeTab} />
+          <div key={activeTab} className="fmworks-panel-enter">
+            <LegalPolicyDocumentContent activeTab={activeTab} />
+          </div>
         </div>
       </div>
     </section>

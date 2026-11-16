@@ -87,6 +87,25 @@ export function resolveRouteScrollAnchor(route: PlatformRoute): string | undefin
   return undefined;
 }
 
+export function resolveRouteTransitionKey(route: PlatformRoute): string {
+  switch (route.kind) {
+    case 'station-detail':
+      return `station-detail:${route.stationSlug}`;
+    case 'case-detail':
+      return `case-detail:${route.caseSlug}`;
+    case 'industry-detail':
+      return `industry-detail:${route.industrySlug}`;
+    case 'mistake-detail':
+      return `mistake-detail:${route.articleSlug}`;
+    case 'cabinet':
+      return route.subroute === 'reset' ? 'cabinet:reset' : 'cabinet';
+    case 'sound-drop':
+      return `sound-drop:${route.dropToken ?? 'default'}`;
+    default:
+      return route.kind;
+  }
+}
+
 export interface MainPlatformNavItem {
   key: TopNavSectionKey;
   label: string;

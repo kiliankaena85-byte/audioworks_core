@@ -508,8 +508,8 @@ export function ClientCabinetPage({
               id="cabinet-workspace-tabpanel"
               role="tabpanel"
               aria-labelledby={`cabinet-workspace-tab-${ctrl.workspaceFilter}`}
-              className="space-y-8"
             >
+              <div key={ctrl.workspaceFilter} className="fmworks-panel-enter space-y-8">
               {/* ПРИОРИТЕТ 1 (ABOVE THE FOLD): АКТИВНЫЕ ЗАКАЗЫ В РАБОТЕ И НА ПРИЁМКЕ */}
               {ctrl.workspaceFilter !== 'history' &&
                 (ctrl.activeOrders.length > 0 ? (
@@ -743,6 +743,7 @@ export function ClientCabinetPage({
                     }}
                   />
                 )}
+              </div>
             </div>
           </div>
         )}

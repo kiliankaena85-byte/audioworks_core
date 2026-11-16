@@ -30,6 +30,7 @@ import {
   PlatformRoute,
   resolveRouteScrollAnchor,
   resolveRouteSeoMeta,
+  resolveRouteTransitionKey,
 } from './data/platformRouter';
 import { OrderFormatId } from './data/pricingData';
 import { MediaGridReservationPayload } from './data/radioInventory';
@@ -112,7 +113,7 @@ function RouteLoadingFallback() {
     <div
       role="status"
       aria-live="polite"
-      className="min-h-[45vh] flex items-center justify-center px-6 text-sm text-[#111111]/55 dark:text-[#F4F3EF]/55"
+      className="fmworks-panel-enter min-h-[45vh] flex items-center justify-center px-6 text-sm text-[#111111]/55 dark:text-[#F4F3EF]/55"
     >
       Загрузка раздела FMWorks…
     </div>
@@ -329,17 +330,27 @@ function FmworksExperience() {
   }, [route, navigationTick]);
 
   const currentRoutePath = buildPlatformPath(route);
+  const routeTransitionKey = resolveRouteTransitionKey(route);
+  const routeTransitionClass =
+    navigationTick > 0 ? 'fmworks-route-enter' : undefined;
 
   if (route.kind === 'sound-drop') {
     return (
       <>
         <PerformanceMonitor routeKey={currentRoutePath} />
         <Suspense fallback={<RouteLoadingFallback />}>
-          <SoundEngineerDropPage
-            dropToken={route.dropToken}
-            isDark={isDark}
-            onToggleTheme={() => setIsDark((prev) => !prev)}
-          />
+          <div
+            key={routeTransitionKey}
+            data-testid="route-transition-stage"
+            data-route-key={routeTransitionKey}
+            className={routeTransitionClass}
+          >
+            <SoundEngineerDropPage
+              dropToken={route.dropToken}
+              isDark={isDark}
+              onToggleTheme={() => setIsDark((prev) => !prev)}
+            />
+          </div>
         </Suspense>
         <RfStorageNoticeBanner onNavigate={navigateTo} />
       </>
@@ -351,17 +362,24 @@ function FmworksExperience() {
       <>
         <PerformanceMonitor routeKey={currentRoutePath} />
         <Suspense fallback={<RouteLoadingFallback />}>
-          <AdminWorkspace
-            brandVariant={brandVariant}
-            onSelectBrandVariant={setBrandVariant}
-            onOpenBrandKit={() => setIsBrandKitOpen(true)}
-            onOpenRadioAdmin={
-              AIRTIME_SALES_ENABLED ? () => setIsRadioAdminOpen(true) : undefined
-            }
-            isDark={isDark}
-            onToggleTheme={() => setIsDark((prev) => !prev)}
-            onNavigateHome={() => navigateTo({ kind: 'home' })}
-          />
+          <div
+            key={routeTransitionKey}
+            data-testid="route-transition-stage"
+            data-route-key={routeTransitionKey}
+            className={routeTransitionClass}
+          >
+            <AdminWorkspace
+              brandVariant={brandVariant}
+              onSelectBrandVariant={setBrandVariant}
+              onOpenBrandKit={() => setIsBrandKitOpen(true)}
+              onOpenRadioAdmin={
+                AIRTIME_SALES_ENABLED ? () => setIsRadioAdminOpen(true) : undefined
+              }
+              isDark={isDark}
+              onToggleTheme={() => setIsDark((prev) => !prev)}
+              onNavigateHome={() => navigateTo({ kind: 'home' })}
+            />
+          </div>
           {AIRTIME_SALES_ENABLED && isRadioAdminOpen && (
             <RadioInventoryAdmin
               isOpen={isRadioAdminOpen}
@@ -458,99 +476,106 @@ function FmworksExperience() {
 
       <main id="main-content" tabIndex={-1} className="flex-1 outline-none">
         <Suspense fallback={<RouteLoadingFallback />}>
-          {route.kind === 'home' && (
-            <HomePage
-              scrollAnchor={route.scrollAnchor}
-              navigationTick={navigationTick}
-              playerSnap={caseSnap}
-              onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
-              onSeekCase={(item, ratio) => casePlayerEngine.seekToRatio(ratio, item)}
-              onWarmCasePlayer={() => void casePlayerEngine.preload()}
-              onStopPreview={(caseId) => casePlayerEngine.stopPreview(caseId)}
-              onNavigate={navigateTo}
-              onStartStudioOrder={handleOpenStudioOrder}
-            />
-          )}
-
-          {AIRTIME_SALES_ENABLED &&
-            (route.kind === 'hot-air' || route.kind === 'station-detail') && (
-              <HotAirPage
-                stationSlug={
-                  route.kind === 'station-detail' ? route.stationSlug : undefined
-                }
-                isCasePlayerVisible={isCasePlayerVisible}
+          <div
+            key={routeTransitionKey}
+            data-testid="route-transition-stage"
+            data-route-key={routeTransitionKey}
+            className={routeTransitionClass}
+          >
+            {route.kind === 'home' && (
+              <HomePage
+                scrollAnchor={route.scrollAnchor}
+                navigationTick={navigationTick}
+                playerSnap={caseSnap}
+                onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
+                onSeekCase={(item, ratio) => casePlayerEngine.seekToRatio(ratio, item)}
+                onWarmCasePlayer={() => void casePlayerEngine.preload()}
+                onStopPreview={(caseId) => casePlayerEngine.stopPreview(caseId)}
                 onNavigate={navigateTo}
-                onReserveMediaGrid={handleReserveMediaGrid}
+                onStartStudioOrder={handleOpenStudioOrder}
               />
             )}
 
-          {(route.kind === 'cases' ||
-            route.kind === 'case-detail' ||
-            route.kind === 'industry-detail') && (
-            <CasesPage
-              caseSlug={route.kind === 'case-detail' ? route.caseSlug : undefined}
-              industrySlug={
-                route.kind === 'industry-detail' ? route.industrySlug : undefined
-              }
-              scrollAnchor={route.kind === 'cases' ? route.scrollAnchor : undefined}
-              navigationTick={navigationTick}
-              playerSnap={caseSnap}
-              onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
-              onSeekCase={(item, ratio) => casePlayerEngine.seekToRatio(ratio, item)}
-              onWarmCasePlayer={() => void casePlayerEngine.preload()}
-              onStopPreview={(caseId) => casePlayerEngine.stopPreview(caseId)}
-              onNavigate={navigateTo}
-            />
-          )}
+            {AIRTIME_SALES_ENABLED &&
+              (route.kind === 'hot-air' || route.kind === 'station-detail') && (
+                <HotAirPage
+                  stationSlug={
+                    route.kind === 'station-detail' ? route.stationSlug : undefined
+                  }
+                  isCasePlayerVisible={isCasePlayerVisible}
+                  onNavigate={navigateTo}
+                  onReserveMediaGrid={handleReserveMediaGrid}
+                />
+              )}
 
-          {route.kind === 'pricing' && (
-            <PricingPage
-              scrollAnchor={route.scrollAnchor}
-              navigationTick={navigationTick}
-              onSelectFormat={(formatId) => handleOpenStudioOrder(formatId)}
-              onNavigate={navigateTo}
-            />
-          )}
+            {(route.kind === 'cases' ||
+              route.kind === 'case-detail' ||
+              route.kind === 'industry-detail') && (
+              <CasesPage
+                caseSlug={route.kind === 'case-detail' ? route.caseSlug : undefined}
+                industrySlug={
+                  route.kind === 'industry-detail' ? route.industrySlug : undefined
+                }
+                scrollAnchor={route.kind === 'cases' ? route.scrollAnchor : undefined}
+                navigationTick={navigationTick}
+                playerSnap={caseSnap}
+                onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
+                onSeekCase={(item, ratio) => casePlayerEngine.seekToRatio(ratio, item)}
+                onWarmCasePlayer={() => void casePlayerEngine.preload()}
+                onStopPreview={(caseId) => casePlayerEngine.stopPreview(caseId)}
+                onNavigate={navigateTo}
+              />
+            )}
 
-          {(route.kind === 'approach' || route.kind === 'mistake-detail') && (
-            <ApproachPage
-              articleSlug={
-                route.kind === 'mistake-detail' ? route.articleSlug : undefined
-              }
-              scrollAnchor={route.kind === 'approach' ? route.scrollAnchor : undefined}
-              navigationTick={navigationTick}
-              onNavigate={navigateTo}
-              onStartOrder={() => handleOpenStudioOrder('turnkey')}
-            />
-          )}
+            {route.kind === 'pricing' && (
+              <PricingPage
+                scrollAnchor={route.scrollAnchor}
+                navigationTick={navigationTick}
+                onSelectFormat={(formatId) => handleOpenStudioOrder(formatId)}
+                onNavigate={navigateTo}
+              />
+            )}
 
-          {route.kind === 'faq' && (
-            <FaqPage
-              scrollAnchor={route.scrollAnchor}
-              navigationTick={navigationTick}
-              onNavigate={navigateTo}
-              onStartOrder={(formatId) => handleOpenStudioOrder(formatId ?? null)}
-            />
-          )}
+            {(route.kind === 'approach' || route.kind === 'mistake-detail') && (
+              <ApproachPage
+                articleSlug={
+                  route.kind === 'mistake-detail' ? route.articleSlug : undefined
+                }
+                scrollAnchor={route.kind === 'approach' ? route.scrollAnchor : undefined}
+                navigationTick={navigationTick}
+                onNavigate={navigateTo}
+                onStartOrder={() => handleOpenStudioOrder('turnkey')}
+              />
+            )}
 
-          {route.kind === 'privacy' && (
-            <PrivacyPolicyPage
-              initialTab={route.tab}
-              onNavigate={navigateTo}
-            />
-          )}
+            {route.kind === 'faq' && (
+              <FaqPage
+                scrollAnchor={route.scrollAnchor}
+                navigationTick={navigationTick}
+                onNavigate={navigateTo}
+                onStartOrder={(formatId) => handleOpenStudioOrder(formatId ?? null)}
+              />
+            )}
 
-          {route.kind === 'order' && (
-            <OrderPage draft={orderDraft} onNavigate={navigateTo} />
-          )}
+            {route.kind === 'privacy' && (
+              <PrivacyPolicyPage
+                initialTab={route.tab}
+                onNavigate={navigateTo}
+              />
+            )}
 
-          {route.kind === 'cabinet' && (
-            <ClientCabinetPage
-              subroute={route.subroute}
-              magicToken={route.magicToken}
-              onNavigate={navigateTo}
-            />
-          )}
+            {route.kind === 'order' && (
+              <OrderPage draft={orderDraft} onNavigate={navigateTo} />
+            )}
+
+            {route.kind === 'cabinet' && (
+              <ClientCabinetPage
+                subroute={route.subroute}
+                magicToken={route.magicToken}
+                onNavigate={navigateTo}
+              />
+            )}
+          </div>
         </Suspense>
       </main>
 

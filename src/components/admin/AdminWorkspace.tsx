@@ -850,176 +850,178 @@ export function AdminWorkspace({
           )}
 
           <Suspense fallback={<AdminTabSkeleton />}>
-            {(activeTab === 'orders_crm' ||
-              activeTab === 'production' ||
-              activeTab === 'settings') && (
-              <AdminOrdersCrmPanel
-                viewGroup={
-                  activeTab === 'production'
-                    ? 'production'
-                    : activeTab === 'settings'
-                      ? 'settings'
-                      : 'ledger'
-                }
-                focusedOrderId={focusedOrderId}
-                onNavigateToProductionOrder={(orderId) => {
-                  setFocusedOrderId(orderId);
-                  setActiveTab('production');
-                  setSaveBanner(null);
-                }}
-              />
-            )}
+            <div key={activeTab} className="fmworks-panel-enter">
+              {(activeTab === 'orders_crm' ||
+                activeTab === 'production' ||
+                activeTab === 'settings') && (
+                <AdminOrdersCrmPanel
+                  viewGroup={
+                    activeTab === 'production'
+                      ? 'production'
+                      : activeTab === 'settings'
+                        ? 'settings'
+                        : 'ledger'
+                  }
+                  focusedOrderId={focusedOrderId}
+                  onNavigateToProductionOrder={(orderId) => {
+                    setFocusedOrderId(orderId);
+                    setActiveTab('production');
+                    setSaveBanner(null);
+                  }}
+                />
+              )}
 
-            {activeTab === 'analytics' && (
-              <LazyAdminStudioAnalyticsPanel
-                isDark={isDark}
-                onOpenOrdersFunnel={() => {
-                  setActiveTab('orders_crm');
-                  setSaveBanner(null);
-                }}
-              />
-            )}
+              {activeTab === 'analytics' && (
+                <LazyAdminStudioAnalyticsPanel
+                  isDark={isDark}
+                  onOpenOrdersFunnel={() => {
+                    setActiveTab('orders_crm');
+                    setSaveBanner(null);
+                  }}
+                />
+              )}
 
-            {activeTab === 'laya_brand' && (
-              <LayaSimulationConsole
-                mode="embedded"
-                activeBrandVariant={brandVariant}
-                onSelectBrandVariant={onSelectBrandVariant}
-                onOpenBrandKit={onOpenBrandKit}
-                onOpenRadioAdmin={onOpenRadioAdmin}
-                onOpenHomePreview={onNavigateHome}
-                onOpenHeroStageAdmin={() => {
-                  setActiveTab('hero_stage');
-                  setIsCmsDrawerOpen(true);
-                  setSaveBanner(null);
-                }}
-                onOpenDuelAdmin={() => {
-                  setActiveTab('duel');
-                  setIsCmsDrawerOpen(true);
-                  setSaveBanner(null);
-                }}
-              />
-            )}
+              {activeTab === 'laya_brand' && (
+                <LayaSimulationConsole
+                  mode="embedded"
+                  activeBrandVariant={brandVariant}
+                  onSelectBrandVariant={onSelectBrandVariant}
+                  onOpenBrandKit={onOpenBrandKit}
+                  onOpenRadioAdmin={onOpenRadioAdmin}
+                  onOpenHomePreview={onNavigateHome}
+                  onOpenHeroStageAdmin={() => {
+                    setActiveTab('hero_stage');
+                    setIsCmsDrawerOpen(true);
+                    setSaveBanner(null);
+                  }}
+                  onOpenDuelAdmin={() => {
+                    setActiveTab('duel');
+                    setIsCmsDrawerOpen(true);
+                    setSaveBanner(null);
+                  }}
+                />
+              )}
 
-            {activeTab === 'hero_stage' && (
-              <AdminHeroStagePanel
-                snapshot={snapshot}
-                onChangeHeroStage={(nextHero) =>
-                  updateLocalSnapshot((prev) => ({
-                    ...prev,
-                    heroStage: nextHero,
-                  }))
-                }
-                onChangeHeroCopy={(patch) =>
-                  updateLocalSnapshot((prev) => ({
-                    ...prev,
-                    siteCopy: {
-                      ...prev.siteCopy,
-                      ...patch,
-                    },
-                  }))
-                }
-                onUploadAudio={uploadAudioFile}
-                onOpenPortfolioTab={() => {
-                  setActiveTab('portfolio');
-                  setIsCmsDrawerOpen(true);
-                  setSaveBanner(null);
-                }}
-                onNavigateToHeroOnSite={() => handleNavigateToAnchor('#top')}
-              />
-            )}
+              {activeTab === 'hero_stage' && (
+                <AdminHeroStagePanel
+                  snapshot={snapshot}
+                  onChangeHeroStage={(nextHero) =>
+                    updateLocalSnapshot((prev) => ({
+                      ...prev,
+                      heroStage: nextHero,
+                    }))
+                  }
+                  onChangeHeroCopy={(patch) =>
+                    updateLocalSnapshot((prev) => ({
+                      ...prev,
+                      siteCopy: {
+                        ...prev.siteCopy,
+                        ...patch,
+                      },
+                    }))
+                  }
+                  onUploadAudio={uploadAudioFile}
+                  onOpenPortfolioTab={() => {
+                    setActiveTab('portfolio');
+                    setIsCmsDrawerOpen(true);
+                    setSaveBanner(null);
+                  }}
+                  onNavigateToHeroOnSite={() => handleNavigateToAnchor('#top')}
+                />
+              )}
 
-            {activeTab === 'portfolio' && (
-              <AdminPortfolioPanel
-                flagshipReel={snapshot.flagshipReel}
-                portfolioCases={snapshot.portfolioCases}
-                heroStage={snapshot.heroStage}
-                onPatchCase={(caseId, patch) =>
-                  updateLocalSnapshot((prev) => {
-                    if (prev.flagshipReel.id === caseId) {
+              {activeTab === 'portfolio' && (
+                <AdminPortfolioPanel
+                  flagshipReel={snapshot.flagshipReel}
+                  portfolioCases={snapshot.portfolioCases}
+                  heroStage={snapshot.heroStage}
+                  onPatchCase={(caseId, patch) =>
+                    updateLocalSnapshot((prev) => {
+                      if (prev.flagshipReel.id === caseId) {
+                        return {
+                          ...prev,
+                          flagshipReel: { ...prev.flagshipReel, ...patch },
+                        };
+                      }
                       return {
                         ...prev,
-                        flagshipReel: { ...prev.flagshipReel, ...patch },
+                        portfolioCases: prev.portfolioCases.map((c) =>
+                          c.id === caseId ? { ...c, ...patch } : c
+                        ),
                       };
-                    }
-                    return {
+                    })
+                  }
+                  onChangePortfolioCases={(nextCases) =>
+                    updateLocalSnapshot((prev) => ({
                       ...prev,
-                      portfolioCases: prev.portfolioCases.map((c) =>
-                        c.id === caseId ? { ...c, ...patch } : c
+                      portfolioCases: nextCases,
+                    }))
+                  }
+                  onAssignCaseToHero={(item) =>
+                    updateLocalSnapshot((prev) => ({
+                      ...prev,
+                      heroStage: assignPortfolioCaseToHeroStage(
+                        prev.heroStage,
+                        item
                       ),
-                    };
-                  })
-                }
-                onChangePortfolioCases={(nextCases) =>
-                  updateLocalSnapshot((prev) => ({
-                    ...prev,
-                    portfolioCases: nextCases,
-                  }))
-                }
-                onAssignCaseToHero={(item) =>
-                  updateLocalSnapshot((prev) => ({
-                    ...prev,
-                    heroStage: assignPortfolioCaseToHeroStage(
-                      prev.heroStage,
-                      item
-                    ),
-                  }))
-                }
-                onOpenHeroStageTab={() => {
-                  setActiveTab('hero_stage');
-                  setIsCmsDrawerOpen(true);
-                  setSaveBanner(null);
-                }}
-                onUploadAudio={uploadAudioFile}
-                onUploadImage={uploadImageFile}
-                onNavigateToGallery={() => handleNavigateToAnchor('#work')}
-              />
-            )}
+                    }))
+                  }
+                  onOpenHeroStageTab={() => {
+                    setActiveTab('hero_stage');
+                    setIsCmsDrawerOpen(true);
+                    setSaveBanner(null);
+                  }}
+                  onUploadAudio={uploadAudioFile}
+                  onUploadImage={uploadImageFile}
+                  onNavigateToGallery={() => handleNavigateToAnchor('#work')}
+                />
+              )}
 
-            {activeTab === 'duel' && (
-              <AdminDuelPanel
-                duel={snapshot.duel}
-                onChangeDuel={(nextDuel) =>
-                  updateLocalSnapshot((prev) => ({ ...prev, duel: nextDuel }))
-                }
-                onUploadAudio={uploadAudioFile}
-              />
-            )}
+              {activeTab === 'duel' && (
+                <AdminDuelPanel
+                  duel={snapshot.duel}
+                  onChangeDuel={(nextDuel) =>
+                    updateLocalSnapshot((prev) => ({ ...prev, duel: nextDuel }))
+                  }
+                  onUploadAudio={uploadAudioFile}
+                />
+              )}
 
-            {activeTab === 'testimonials' && (
-              <AdminTestimonialsPanel
-                testimonials={snapshot.testimonials}
-                portfolioCases={snapshot.portfolioCases}
-                flagshipReel={snapshot.flagshipReel}
-                onChangeTestimonials={(nextTestimonials) =>
-                  updateLocalSnapshot((prev) => ({
-                    ...prev,
-                    testimonials: nextTestimonials,
-                  }))
-                }
-                onNavigateToTestimonialsOnSite={() =>
-                  handleNavigateToAnchor('#testimonials')
-                }
-              />
-            )}
+              {activeTab === 'testimonials' && (
+                <AdminTestimonialsPanel
+                  testimonials={snapshot.testimonials}
+                  portfolioCases={snapshot.portfolioCases}
+                  flagshipReel={snapshot.flagshipReel}
+                  onChangeTestimonials={(nextTestimonials) =>
+                    updateLocalSnapshot((prev) => ({
+                      ...prev,
+                      testimonials: nextTestimonials,
+                    }))
+                  }
+                  onNavigateToTestimonialsOnSite={() =>
+                    handleNavigateToAnchor('#testimonials')
+                  }
+                />
+              )}
 
-            {activeTab === 'copy' && (
-              <AdminSiteCopyPanel
-                draft={snapshot}
-                onChangeNeuroApproach={(nextNeuro) =>
-                  updateLocalSnapshot((prev) => ({
-                    ...prev,
-                    neuroApproach: nextNeuro,
-                  }))
-                }
-                onChangeSiteCopy={(nextCopy) =>
-                  updateLocalSnapshot((prev) => ({ ...prev, siteCopy: nextCopy }))
-                }
-                onImportSnapshot={(imported) => updateLocalSnapshot(imported)}
-                onResetToDefaults={handleResetAll}
-                onUploadImage={uploadImageFile}
-              />
-            )}
+              {activeTab === 'copy' && (
+                <AdminSiteCopyPanel
+                  draft={snapshot}
+                  onChangeNeuroApproach={(nextNeuro) =>
+                    updateLocalSnapshot((prev) => ({
+                      ...prev,
+                      neuroApproach: nextNeuro,
+                    }))
+                  }
+                  onChangeSiteCopy={(nextCopy) =>
+                    updateLocalSnapshot((prev) => ({ ...prev, siteCopy: nextCopy }))
+                  }
+                  onImportSnapshot={(imported) => updateLocalSnapshot(imported)}
+                  onResetToDefaults={handleResetAll}
+                  onUploadImage={uploadImageFile}
+                />
+              )}
+            </div>
           </Suspense>
         </main>
       </div>

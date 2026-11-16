@@ -34,6 +34,7 @@ import {
   resolveActiveTopNavSection,
   resolveRouteScrollAnchor,
   resolveRouteSeoMeta,
+  resolveRouteTransitionKey,
 } from './platformRouter';
 import { BANNED_EDITORIAL_TERMS } from './studioCmsTypes';
 
@@ -495,5 +496,48 @@ test('Каталог радиостанций, разборы кейсов и SE
     violations,
     [],
     `Обнаружены запрещённые редакционной политикой слова: ${violations.join(', ')}`
+  );
+});
+
+test('resolveRouteTransitionKey сохраняет ключ для якорных переходов и разделяет разные разделы и детали', () => {
+  assert.equal(resolveRouteTransitionKey({ kind: 'home' }), 'home');
+  assert.equal(
+    resolveRouteTransitionKey({ kind: 'home', scrollAnchor: 'duel' }),
+    'home'
+  );
+  assert.equal(
+    resolveRouteTransitionKey({ kind: 'pricing', scrollAnchor: 'stages-24-48' }),
+    resolveRouteTransitionKey({ kind: 'pricing' })
+  );
+  assert.notEqual(
+    resolveRouteTransitionKey({ kind: 'cases' }),
+    resolveRouteTransitionKey({ kind: 'case-detail', caseSlug: 'dmitrogorsky' })
+  );
+  assert.notEqual(
+    resolveRouteTransitionKey({ kind: 'case-detail', caseSlug: 'dmitrogorsky' }),
+    resolveRouteTransitionKey({ kind: 'industry-detail', industrySlug: 'medicine' })
+  );
+  assert.notEqual(
+    resolveRouteTransitionKey({ kind: 'approach' }),
+    resolveRouteTransitionKey({
+      kind: 'mistake-detail',
+      articleSlug: 'phonebook-syndrome',
+    })
+  );
+  assert.equal(
+    resolveRouteTransitionKey({ kind: 'privacy', tab: 'policy' }),
+    resolveRouteTransitionKey({ kind: 'privacy', tab: 'consent' })
+  );
+  assert.equal(
+    resolveRouteTransitionKey({ kind: 'cabinet', subroute: 'orders' }),
+    resolveRouteTransitionKey({ kind: 'cabinet', subroute: 'history' })
+  );
+  assert.notEqual(
+    resolveRouteTransitionKey({ kind: 'cabinet', subroute: 'orders' }),
+    resolveRouteTransitionKey({ kind: 'cabinet', subroute: 'reset' })
+  );
+  assert.equal(
+    resolveRouteTransitionKey({ kind: 'sound-drop', dropToken: 'tok-1' }),
+    'sound-drop:tok-1'
   );
 });
