@@ -3,12 +3,16 @@ import { FormEvent, KeyboardEvent, useRef } from 'react';
 import { DEMO_CLIENT_CABINET_EMAIL } from '../../data/clientAuthShared';
 import type { CabinetAccessTabId } from '../../data/clientCabinetArchitecture';
 import type { MagicLinkDispatchPreview } from './useClientCabinetController';
+import { PersonalDataConsentField } from '../legal/PersonalDataConsentField';
 
 export interface CabinetAccessPanelProps {
   accessTab: CabinetAccessTabId;
   onSelectTab: (tab: CabinetAccessTabId) => void;
   magicEmailInput: string;
   onChangeMagicEmailInput: (value: string) => void;
+  magicConsentAccepted: boolean;
+  onChangeMagicConsentAccepted: (checked: boolean) => void;
+  magicConsentError: string | null;
   revokeOtherSessionsOnReset: boolean;
   onChangeRevokeOtherSessionsOnReset: (checked: boolean) => void;
   isRequestingMagic: boolean;
@@ -55,6 +59,9 @@ export function CabinetAccessPanel({
   onSelectTab,
   magicEmailInput,
   onChangeMagicEmailInput,
+  magicConsentAccepted,
+  onChangeMagicConsentAccepted,
+  magicConsentError,
   revokeOtherSessionsOnReset,
   onChangeRevokeOtherSessionsOnReset,
   isRequestingMagic,
@@ -229,6 +236,17 @@ export function CabinetAccessPanel({
                         : 'Получить ссылку входа'}
                   </span>
                 </button>
+              </div>
+
+              <div className="sm:col-span-12 pt-1">
+                <PersonalDataConsentField
+                  id="cabinet-magic-pdn-consent"
+                  checked={magicConsentAccepted}
+                  onChange={onChangeMagicConsentAccepted}
+                  error={magicConsentError ?? undefined}
+                  compact
+                  testIdPrefix="cabinet-magic-pdn-consent"
+                />
               </div>
             </form>
 

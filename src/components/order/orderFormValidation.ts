@@ -139,7 +139,7 @@ export function validateOrderSubmissionFields(
       !(input.deliveryMessengerOther ?? '').trim()
     ) {
       deliveryError =
-        'Укажите название мессенджера (например, Viber или VK Мессенджер)';
+        'Укажите название мессенджера (например, VK Мессенджер или Яндекс Мессенджер)';
     } else if (
       input.preferredDeliveryChannel === 'cloud' &&
       input.deliveryCloud === 'other' &&
@@ -189,7 +189,7 @@ export function validateOrderSubmissionFields(
       }
     }
 
-    if (input.pdnConsentAccepted === false && !input.isReturningFastTrack) {
+    if (input.pdnConsentAccepted !== true) {
       consentError =
         'Для отправки заявки подтвердите согласие на обработку персональных данных (152-ФЗ)';
     }

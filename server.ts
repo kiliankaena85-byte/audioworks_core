@@ -1832,7 +1832,7 @@ async function dispatchOrderToExternalChannels(
   } else {
     const started = Date.now();
     try {
-      const maskPdn = resolvedTg.maskPdnInExternalAlerts;
+      const maskPdn = true;
       const text = formatTelegramOrderDispatchMessage(targetOrder, event, {
         maskPdn,
         statusChange,
@@ -2235,7 +2235,20 @@ let cachedDiadocPasswordToken: { token: string; expiresAt: number } | null = nul
 
 function getDiadocApiBaseUrl(): string {
   const custom = (process.env.DIADOC_API_URL ?? '').trim().replace(/\/+$/, '');
-  return custom || DEFAULT_DIADOC_API_URL;
+  if (!custom) return DEFAULT_DIADOC_API_URL;
+  try {
+    const parsed = new URL(custom);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return DEFAULT_DIADOC_API_URL;
+    }
+    const bannedCheck = checkBannedForeignServiceUrl(custom);
+    if (bannedCheck.matched) {
+      return DEFAULT_DIADOC_API_URL;
+    }
+    return custom;
+  } catch {
+    return DEFAULT_DIADOC_API_URL;
+  }
 }
 
 function getKonturIntegrationStatus(): KonturIntegrationStatus {
@@ -3136,7 +3149,7 @@ async function startServer() {
       return;
     }
 
-    if (body.pdnConsentAccepted === false && !body.isReturningFastTrack) {
+    if (body.pdnConsentAccepted !== true) {
       res.status(400).json({
         ok: false,
         verdict: 'validation_error',
@@ -3491,7 +3504,7 @@ async function startServer() {
         edoAndOrdRegistered: false,
       },
       mediaPlanSnapshot: sanitizedMediaSnap,
-      pdnConsentAcceptedAt: body.pdnConsentAccepted !== false ? nowIso : null,
+      pdnConsentAcceptedAt: body.pdnConsentAccepted === true ? nowIso : null,
       slaState: {
         createdRegime: regimeAtCreation.regime,
         slaWindowStartAt: slaWindowStartIso,
@@ -3894,12 +3907,24 @@ async function startServer() {
         email?: string;
         mode?: 'login' | 'reset';
         revokeOtherSessions?: boolean;
+        pdnConsentAccepted?: boolean;
       };
       const email = normalizeClientEmail(body.email);
       if (!email) {
         res.status(400).json({
           ok: false,
           error: 'Укажите корректный адрес электронной почты (например, name@company.ru)',
+        });
+        return;
+      }
+
+      const activeSession = getVerifiedClientSession(req);
+      const isAlreadyAuthenticatedForEmail = activeSession?.email === email;
+      if (!isAlreadyAuthenticatedForEmail && body.pdnConsentAccepted !== true) {
+        res.status(400).json({
+          ok: false,
+          error:
+            'Для отправки ссылки подтвердите согласие на обработку персональных данных (ст. 9 Федерального закона № 152-ФЗ).',
         });
         return;
       }
@@ -4197,6 +4222,7 @@ async function startServer() {
         email?: string;
         orderNumber?: string;
         rescueToken?: string;
+        pdnConsentAccepted?: boolean;
         items?: Array<{ orderNumber?: string; rescueToken?: string }>;
       };
 
@@ -4252,6 +4278,15 @@ async function startServer() {
         verifiedSessionEmail: activeSession?.email ?? null,
         targetEmail: email,
       });
+
+      if (!allowDirectBind && body.pdnConsentAccepted !== true) {
+        res.status(400).json({
+          ok: false,
+          error:
+            'Для привязки почты подтвердите согласие на обработку персональных данных (ст. 9 Федерального закона № 152-ФЗ).',
+        });
+        return;
+      }
 
       // Защита P0: если владение e-mail ещё не подтверждено активной сессией —
       // НЕ выдаём чужую сессию, а отправляем одноразовую ссылку подтверждения (при переходе verify-magic-link склеит localItems).
@@ -6321,7 +6356,8 @@ async function startServer() {
           allowInternalLoopbackSink: true,
           localPort: PORT,
         });
-        if (check.ok) {
+        const rfSafety = evaluateWebhookEndpointRfSafety(emailGatewayUrl);
+        if (check.ok && rfSafety.isValidUrl && !rfSafety.isBannedForeignService) {
           const mailRes = await fetch(emailGatewayUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -7834,10 +7870,7 @@ async function startServer() {
             typeof body.telegram?.notifyOnStageChange === 'boolean'
               ? body.telegram.notifyOnStageChange
               : prevTg.notifyOnStageChange,
-          maskPdnInExternalAlerts:
-            typeof body.telegram?.maskPdnInExternalAlerts === 'boolean'
-              ? body.telegram.maskPdnInExternalAlerts
-              : prevTg.maskPdnInExternalAlerts !== false,
+          maskPdnInExternalAlerts: true,
         },
         webhook: {
           enabled:

@@ -47,6 +47,7 @@ import {
   resolveClientAvatarModel,
   sanitizeClientAvatarPresetId,
 } from '../../data/clientAvatarLogic';
+import { validateCabinetEmailConsent } from '../../security/legalDocumentBuilder';
 import type { SpotRevisionKind } from '../../data/productionApprovalWorkflow';
 import {
   bindClientEmailApi,
@@ -237,6 +238,8 @@ export function useClientCabinetController({
     subroute === 'reset' ? 'access_reset' : 'magic_email'
   );
   const [magicEmailInput, setMagicEmailInput] = useState<string>('');
+  const [magicConsentAccepted, setMagicConsentAccepted] = useState<boolean>(false);
+  const [magicConsentError, setMagicConsentError] = useState<string | null>(null);
   const [revokeOtherSessionsOnReset, setRevokeOtherSessionsOnReset] =
     useState<boolean>(true);
   const [isRequestingMagic, setIsRequestingMagic] = useState<boolean>(false);
@@ -262,8 +265,10 @@ export function useClientCabinetController({
 
   // Привязка анонимных заказов устройства к почте (с подтверждением владения почтой)
   const [bindEmailInput, setBindEmailInput] = useState<string>('');
+  const [bindConsentAccepted, setBindConsentAccepted] = useState<boolean>(false);
   const [isBindingEmail, setIsBindingEmail] = useState<boolean>(false);
   const [bindEmailError, setBindEmailError] = useState<string | null>(null);
+  const [bindConsentError, setBindConsentError] = useState<string | null>(null);
   const [pendingBindVerification, setPendingBindVerification] =
     useState<PendingBindEmailVerification | null>(null);
 
@@ -641,6 +646,7 @@ export function useClientCabinetController({
               const bindJson = await bindClientEmailApi({
                 email: sessionJson.account.email,
                 items: unboundDeviceItems,
+                pdnConsentAccepted: true,
               });
               if (requestSeq !== loadSeqRef.current) {
                 return;
@@ -713,10 +719,26 @@ export function useClientCabinetController({
   const executeRequestMagicLink = useCallback(
     async (
       rawEmail: string,
-      options?: { mode?: 'login' | 'reset'; revokeOtherSessions?: boolean }
+      options?: {
+        mode?: 'login' | 'reset';
+        revokeOtherSessions?: boolean;
+        consentAccepted?: boolean;
+        skipConsentCheck?: boolean;
+      }
     ) => {
       const cleanEmail = normalizeClientEmail(rawEmail);
-      if (!cleanEmail) {
+      const effectiveConsent = options?.consentAccepted ?? magicConsentAccepted;
+      if (!options?.skipConsentCheck) {
+        const consentValidation = validateCabinetEmailConsent({
+          email: rawEmail,
+          consentAccepted: effectiveConsent,
+        });
+        if (!consentValidation.valid || !cleanEmail) {
+          setMagicRequestError(consentValidation.emailError);
+          setMagicConsentError(consentValidation.consentError);
+          return;
+        }
+      } else if (!cleanEmail) {
         setMagicRequestError(
           'Укажите корректную почту (например, name@company.ru)'
         );
@@ -734,6 +756,7 @@ export function useClientCabinetController({
 
       setIsRequestingMagic(true);
       setMagicRequestError(null);
+      setMagicConsentError(null);
       setStatusError(null);
       setMagicDispatchResult(null);
       try {
@@ -741,6 +764,7 @@ export function useClientCabinetController({
           email: cleanEmail,
           mode: effectiveMode,
           revokeOtherSessions: effectiveRevoke,
+          pdnConsentAccepted: true,
         });
         setMagicDispatchResult({
           email: result.email,
@@ -761,7 +785,7 @@ export function useClientCabinetController({
         setIsRequestingMagic(false);
       }
     },
-    [accessTab, revokeOtherSessionsOnReset]
+    [accessTab, magicConsentAccepted, revokeOtherSessionsOnReset]
   );
 
   const handleMagicLinkSubmit = useCallback(
@@ -810,6 +834,7 @@ export function useClientCabinetController({
         email: clientAccount.email,
         mode: 'login',
         revokeOtherSessions: false,
+        pdnConsentAccepted: true,
       });
       if (json.magicLinkUrl && json.magicLinkPath) {
         let copied = false;
@@ -845,13 +870,19 @@ export function useClientCabinetController({
       e.preventDefault();
       if (isBindingEmail || orders.length === 0) return;
       const cleanEmail = normalizeClientEmail(bindEmailInput);
-      if (!cleanEmail) {
-        setBindEmailError('Укажите корректную почту (например, name@company.ru)');
+      const consentValidation = validateCabinetEmailConsent({
+        email: bindEmailInput,
+        consentAccepted: bindConsentAccepted,
+      });
+      if (!consentValidation.valid || !cleanEmail) {
+        setBindEmailError(consentValidation.emailError);
+        setBindConsentError(consentValidation.consentError);
         return;
       }
 
       setIsBindingEmail(true);
       setBindEmailError(null);
+      setBindConsentError(null);
       setPendingBindVerification(null);
       try {
         const json = await bindClientEmailApi({
@@ -860,6 +891,7 @@ export function useClientCabinetController({
             orderNumber: o.orderNumber,
             rescueToken: o.rescueToken,
           })),
+          pdnConsentAccepted: true,
         });
 
         if (json.verificationRequired || !json.authenticated) {
@@ -913,6 +945,7 @@ export function useClientCabinetController({
         setClientAccount(boundAccount);
         setOrders(nextOrders);
         setBindEmailInput('');
+        setBindConsentAccepted(false);
         setAuthBanner(
           `Заказы привязаны к подтверждённому профилю ${cleanEmail}`
         );
@@ -924,7 +957,7 @@ export function useClientCabinetController({
         setIsBindingEmail(false);
       }
     },
-    [bindEmailInput, deviceAvatarPrefs, isBindingEmail, orders]
+    [bindConsentAccepted, bindEmailInput, deviceAvatarPrefs, isBindingEmail, orders]
   );
 
   const handleLogoutClientSession = useCallback(async () => {
@@ -947,6 +980,10 @@ export function useClientCabinetController({
     setForgottenDeviceOrderUndo(null);
     setAuthBanner(null);
     setMagicDispatchResult(null);
+    setMagicConsentAccepted(false);
+    setMagicConsentError(null);
+    setBindConsentAccepted(false);
+    setBindConsentError(null);
     setAccessTab('magic_email');
     setShowLookupForm(true);
     if (subroute === 'reset') {
@@ -1684,6 +1721,10 @@ export function useClientCabinetController({
     openAccessResetFlow,
     magicEmailInput,
     setMagicEmailInput,
+    magicConsentAccepted,
+    setMagicConsentAccepted,
+    magicConsentError,
+    setMagicConsentError,
     revokeOtherSessionsOnReset,
     setRevokeOtherSessionsOnReset,
     isRequestingMagic,
@@ -1696,9 +1737,13 @@ export function useClientCabinetController({
     isIssuingCrossDeviceLink,
     bindEmailInput,
     setBindEmailInput,
+    bindConsentAccepted,
+    setBindConsentAccepted,
     isBindingEmail,
     bindEmailError,
     setBindEmailError,
+    bindConsentError,
+    setBindConsentError,
     pendingBindVerification,
     setPendingBindVerification,
     handleConfirmPendingBindMagicLink,

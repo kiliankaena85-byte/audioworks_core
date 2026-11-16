@@ -94,6 +94,7 @@ import {
   VoiceBriefSnapshot,
 } from '../order/VoiceBriefRecorder';
 import { PersonalDataConsentField } from '../legal/PersonalDataConsentField';
+import { validateCabinetEmailConsent } from '../../security/legalDocumentBuilder';
 import {
   counterpartyToDocumentMetaPatch,
   type CounterpartyLookupResult,
@@ -191,7 +192,9 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
   const [quickInnSaved, setQuickInnSaved] = useState<boolean>(false);
   const [activeSessionEmail, setActiveSessionEmail] = useState<string | null>(null);
   const [bindEmailDraft, setBindEmailDraft] = useState<string>('');
+  const [bindEmailConsentAccepted, setBindEmailConsentAccepted] = useState<boolean>(false);
   const [bindEmailError, setBindEmailError] = useState<string | null>(null);
+  const [bindConsentError, setBindConsentError] = useState<string | null>(null);
   const [isBindingEmail, setIsBindingEmail] = useState<boolean>(false);
 
   const activeRateScope = resolveLeadFormRateScope(
@@ -524,7 +527,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       hasAttachedFile: Boolean(attachedFileName),
       isReturningFastTrack,
       honeypotFilled: Boolean(websiteTrap.trim()),
-      pdnConsentAccepted: isReturningFastTrack ? true : pdnConsentAccepted,
+      pdnConsentAccepted,
     });
 
     if (!validation.valid) {
@@ -631,7 +634,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
         ),
         isReturningFastTrack,
         requireBriefOrVoice: false,
-        pdnConsentAccepted: isReturningFastTrack ? true : pdnConsentAccepted,
+        pdnConsentAccepted,
         wantsDiadocDuplicate: draft.wantsDiadocDuplicate,
         documentMeta: submittedDocMeta,
         skipClientRateConsume: true,
@@ -771,7 +774,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       mediaPlanSnapshot: null,
       isReturningFastTrack,
       requireBriefOrVoice: true,
-      pdnConsentAccepted: isReturningFastTrack ? true : pdnConsentAccepted,
+      pdnConsentAccepted,
       wantsDiadocDuplicate: draft.wantsInvoiceNow ? draft.wantsDiadocDuplicate : false,
       documentMeta: submittedDocMeta,
       skipClientRateConsume: true,
@@ -873,7 +876,9 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
     setQuickInnError(null);
     setQuickInnSaved(false);
     setBindEmailDraft('');
+    setBindEmailConsentAccepted(false);
     setBindEmailError(null);
+    setBindConsentError(null);
     orderDraftStore.confirmReservationOrder(summary);
     setConfirmedOrder(summary);
     if (typeof window !== 'undefined') {
@@ -1046,13 +1051,19 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
     e.preventDefault();
     if (!confirmedOrder?.rescueToken || isBindingEmail) return;
     const normalized = normalizeClientEmail(bindEmailDraft);
-    if (!normalized) {
-      setBindEmailError('Укажите корректную почту (например, name@company.ru)');
+    const check = validateCabinetEmailConsent({
+      email: bindEmailDraft,
+      consentAccepted: bindEmailConsentAccepted,
+    });
+    if (!check.valid || !normalized) {
+      setBindEmailError(check.emailError);
+      setBindConsentError(check.consentError);
       return;
     }
 
     setIsBindingEmail(true);
     setBindEmailError(null);
+    setBindConsentError(null);
     try {
       const res = await fetch('/api/client-auth/bind-email', {
         method: 'POST',
@@ -1061,6 +1072,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
           email: normalized,
           orderNumber: confirmedOrder.orderNumber,
           rescueToken: confirmedOrder.rescueToken,
+          pdnConsentAccepted: true,
         }),
       });
       const json = (await res.json()) as {
@@ -1082,6 +1094,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
       orderDraftStore.confirmReservationOrder(updated);
       setConfirmedOrder(updated);
       setBindEmailDraft('');
+      setBindEmailConsentAccepted(false);
     } catch (err) {
       setBindEmailError(
         err instanceof Error ? err.message : 'Ошибка привязки почты'
@@ -1406,47 +1419,61 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
               <form
                 onSubmit={handleBindEmailForConfirmed}
                 data-testid="confirmed-bind-email-bar"
-                className="rounded-2xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                className="rounded-2xl p-4 bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 space-y-3"
               >
-                <div className="space-y-0.5 min-w-0">
-                  <label
-                    htmlFor="confirmed-bind-email-input"
-                    className="block text-xs sm:text-sm font-semibold text-[#111111] dark:text-[#F4F3EF]"
-                  >
-                    Открывать заказ с любого устройства без пароля (по желанию)
-                  </label>
-                  <p className="text-xs text-[#111111]/62 dark:text-[#F4F3EF]/62">
-                    Укажите почту — кабинет привяжется автоматически, а вход с телефона или другого ПК будет по magic-ссылке.
-                  </p>
-                  {bindEmailError && (
-                    <p role="alert" className="text-xs font-semibold text-[#FF4820] pt-0.5">
-                      {bindEmailError}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-0.5 min-w-0">
+                    <label
+                      htmlFor="confirmed-bind-email-input"
+                      className="block text-xs sm:text-sm font-semibold text-[#111111] dark:text-[#F4F3EF]"
+                    >
+                      Открывать заказ с любого устройства без пароля (по желанию)
+                    </label>
+                    <p className="text-xs text-[#111111]/62 dark:text-[#F4F3EF]/62">
+                      Укажите почту — кабинет привяжется автоматически, а вход с телефона или другого ПК будет по magic-ссылке.
                     </p>
-                  )}
+                    {bindEmailError && (
+                      <p role="alert" className="text-xs font-semibold text-[#FF4820] pt-0.5">
+                        {bindEmailError}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
+                    <input
+                      id="confirmed-bind-email-input"
+                      data-testid="confirmed-bind-email-input"
+                      type="email"
+                      value={bindEmailDraft}
+                      onChange={(e) => {
+                        setBindEmailDraft(e.target.value);
+                        if (bindEmailError) setBindEmailError(null);
+                      }}
+                      placeholder="name@company.ru"
+                      className="min-h-[40px] sm:w-56 px-3.5 rounded-xl bg-white dark:bg-[#141418] border border-[#111111]/16 dark:border-white/16 text-xs sm:text-sm text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isBindingEmail}
+                      data-testid="confirmed-bind-email-submit-btn"
+                      className="min-h-[40px] px-4 rounded-xl bg-[#111111] hover:bg-[#FF4820] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                    >
+                      {isBindingEmail ? 'Сохраняем…' : 'Привязать почту'}
+                    </button>
+                  </div>
                 </div>
 
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
-                  <input
-                    id="confirmed-bind-email-input"
-                    data-testid="confirmed-bind-email-input"
-                    type="email"
-                    value={bindEmailDraft}
-                    onChange={(e) => {
-                      setBindEmailDraft(e.target.value);
-                      if (bindEmailError) setBindEmailError(null);
-                    }}
-                    placeholder="name@company.ru"
-                    className="min-h-[40px] sm:w-56 px-3.5 rounded-xl bg-white dark:bg-[#141418] border border-[#111111]/16 dark:border-white/16 text-xs sm:text-sm text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
-                  />
-                  <button
-                    type="submit"
-                    disabled={isBindingEmail}
-                    data-testid="confirmed-bind-email-submit-btn"
-                    className="min-h-[40px] px-4 rounded-xl bg-[#111111] hover:bg-[#FF4820] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
-                  >
-                    {isBindingEmail ? 'Сохраняем…' : 'Привязать почту'}
-                  </button>
-                </div>
+                <PersonalDataConsentField
+                  id="confirmed-bind-pdn-consent"
+                  checked={bindEmailConsentAccepted}
+                  onChange={(checked) => {
+                    setBindEmailConsentAccepted(checked);
+                    if (checked && bindConsentError) setBindConsentError(null);
+                  }}
+                  error={bindConsentError ?? undefined}
+                  compact
+                  testIdPrefix="confirmed-bind-pdn-consent"
+                />
               </form>
             )}
 
@@ -1857,20 +1884,18 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                     )}
 
                     <div className="pt-1 space-y-3">
-                      {!isReturningFastTrack && (
-                        <PersonalDataConsentField
-                          id="media-order-pdn-consent"
-                          inputRef={consentInputRef}
-                          checked={pdnConsentAccepted}
-                          onChange={(checked) => {
-                            setPdnConsentAccepted(checked);
-                            if (checked && consentError) setConsentError(undefined);
-                          }}
-                          error={consentError}
-                          compact
-                          testIdPrefix="order-pdn-consent"
-                        />
-                      )}
+                      <PersonalDataConsentField
+                        id="media-order-pdn-consent"
+                        inputRef={consentInputRef}
+                        checked={pdnConsentAccepted}
+                        onChange={(checked) => {
+                          setPdnConsentAccepted(checked);
+                          if (checked && consentError) setConsentError(undefined);
+                        }}
+                        error={consentError}
+                        compact
+                        testIdPrefix="order-pdn-consent"
+                      />
 
                       <button
                         type="submit"
@@ -2497,7 +2522,7 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                                   });
                                   if (deliveryError) setDeliveryError(undefined);
                                 }}
-                                placeholder="Например: VK Мессенджер или Viber"
+                                placeholder="Например: VK Мессенджер или Яндекс Мессенджер"
                                 className={`w-full min-h-[40px] px-3.5 py-2 rounded-xl border text-xs sm:text-sm bg-white/90 dark:bg-[#0D0D0F] text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none ${
                                   deliveryError
                                     ? 'border-[#FF4820] ring-2 ring-[#FF4820]/20'
@@ -2762,19 +2787,17 @@ export function OrderPage({ draft, onNavigate }: OrderPageProps) {
                   </div>
 
                   <div className="pt-2 space-y-3">
-                    {!isReturningFastTrack && (
-                      <PersonalDataConsentField
-                        id="production-order-pdn-consent"
-                        inputRef={consentInputRef}
-                        checked={pdnConsentAccepted}
-                        onChange={(checked) => {
-                          setPdnConsentAccepted(checked);
-                          if (checked && consentError) setConsentError(undefined);
-                        }}
-                        error={consentError}
-                        testIdPrefix="order-pdn-consent"
-                      />
-                    )}
+                    <PersonalDataConsentField
+                      id="production-order-pdn-consent"
+                      inputRef={consentInputRef}
+                      checked={pdnConsentAccepted}
+                      onChange={(checked) => {
+                        setPdnConsentAccepted(checked);
+                        if (checked && consentError) setConsentError(undefined);
+                      }}
+                      error={consentError}
+                      testIdPrefix="order-pdn-consent"
+                    />
 
                     {(taskError ||
                       contactError ||

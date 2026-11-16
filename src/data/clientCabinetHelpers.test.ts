@@ -40,7 +40,7 @@ test('sanitizeDeliveryChannel и normalizeDeliveryPreferences поддержив
   });
   assert.deepEqual(normalizeDeliveryPreferences('google_disk', undefined), {
     channel: 'cloud',
-    detail: 'Google Диск',
+    detail: 'Яндекс Диск',
   });
   assert.deepEqual(normalizeDeliveryPreferences('messenger', 'Max'), {
     channel: 'messenger',
@@ -53,11 +53,15 @@ test('sanitizeDeliveryChannel и normalizeDeliveryPreferences поддержив
 
   assert.equal(
     resolveDeliveryChannelLabel('messenger', 'WhatsApp'),
-    'Мессенджер · WhatsApp'
+    'Мессенджер · Telegram'
   );
   assert.equal(
     resolveDeliveryChannelLabel('cloud', 'Dropbox'),
-    'Облачное хранилище · Dropbox'
+    'Облачное хранилище · Яндекс Диск'
+  );
+  assert.equal(
+    resolveDeliveryChannelLabel('cloud', 'Облако Mail.ru'),
+    'Облачное хранилище · Облако Mail.ru'
   );
   assert.equal(
     resolveDeliveryChannelLabel('email', 'info@brand.ru'),
@@ -80,20 +84,27 @@ test('buildCanonicalDeliveryDetail, parseDeliveryDetailSelection и validateDeli
     'VK Мессенджер'
   );
   assert.equal(
-    buildCanonicalDeliveryDetail({ channel: 'cloud', cloud: 'google_disk' }),
-    'Google Диск'
+    buildCanonicalDeliveryDetail({ channel: 'cloud', cloud: 'mailru_cloud' }),
+    'Облако Mail.ru'
   );
   assert.equal(
     buildCanonicalDeliveryDetail({ channel: 'email', email: 'promo@company.ru' }),
     'promo@company.ru'
   );
 
-  const parsedMessenger = parseDeliveryDetailSelection('messenger', 'WhatsApp');
-  assert.equal(parsedMessenger.messenger, 'whatsapp');
+  const parsedMessenger = parseDeliveryDetailSelection('messenger', 'VK Мессенджер');
+  assert.equal(parsedMessenger.messenger, 'other');
+  assert.equal(parsedMessenger.messengerOther, 'VK Мессенджер');
 
-  const parsedCustomCloud = parseDeliveryDetailSelection('cloud', 'Облако Mail');
+  const parsedLegacyWhatsapp = parseDeliveryDetailSelection('messenger', 'WhatsApp');
+  assert.equal(parsedLegacyWhatsapp.messenger, 'telegram');
+
+  const parsedMailruCloud = parseDeliveryDetailSelection('cloud', 'Облако Mail.ru');
+  assert.equal(parsedMailruCloud.cloud, 'mailru_cloud');
+
+  const parsedCustomCloud = parseDeliveryDetailSelection('cloud', 'Nextcloud');
   assert.equal(parsedCustomCloud.cloud, 'other');
-  assert.equal(parsedCustomCloud.cloudOther, 'Облако Mail');
+  assert.equal(parsedCustomCloud.cloudOther, 'Nextcloud');
 
   assert.equal(validateDeliveryEmail('anna@company.ru'), true);
   assert.equal(validateDeliveryEmail('bad-email'), false);

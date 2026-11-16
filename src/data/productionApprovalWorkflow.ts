@@ -13,6 +13,8 @@
  *    (/sound-drop?token=...) в буфер ОТК продюсера.
  */
 
+import { scrubPersonalDataFromText } from '../security/rfLegalCompliance.ts';
+
 export type ApprovalPipelinePhase =
   | 'script_drafting'
   | 'script_client_review'
@@ -1499,8 +1501,62 @@ export function formatSoundEngineerProductionSheet(params: {
     actionButtonUrl
   );
 
+  const tgLines: string[] = [
+    `FMWorks Studio · Производственное задание звукорежиссёру (152-ФЗ)`,
+    `Исполнитель смены: ${engineer.name}`,
+    `Заказ: #${orderNumber}`,
+    statusTransitionLine,
+  ];
+  if (triggerSummary && triggerSummary.trim()) {
+    tgLines.push(
+      `Основание уведомления: ${scrubPersonalDataFromText(triggerSummary.trim())}`
+    );
+  }
+  tgLines.push(
+    `Строгий эфирный хронометраж: ${workflow.targetSlotSec},00 сек (допуск ±0,05 сек)`,
+    `Формат сдачи: WAV PCM 44.1/48 кГц, 16/24 bit, Stereo · громкость −14 LUFS, True Peak ≤ −0.5 dBTP`,
+    ``
+  );
+  if (isRevision) {
+    tgLines.push(`ЗАДАЧА НА ДОВОДКУ РОЛИКА:`);
+    for (const rev of activeRevs) {
+      const tc =
+        typeof rev.timecodeSec === 'number'
+          ? ` [таймкод ${rev.timecodeSec.toFixed(1)} с]`
+          : '';
+      tgLines.push(
+        `• ${SPOT_REVISION_KIND_LABELS[rev.kind]}${tc}: ${scrubPersonalDataFromText(rev.comment)}`
+      );
+      if (rev.producerResolutionNote) {
+        tgLines.push(
+          `  Комментарий продюсера: ${scrubPersonalDataFromText(rev.producerResolutionNote)}`
+        );
+      }
+    }
+    tgLines.push(``);
+  }
+  if (script) {
+    tgLines.push(`УТВЕРЖДЁННЫЙ ТЕКСТ СЦЕНАРИЯ (${scriptTitleText}):`);
+    tgLines.push(script.bodyText);
+    if (script.stressNotes) {
+      tgLines.push(`Ударения и произношение: ${script.stressNotes}`);
+    }
+    if (script.fz38Disclaimer) {
+      tgLines.push(
+        `Обязательный дисклеймер ФЗ-38 (внутри слота): ${script.fz38Disclaimer}`
+      );
+    }
+    tgLines.push(``);
+    tgLines.push(`РЕЖИССЁРСКОЕ РЕШЕНИЕ СТУДИИ (ГОЛОС И МУЗЫКА):`);
+    tgLines.push(script.directorApproach);
+  } else {
+    tgLines.push(`КРАТКАЯ ЗАДАЧА ПРОЕКТА:`);
+    tgLines.push(scrubPersonalDataFromText(scriptBodyText));
+  }
+  tgLines.push(``, `Загрузить готовый мастер без входа в админку:`, actionButtonUrl);
+
   const plainBody = lines.join('\n');
-  const telegramMessage = lines.join('\n');
+  const telegramMessage = tgLines.join('\n');
   const mailtoHref = engineer.email
     ? `mailto:${encodeURIComponent(engineer.email)}?subject=${encodeURIComponent(
         subject

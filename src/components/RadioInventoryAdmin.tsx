@@ -447,7 +447,7 @@ function parseOmnivorousProducerInput(
       }
     }
 
-    // ВЕТКА Б: Свободный русский текст из Telegram / WhatsApp / почты
+    // ВЕТКА Б: Свободный русский текст из Telegram / VK Мессенджер / почты
     const stationMeta = detectStationAndTags(line);
     const daypartMeta = detectDaypartAndClockWindows(line);
 

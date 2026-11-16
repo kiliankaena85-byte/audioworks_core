@@ -100,6 +100,7 @@ export async function requestClientMagicLinkApi(params: {
   email: string;
   mode: 'login' | 'reset';
   revokeOtherSessions?: boolean;
+  pdnConsentAccepted?: boolean;
 }): Promise<RequestMagicLinkResponse> {
   const res = await fetch('/api/client-auth/request-magic-link', {
     method: 'POST',
@@ -148,6 +149,7 @@ export async function verifyClientMagicLinkApi(params: {
 export async function bindClientEmailApi(params: {
   email: string;
   items: readonly LocalOrderTokenRef[];
+  pdnConsentAccepted?: boolean;
 }): Promise<BindEmailResponse> {
   const res = await fetch('/api/client-auth/bind-email', {
     method: 'POST',

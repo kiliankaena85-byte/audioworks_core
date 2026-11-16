@@ -367,4 +367,34 @@ test('Однокнопочный токен звукорежиссёра, e-mail
       `Обнаружено запрещённое слово «${banned}»`
     );
   }
+
+  // Telegram-техлист звукорежиссёру принудительно маскирует любые ПДн, случайно попавшие в бриф или комментарий клиента
+  const dirtySheet = formatSoundEngineerProductionSheet({
+    orderNumber: 'FM-2991',
+    engineer: roster[0]!,
+    workflow: {
+      ...wf,
+      lockedScript: null,
+      scriptVersions: [],
+      spotRevisions: [
+        {
+          id: 'rev-dirty',
+          createdAt: '2026-11-14T12:10:00.000Z',
+          kind: 'balance_timecode',
+          timecodeSec: 5.0,
+          comment: 'Позвоните мне на +7 916 555-22-11 или @client_tg, ИНН 7707083893',
+          usedIncludedServiceRound: true,
+          status: 'sent_to_engineer',
+        },
+      ],
+    },
+    briefFallbackText: 'Пишите на lead@brand.ru или +7 (904) 000-09-11',
+    directDropUrl: `https://fmworks.ru/sound-drop?token=${encodeURIComponent(token)}`,
+  });
+  assert.equal(dirtySheet.telegramMessage.includes('+7 916 555-22-11'), false);
+  assert.equal(dirtySheet.telegramMessage.includes('@client_tg'), false);
+  assert.equal(dirtySheet.telegramMessage.includes('7707083893'), false);
+  assert.equal(dirtySheet.telegramMessage.includes('lead@brand.ru'), false);
+  assert.equal(dirtySheet.telegramMessage.includes('904'), false);
+  assert.ok(dirtySheet.telegramMessage.includes('152-ФЗ'));
 });

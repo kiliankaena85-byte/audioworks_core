@@ -430,24 +430,20 @@ function sanitizeDraftFromStorage(
       );
       const validMessengerIds: readonly DeliveryMessengerId[] = [
         'telegram',
-        'whatsapp',
         'max',
         'other',
       ];
       const validCloudIds: readonly DeliveryCloudId[] = [
         'yandex_disk',
-        'google_disk',
-        'dropbox',
+        'mailru_cloud',
         'other',
       ];
       const inferredCloud: DeliveryCloudId =
-        legacyRaw === 'google_disk'
-          ? 'google_disk'
-          : legacyRaw === 'yandex_disk'
-            ? 'yandex_disk'
-            : validCloudIds.includes(obj.deliveryCloud as DeliveryCloudId)
-              ? (obj.deliveryCloud as DeliveryCloudId)
-              : base.deliveryCloud;
+        legacyRaw === 'google_disk' || legacyRaw === 'yandex_disk'
+          ? 'yandex_disk'
+          : validCloudIds.includes(obj.deliveryCloud as DeliveryCloudId)
+            ? (obj.deliveryCloud as DeliveryCloudId)
+            : base.deliveryCloud;
       return {
         preferredDeliveryChannel: norm.channel,
         deliveryMessenger: validMessengerIds.includes(

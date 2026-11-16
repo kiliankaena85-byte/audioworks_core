@@ -174,6 +174,18 @@ test('Реестр целей Политики и таблица cookie охва
       (item) => item.storageKey === 'fmworks_client_session'
     )
   );
+  const specKeysJoined = PLATFORM_COOKIE_AND_STORAGE_SPEC.map((i) => i.storageKey).join(' ');
+  for (const key of [
+    'fmworks_order_draft_v1',
+    'fmworks_client_cabinet_v1',
+    'fmworks_cabinet_device_avatar_v1',
+    'fmworks_lead_rate_limiter_v1',
+    'fmworks_theme_v1',
+    'fmworks_hero_volume_v1',
+    'audioworks_laya_visits_v1',
+  ]) {
+    assert.ok(specKeysJoined.includes(key), `Missing storage key in spec: ${key}`);
+  }
 });
 
 test('validateCabinetEmailConsent блокирует отправку без галочки 152-ФЗ (156-ФЗ) и при некорректном e-mail', () => {

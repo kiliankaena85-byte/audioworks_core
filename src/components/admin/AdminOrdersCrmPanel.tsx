@@ -286,7 +286,6 @@ export function AdminOrdersCrmPanel({
     useState<string>('');
   const [tgNotifyNew, setTgNotifyNew] = useState<boolean>(true);
   const [tgNotifyStage, setTgNotifyStage] = useState<boolean>(true);
-  const [tgMaskPdn, setTgMaskPdn] = useState<boolean>(true);
   const [tgPreviewEvent, setTgPreviewEvent] = useState<
     'order.stage_changed' | 'order.created'
   >('order.stage_changed');
@@ -322,7 +321,6 @@ export function AdminOrdersCrmPanel({
         setTgDiscoveredChatTitle(settings.telegram.discoveredChatTitle || '');
         setTgNotifyNew(Boolean(settings.telegram.notifyOnNewOrder));
         setTgNotifyStage(Boolean(settings.telegram.notifyOnStageChange));
-        setTgMaskPdn(settings.telegram.maskPdnInExternalAlerts !== false);
       }
 
       if (settings?.webhook) {
@@ -851,7 +849,7 @@ export function AdminOrdersCrmPanel({
             chatId: tgChatId,
             notifyOnNewOrder: tgNotifyNew,
             notifyOnStageChange: tgNotifyStage,
-            maskPdnInExternalAlerts: tgMaskPdn,
+            maskPdnInExternalAlerts: true,
           },
           webhook: {
             enabled: whEnabled,
@@ -985,7 +983,7 @@ export function AdminOrdersCrmPanel({
             chatId: tgChatId,
             notifyOnNewOrder: tgNotifyNew,
             notifyOnStageChange: tgNotifyStage,
-            maskPdnInExternalAlerts: tgMaskPdn,
+            maskPdnInExternalAlerts: true,
           },
           webhook: {
             enabled: whEnabled,
@@ -3065,20 +3063,21 @@ export function AdminOrdersCrmPanel({
                           </label>
                         </div>
 
-                        <label className="min-h-[40px] inline-flex items-start gap-2.5 cursor-pointer rounded-xl p-2.5 bg-[#166534]/[0.08] border border-[#166534]/20">
+                        <label className="min-h-[40px] inline-flex items-start gap-2.5 rounded-xl p-2.5 bg-[#166534]/[0.08] border border-[#166534]/20">
                           <input
                             type="checkbox"
                             data-testid="crm-tg-mask-pdn-checkbox"
-                            checked={tgMaskPdn}
-                            onChange={(e) => setTgMaskPdn(e.target.checked)}
-                            className="mt-0.5 w-6 h-6 shrink-0 accent-[#166534] cursor-pointer"
+                            checked={true}
+                            disabled
+                            readOnly
+                            className="mt-0.5 w-6 h-6 shrink-0 accent-[#166534] cursor-not-allowed opacity-90"
                           />
                           <span className="leading-snug text-[#111111]/88 dark:text-[#F4F3EF]/88">
                             <strong>
-                              Обезличивать ПДн в Telegram (ст. 12 152-ФЗ):
+                              Обязательное обезличивание ПДн в Telegram (ст. 12 152-ФЗ, 41-ФЗ):
                             </strong>{' '}
-                            отправлять только номер сделки, переход статуса и
-                            сумму договора без телефона, e-mail и ИНН.
+                            всегда отправляются только номер сделки, переход статуса и
+                            сумма договора без телефона, e-mail и ИНН.
                           </span>
                         </label>
                       </div>
@@ -3128,7 +3127,7 @@ export function AdminOrdersCrmPanel({
                             samplePreviewOrder,
                             tgPreviewEvent,
                             {
-                              maskPdn: tgMaskPdn,
+                              maskPdn: true,
                               statusChange:
                                 tgPreviewEvent === 'order.stage_changed'
                                   ? {

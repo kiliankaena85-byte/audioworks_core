@@ -327,7 +327,7 @@ export function BrandKitModal({
                             <AvatarMonogramPreview />
                           </div>
                           <div
-                            title="Превью круглого аватара в Telegram и WhatsApp"
+                            title="Превью круглого аватара в мессенджерах и Telegram"
                             className="w-12 h-12 rounded-full overflow-hidden shadow-sm shrink-0 border border-[#111111]/10 dark:border-white/15"
                           >
                             <AvatarMonogramPreview />

@@ -123,7 +123,7 @@ export function resolveEffectiveTelegramSettings(
     discoveredChatTitle: (persisted?.discoveredChatTitle ?? '').trim(),
     notifyOnNewOrder: persisted?.notifyOnNewOrder !== false,
     notifyOnStageChange: persisted?.notifyOnStageChange !== false,
-    maskPdnInExternalAlerts: persisted?.maskPdnInExternalAlerts !== false,
+    maskPdnInExternalAlerts: true,
   };
 }
 

@@ -266,19 +266,46 @@ export const PLATFORM_COOKIE_AND_STORAGE_SPEC: readonly CookieAndStorageItem[] =
   },
   {
     id: 'order_draft_local',
-    storageKey: 'fmworks_order_draft / fmworks_client_cabinet',
+    storageKey: 'fmworks_order_draft_v1 / fmworks_client_cabinet_v1',
     kindLabel: 'localStorage браузера',
     purpose:
       'Сохранение незавершённого черновика заказа и токенов гостевого доступа к своим заявкам в текущем браузере без передачи третьим лицам.',
     retention: 'Локально на устройстве пользователя до очистки или удаления',
   },
   {
-    id: 'ui_prefs_local',
-    storageKey: 'fmworks_rf_storage_notice_v1 / тема оформления',
+    id: 'cabinet_ux_local',
+    storageKey:
+      'fmworks_cabinet_device_avatar_v1 / fmworks_vip_client_v1 / fmworks_cabinet_hide_older_6m_v1 / fmworks_cabinet_manual_archive_v1',
     kindLabel: 'localStorage браузера',
     purpose:
-      'Запоминание выбранной светлой/тёмной темы и факта ознакомления с уведомлением о технических cookie.',
+      'Локальные настройки Личного кабинета и быстрого повтора заказа (выбранный пресет/фото аватара до привязки к почте, фильтр архива заказов).',
+    retention: 'Локально на устройстве пользователя до очистки или выхода',
+  },
+  {
+    id: 'security_and_stability_storage',
+    storageKey: 'fmworks_lead_rate_limiter_v1 / fmworks_chunk_reload_at',
+    kindLabel: 'localStorage / sessionStorage',
+    purpose:
+      'Техническое ограничение частоты повторной отправки форм на клиенте (защита от двойного клика и спама) и безопасная перезагрузка при обновлении сборки.',
+    retention: 'Оперативное окно (от 1 минуты до закрытия вкладки)',
+  },
+  {
+    id: 'ui_prefs_local',
+    storageKey:
+      'fmworks_rf_storage_notice_v1 / fmworks_theme_v1 / fmworks_hero_volume_v1 / fmworks_hero_muted_v1 / audioworks_laya_visits_v1',
+    kindLabel: 'localStorage браузера',
+    purpose:
+      'Запоминание выбранной светлой/тёмной темы, громкости встроенного аудиоплеера, факта ознакомления с уведомлением о cookie и локального счётчика визитов интерфейса (без передачи во внешние сети).',
     retention: 'Локально в браузере пользователя',
+  },
+  {
+    id: 'studio_workspace_local',
+    storageKey:
+      'fmworks_radio_inventory_v2 / fmworks_producer_ledger_v1 / fmworks_cms_local_state_v2',
+    kindLabel: 'localStorage / sessionStorage (админ-контур)',
+    purpose:
+      'Служебный черновик и локальный кэш интерфейса сотрудников студии внутри закрытой административной панели.',
+    retention: 'Локально в браузере сотрудника студии до закрытия сессии или сброса',
   },
 ] as const;
 

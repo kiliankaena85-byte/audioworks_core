@@ -7,8 +7,8 @@ export type ClientDeliveryChannel =
   | 'email'
   | 'cabinet';
 
-export type DeliveryMessengerId = 'telegram' | 'whatsapp' | 'max' | 'other';
-export type DeliveryCloudId = 'yandex_disk' | 'google_disk' | 'dropbox' | 'other';
+export type DeliveryMessengerId = 'telegram' | 'max' | 'other';
+export type DeliveryCloudId = 'yandex_disk' | 'mailru_cloud' | 'other';
 
 export type OrderDeliverableKind =
   | 'audio_master'
@@ -129,7 +129,6 @@ export const DELIVERY_MESSENGER_OPTIONS: readonly {
   label: string;
 }[] = [
   { id: 'telegram', label: 'Telegram' },
-  { id: 'whatsapp', label: 'WhatsApp' },
   { id: 'max', label: 'Max' },
   { id: 'other', label: 'Другой' },
 ] as const;
@@ -139,8 +138,7 @@ export const DELIVERY_CLOUD_OPTIONS: readonly {
   label: string;
 }[] = [
   { id: 'yandex_disk', label: 'Яндекс Диск' },
-  { id: 'google_disk', label: 'Google Диск' },
-  { id: 'dropbox', label: 'Dropbox' },
+  { id: 'mailru_cloud', label: 'Облако Mail.ru' },
   { id: 'other', label: 'Другое' },
 ] as const;
 
@@ -174,17 +172,22 @@ export function normalizeDeliveryPreferences(
 ): { channel: ClientDeliveryChannel; detail: string } {
   const cleanDetail = sanitizeDeliveryDetail(rawDetail);
   const lowerDetail = cleanDetail.toLowerCase();
-  if (rawChannel === 'yandex_disk') {
-    return { channel: 'cloud', detail: cleanDetail || 'Яндекс Диск' };
-  }
-  if (rawChannel === 'google_disk') {
-    return { channel: 'cloud', detail: cleanDetail || 'Google Диск' };
+  if (rawChannel === 'yandex_disk' || rawChannel === 'google_disk') {
+    return {
+      channel: 'cloud',
+      detail:
+        cleanDetail &&
+        lowerDetail !== 'google_disk' &&
+        lowerDetail !== 'google диск'
+          ? cleanDetail
+          : 'Яндекс Диск',
+    };
   }
   const channel = sanitizeDeliveryChannel(rawChannel, fallbackChannel);
   if (channel === 'messenger') {
     if (!cleanDetail) return { channel, detail: 'Telegram' };
     if (lowerDetail === 'telegram') return { channel, detail: 'Telegram' };
-    if (lowerDetail === 'whatsapp') return { channel, detail: 'WhatsApp' };
+    if (lowerDetail === 'whatsapp') return { channel, detail: 'Telegram' };
     if (lowerDetail === 'max') return { channel, detail: 'Max' };
     if (lowerDetail === 'other' || lowerDetail === 'мессенджер') {
       return { channel, detail: '' };
@@ -196,10 +199,20 @@ export function normalizeDeliveryPreferences(
     if (lowerDetail === 'yandex_disk' || lowerDetail === 'яндекс диск') {
       return { channel, detail: 'Яндекс Диск' };
     }
-    if (lowerDetail === 'google_disk' || lowerDetail === 'google диск') {
-      return { channel, detail: 'Google Диск' };
+    if (
+      lowerDetail === 'mailru_cloud' ||
+      lowerDetail === 'облако mail.ru' ||
+      lowerDetail === 'облако mail'
+    ) {
+      return { channel, detail: 'Облако Mail.ru' };
     }
-    if (lowerDetail === 'dropbox') return { channel, detail: 'Dropbox' };
+    if (
+      lowerDetail === 'google_disk' ||
+      lowerDetail === 'google диск' ||
+      lowerDetail === 'dropbox'
+    ) {
+      return { channel, detail: 'Яндекс Диск' };
+    }
     if (
       lowerDetail === 'other' ||
       lowerDetail === 'облачное хранилище' ||
@@ -272,18 +285,28 @@ export function parseDeliveryDetailSelection(
   let email = '';
 
   if (channel === 'messenger' && detail) {
-    if (lower === 'telegram') messenger = 'telegram';
-    else if (lower === 'whatsapp') messenger = 'whatsapp';
+    if (lower === 'telegram' || lower === 'whatsapp') messenger = 'telegram';
     else if (lower === 'max') messenger = 'max';
     else {
       messenger = 'other';
       messengerOther = detail;
     }
   } else if (channel === 'cloud' && detail) {
-    if (lower === 'яндекс диск' || lower === 'yandex_disk') cloud = 'yandex_disk';
-    else if (lower === 'google диск' || lower === 'google_disk') cloud = 'google_disk';
-    else if (lower === 'dropbox') cloud = 'dropbox';
-    else {
+    if (
+      lower === 'яндекс диск' ||
+      lower === 'yandex_disk' ||
+      lower === 'google диск' ||
+      lower === 'google_disk' ||
+      lower === 'dropbox'
+    ) {
+      cloud = 'yandex_disk';
+    } else if (
+      lower === 'облако mail.ru' ||
+      lower === 'облако mail' ||
+      lower === 'mailru_cloud'
+    ) {
+      cloud = 'mailru_cloud';
+    } else {
       cloud = 'other';
       cloudOther = detail;
     }
@@ -313,7 +336,7 @@ export function resolveDeliveryChannelLabel(
 }
 
 /**
- * Разрешает только безопасные HTTPS-ссылки на облачные диски (Яндекс Диск, Google Drive, Mail.ru Облако и др.)
+ * Разрешает только безопасные HTTP/HTTPS-ссылки на облачные диски (Яндекс Диск, Облако Mail.ru и др.)
  * для защиты от `javascript:` / фишинговых протоколов.
  */
 export function sanitizeCloudDiskUrl(raw: unknown): string | null {

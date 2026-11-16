@@ -259,7 +259,7 @@ export function RealRadioBroadcastBench({
       mediaPlanSnapshot: null,
       isReturningFastTrack: false,
       requireBriefOrVoice: true,
-      pdnConsentAccepted: true,
+      pdnConsentAccepted,
     });
 
     if (!result.ok) {

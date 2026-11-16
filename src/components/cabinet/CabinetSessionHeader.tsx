@@ -10,6 +10,7 @@ import {
   CabinetProfileAvatar,
 } from './CabinetProfileAvatar';
 import type { PendingBindEmailVerification } from './useClientCabinetController';
+import { PersonalDataConsentField } from '../legal/PersonalDataConsentField';
 
 export interface CabinetSessionHeaderProps {
   clientAccount: ClientAccountPublicProfile | null;
@@ -34,8 +35,11 @@ export interface CabinetSessionHeaderProps {
   onLogout: () => void;
   bindEmailInput: string;
   onChangeBindEmailInput: (value: string) => void;
+  bindConsentAccepted: boolean;
+  onChangeBindConsentAccepted: (checked: boolean) => void;
   isBindingEmail: boolean;
   bindEmailError: string | null;
+  bindConsentError: string | null;
   pendingBindVerification?: PendingBindEmailVerification | null;
   isVerifyingMagic?: boolean;
   onConfirmPendingBind?: () => void;
@@ -62,8 +66,11 @@ export function CabinetSessionHeader({
   onLogout,
   bindEmailInput,
   onChangeBindEmailInput,
+  bindConsentAccepted,
+  onChangeBindConsentAccepted,
   isBindingEmail,
   bindEmailError,
+  bindConsentError,
   pendingBindVerification,
   isVerifyingMagic = false,
   onConfirmPendingBind,
@@ -220,65 +227,76 @@ export function CabinetSessionHeader({
       >
         <form
           onSubmit={onSubmitBindEmail}
-          className="flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+          className="space-y-3"
         >
-          <div className="flex items-start sm:items-center gap-3.5 min-w-0">
-            <CabinetProfileAvatar
-              avatar={profileAvatar}
-              isEditorOpen={isAvatarEditorOpen}
-              onToggleEditor={onToggleAvatarEditor}
-            />
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex items-start sm:items-center gap-3.5 min-w-0">
+              <CabinetProfileAvatar
+                avatar={profileAvatar}
+                isEditorOpen={isAvatarEditorOpen}
+                onToggleEditor={onToggleAvatarEditor}
+              />
 
-            <div className="space-y-0.5 min-w-0">
-              <label
-                htmlFor="cabinet-bind-email-input"
-                className="block text-xs sm:text-sm font-semibold text-[#111111] dark:text-[#F4F3EF]"
-              >
-                Сохранить заказы в постоянном профиле по почте
-              </label>
-              <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                Привяжите рабочую или личную почту, чтобы заказы не зависели от одного браузера, а{' '}
-                <button
-                  type="button"
-                  data-testid="cabinet-toggle-avatar-editor-btn"
-                  aria-expanded={isAvatarEditorOpen}
-                  onClick={onToggleAvatarEditor}
-                  className="font-medium text-[#111111]/86 dark:text-[#F4F3EF]/86 hover:text-[#C83210] dark:hover:text-[#FF6B47] underline decoration-[#111111]/30 dark:decoration-white/30 underline-offset-3 transition-colors cursor-pointer"
+              <div className="space-y-0.5 min-w-0">
+                <label
+                  htmlFor="cabinet-bind-email-input"
+                  className="block text-xs sm:text-sm font-semibold text-[#111111] dark:text-[#F4F3EF]"
                 >
-                  аватар «{profileAvatar.initials}»
-                </button>{' '}
-                сохранился в вашем аккаунте.
-              </p>
-              {bindEmailError && (
-                <p
-                  role="alert"
-                  className="text-xs font-medium text-[#B91C1C] dark:text-[#F87171]"
-                >
-                  {bindEmailError}
+                  Сохранить заказы в постоянном профиле по почте
+                </label>
+                <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                  Привяжите рабочую или личную почту, чтобы заказы не зависели от одного браузера, а{' '}
+                  <button
+                    type="button"
+                    data-testid="cabinet-toggle-avatar-editor-btn"
+                    aria-expanded={isAvatarEditorOpen}
+                    onClick={onToggleAvatarEditor}
+                    className="font-medium text-[#111111]/86 dark:text-[#F4F3EF]/86 hover:text-[#C83210] dark:hover:text-[#FF6B47] underline decoration-[#111111]/30 dark:decoration-white/30 underline-offset-3 transition-colors cursor-pointer"
+                  >
+                    аватар «{profileAvatar.initials}»
+                  </button>{' '}
+                  сохранился в вашем аккаунте.
                 </p>
-              )}
+                {bindEmailError && (
+                  <p
+                    role="alert"
+                    className="text-xs font-medium text-[#B91C1C] dark:text-[#F87171]"
+                  >
+                    {bindEmailError}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
+              <input
+                id="cabinet-bind-email-input"
+                data-testid="cabinet-bind-email-input"
+                type="email"
+                value={bindEmailInput}
+                onChange={(e) => onChangeBindEmailInput(e.target.value)}
+                placeholder="name@company.ru"
+                className="min-h-[44px] sm:min-h-[40px] sm:w-56 px-3.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/16 dark:border-white/16 text-xs sm:text-sm text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
+              />
+              <button
+                type="submit"
+                disabled={isBindingEmail}
+                data-testid="cabinet-bind-email-submit-btn"
+                className="min-h-[44px] sm:min-h-[40px] px-4 rounded-xl bg-[#111111] hover:bg-[#C83210] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+              >
+                {isBindingEmail ? 'Отправляем ссылку…' : 'Привязать почту'}
+              </button>
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
-            <input
-              id="cabinet-bind-email-input"
-              data-testid="cabinet-bind-email-input"
-              type="email"
-              value={bindEmailInput}
-              onChange={(e) => onChangeBindEmailInput(e.target.value)}
-              placeholder="name@company.ru"
-              className="min-h-[44px] sm:min-h-[40px] sm:w-56 px-3.5 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/16 dark:border-white/16 text-xs sm:text-sm text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
-            />
-            <button
-              type="submit"
-              disabled={isBindingEmail}
-              data-testid="cabinet-bind-email-submit-btn"
-              className="min-h-[44px] sm:min-h-[40px] px-4 rounded-xl bg-[#111111] hover:bg-[#C83210] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#FF4820] dark:hover:text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
-            >
-              {isBindingEmail ? 'Отправляем ссылку…' : 'Привязать почту'}
-            </button>
-          </div>
+          <PersonalDataConsentField
+            id="cabinet-bind-pdn-consent"
+            checked={bindConsentAccepted}
+            onChange={onChangeBindConsentAccepted}
+            error={bindConsentError ?? undefined}
+            compact
+            testIdPrefix="cabinet-bind-pdn-consent"
+          />
         </form>
 
         {pendingBindVerification && (

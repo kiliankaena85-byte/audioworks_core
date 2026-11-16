@@ -212,7 +212,7 @@ export function buildBrandLogoSvgMarkup({
 /**
  * Генерирует квадратную фирменную иконку `FMWorks` (1000×1000px)
  * со звуковой волной `W` на фоне `#FF4820`
- * для аватарок Telegram, WhatsApp и фавиконки сайта.
+ * для аватарок в мессенджерах, Telegram и фавиконки сайта.
  */
 export function buildAvatarIconSvgMarkup(
   variant: BrandDomainVariant = 'fmworks_reg'
@@ -275,7 +275,7 @@ export function getBrandKitAssetSpecs(
     {
       id: 'avatar-icon',
       title: 'Квадратная иконка-монограмма (Волна W)',
-      subtitle: 'Для аватарки Telegram, WhatsApp и фавиконки сайта',
+      subtitle: 'Для аватарки в мессенджерах, Telegram и фавиконки сайта',
       svgFileName: 'fmworks-avatar-icon.svg',
       pngFileName: 'fmworks-avatar-icon.png',
       pngWidth: 1000,

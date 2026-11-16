@@ -318,8 +318,14 @@ export function ClientCabinetPage({
             ctrl.setBindEmailInput(value);
             if (ctrl.bindEmailError) ctrl.setBindEmailError(null);
           }}
+          bindConsentAccepted={ctrl.bindConsentAccepted}
+          onChangeBindConsentAccepted={(checked) => {
+            ctrl.setBindConsentAccepted(checked);
+            if (checked && ctrl.bindConsentError) ctrl.setBindConsentError(null);
+          }}
           isBindingEmail={ctrl.isBindingEmail}
           bindEmailError={ctrl.bindEmailError}
+          bindConsentError={ctrl.bindConsentError}
           pendingBindVerification={ctrl.pendingBindVerification}
           isVerifyingMagic={ctrl.isVerifyingMagic}
           onConfirmPendingBind={ctrl.handleConfirmPendingBindMagicLink}
@@ -375,6 +381,12 @@ export function ClientCabinetPage({
               ctrl.setMagicEmailInput(value);
               if (ctrl.magicRequestError) ctrl.setMagicRequestError(null);
             }}
+            magicConsentAccepted={ctrl.magicConsentAccepted}
+            onChangeMagicConsentAccepted={(checked) => {
+              ctrl.setMagicConsentAccepted(checked);
+              if (checked && ctrl.magicConsentError) ctrl.setMagicConsentError(null);
+            }}
+            magicConsentError={ctrl.magicConsentError}
             revokeOtherSessionsOnReset={ctrl.revokeOtherSessionsOnReset}
             onChangeRevokeOtherSessionsOnReset={
               ctrl.setRevokeOtherSessionsOnReset
@@ -386,7 +398,14 @@ export function ClientCabinetPage({
             onSubmitMagicLink={ctrl.handleMagicLinkSubmit}
             onTriggerDemoMagicEmail={(demoEmail) => {
               ctrl.setMagicEmailInput(demoEmail);
-              void ctrl.executeRequestMagicLink(demoEmail);
+              if (ctrl.magicConsentAccepted) {
+                void ctrl.executeRequestMagicLink(demoEmail);
+              } else {
+                ctrl.setMagicRequestError(null);
+                ctrl.setMagicConsentError(
+                  'Для запуска демо-входа подтвердите согласие на обработку персональных данных (152-ФЗ) ниже.'
+                );
+              }
             }}
             onOpenPreviewMagicLink={ctrl.handleOpenPreviewMagicLink}
             orderNumberInput={ctrl.orderNumberInput}

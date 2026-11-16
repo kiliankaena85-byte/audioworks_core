@@ -375,7 +375,7 @@ export function StandaloneHoldModal({ isOpen, plan, onClose }: StandaloneHoldMod
       mediaPlanSnapshot: buildMediaPlanSnapshotFromFlexiblePlan(plan),
       isReturningFastTrack: false,
       requireBriefOrVoice: false,
-      pdnConsentAccepted: true,
+      pdnConsentAccepted,
     });
 
     if (!shieldRes.ok) {

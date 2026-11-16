@@ -100,6 +100,7 @@ test('validateOrderSubmissionFields пропускает оплату карто
     hasAttachedFile: false,
     isReturningFastTrack: false,
     honeypotFilled: false,
+    pdnConsentAccepted: true,
   });
 
   assert.equal(validCard.valid, true);
@@ -119,6 +120,7 @@ test('validateOrderSubmissionFields разрешает заказ с валид�
     hasAttachedFile: false,
     isReturningFastTrack: false,
     honeypotFilled: false,
+    pdnConsentAccepted: true,
   });
 
   assert.equal(validEdo.valid, true);
@@ -126,7 +128,7 @@ test('validateOrderSubmissionFields разрешает заказ с валид�
   assert.equal(validEdo.effectiveCompany, 'ООО «Квартал Инвест» · ИНН 7707083893');
 });
 
-test('validateOrderSubmissionFields блокирует отправку без согласия на обработку ПДн (152-ФЗ)', () => {
+test('validateOrderSubmissionFields блокирует отправку без явного согласия на обработку ПДн (152-ФЗ), включая undefined и быстрый повтор', () => {
   const withoutConsent = validateOrderSubmissionFields({
     mode: 'production_only',
     paymentChannel: 'card_online',
@@ -146,6 +148,24 @@ test('validateOrderSubmissionFields блокирует отправку без �
   assert.ok(withoutConsent.consentError);
   assert.match(withoutConsent.consentError, /152-ФЗ/);
   assert.equal(withoutConsent.firstErrorField, 'consent');
+
+  const undefinedConsent = validateOrderSubmissionFields({
+    mode: 'production_only',
+    paymentChannel: 'card_online',
+    contactLine: 'Ирина +7 904 123-45-67',
+    companyName: '',
+    companyInn: '',
+    legacyCompanyLine: '',
+    briefText: 'Нужен аудиоролик на 15 секунд',
+    hasVoiceRecording: false,
+    hasAttachedFile: false,
+    isReturningFastTrack: true,
+    honeypotFilled: false,
+  });
+
+  assert.equal(undefinedConsent.valid, false);
+  assert.ok(undefinedConsent.consentError);
+  assert.equal(undefinedConsent.firstErrorField, 'consent');
 
   const withConsent = validateOrderSubmissionFields({
     mode: 'production_only',
