@@ -16,7 +16,7 @@ import { RfStorageNoticeBanner } from './components/legal/RfStorageNoticeBanner'
 import { PerformanceMonitor } from './components/PerformanceMonitor';
 import { HomePage } from './components/pages/HomePage';
 import { StudioLegalConfigProvider } from './context/StudioLegalConfigContext';
-import { BrandDomainVariant } from './data/brandKitData';
+import type { BrandDomainVariant } from './data/brandKitData';
 import {
   OrderDraftSnapshot,
   orderDraftStore,
@@ -35,7 +35,7 @@ import {
   RouteSkeletonVariant,
 } from './data/platformRouter';
 import { OrderFormatId } from './data/pricingData';
-import { MediaGridReservationPayload } from './data/radioInventory';
+import type { MediaGridReservationPayload } from './data/radioInventory';
 import {
   SEO_ARTICLE_TITLE_BY_SLUG,
   SEO_INDUSTRY_TITLE_BY_SLUG,
@@ -96,6 +96,10 @@ const SharedProposalPage = lazyNamedExport(
 const SoundEngineerDropPage = lazyNamedExport(
   () => import('./components/pages/SoundEngineerDropPage'),
   'SoundEngineerDropPage'
+);
+const GuestOrderReviewPage = lazyNamedExport(
+  () => import('./components/pages/GuestOrderReviewPage'),
+  'GuestOrderReviewPage'
 );
 const RadioInventoryAdmin = lazyNamedExport(
   () => import('./components/RadioInventoryAdmin'),
@@ -194,7 +198,11 @@ function FmworksExperience() {
         window.location.search,
         window.location.hash
       );
-      if (next.kind === 'admin' || next.kind === 'sound-drop') {
+      if (
+        next.kind === 'admin' ||
+        next.kind === 'sound-drop' ||
+        next.kind === 'guest-review'
+      ) {
         casePlayerEngine.stop();
         fmTunerAudioEngine.stopAll();
         contrastAudioEngine.stopAll();
@@ -262,7 +270,8 @@ function FmworksExperience() {
     if (typeof window !== 'undefined') {
       if (
         effectiveRoute.kind === 'admin' ||
-        effectiveRoute.kind === 'sound-drop'
+        effectiveRoute.kind === 'sound-drop' ||
+        effectiveRoute.kind === 'guest-review'
       ) {
         casePlayerEngine.stop();
         fmTunerAudioEngine.stopAll();
@@ -604,6 +613,13 @@ function FmworksExperience() {
                 shareToken={route.shareToken}
                 playerSnap={caseSnap}
                 onToggleCase={(item) => casePlayerEngine.toggleCase(item)}
+                onNavigate={navigateTo}
+              />
+            )}
+
+            {route.kind === 'guest-review' && (
+              <GuestOrderReviewPage
+                reviewToken={route.reviewToken}
                 onNavigate={navigateTo}
               />
             )}

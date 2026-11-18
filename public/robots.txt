@@ -17,6 +17,7 @@ Disallow: /booking
 Disallow: /checkout
 Disallow: /cabinet
 Disallow: /account
+Disallow: /review
 Disallow: /sound-drop
 Disallow: /api/
 Disallow: /hot-air
@@ -38,6 +39,7 @@ Disallow: /booking
 Disallow: /checkout
 Disallow: /cabinet
 Disallow: /account
+Disallow: /review
 Disallow: /sound-drop
 Disallow: /api/
 Disallow: /hot-air
@@ -60,6 +62,7 @@ Disallow: /booking
 Disallow: /checkout
 Disallow: /cabinet
 Disallow: /account
+Disallow: /review
 Disallow: /sound-drop
 Disallow: /api/
 Disallow: /hot-air
@@ -81,6 +84,7 @@ Disallow: /booking
 Disallow: /checkout
 Disallow: /cabinet
 Disallow: /account
+Disallow: /review
 Disallow: /sound-drop
 Disallow: /api/
 Disallow: /hot-air
@@ -101,6 +105,7 @@ Disallow: /booking
 Disallow: /checkout
 Disallow: /cabinet
 Disallow: /account
+Disallow: /review
 Disallow: /sound-drop
 Disallow: /api/
 Disallow: /hot-air
@@ -121,6 +126,7 @@ Disallow: /booking
 Disallow: /checkout
 Disallow: /cabinet
 Disallow: /account
+Disallow: /review
 Disallow: /sound-drop
 Disallow: /api/
 Disallow: /hot-air
@@ -141,6 +147,7 @@ Disallow: /booking
 Disallow: /checkout
 Disallow: /cabinet
 Disallow: /account
+Disallow: /review
 Disallow: /sound-drop
 Disallow: /api/
 Disallow: /hot-air
@@ -161,6 +168,7 @@ Disallow: /booking
 Disallow: /checkout
 Disallow: /cabinet
 Disallow: /account
+Disallow: /review
 Disallow: /sound-drop
 Disallow: /api/
 Disallow: /hot-air
@@ -181,6 +189,7 @@ Disallow: /booking
 Disallow: /checkout
 Disallow: /cabinet
 Disallow: /account
+Disallow: /review
 Disallow: /sound-drop
 Disallow: /api/
 Disallow: /hot-air
@@ -202,6 +211,7 @@ Disallow: /booking
 Disallow: /checkout
 Disallow: /cabinet
 Disallow: /account
+Disallow: /review
 Disallow: /sound-drop
 Disallow: /api/
 Disallow: /hot-air
@@ -222,6 +232,7 @@ Disallow: /booking
 Disallow: /checkout
 Disallow: /cabinet
 Disallow: /account
+Disallow: /review
 Disallow: /sound-drop
 Disallow: /api/
 Disallow: /hot-air
@@ -242,6 +253,7 @@ Disallow: /booking
 Disallow: /checkout
 Disallow: /cabinet
 Disallow: /account
+Disallow: /review
 Disallow: /sound-drop
 Disallow: /api/
 Disallow: /hot-air
@@ -264,6 +276,7 @@ Disallow: /booking
 Disallow: /checkout
 Disallow: /cabinet
 Disallow: /account
+Disallow: /review
 Disallow: /sound-drop
 Disallow: /api/
 Disallow: /hot-air

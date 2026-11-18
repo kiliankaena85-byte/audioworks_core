@@ -25,6 +25,7 @@ import {
   isCompletedOrderOlderThanSixMonths,
   isOrderCompletedAndPaid,
   resolveCabinetOrderVisualStatus,
+  stripTrailingPriceFromOrderTitle,
 } from '../../data/clientCabinetArchitecture';
 import {
   type ClientCabinetOrderSummary,
@@ -476,7 +477,10 @@ export function CabinetOrderHistorySection({
                     </div>
 
                     <h3 className="text-base sm:text-lg font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF]">
-                      {order.formatLabel}
+                      {stripTrailingPriceFromOrderTitle(
+                        order.formatLabel,
+                        order.totalBudgetRub
+                      )}
                     </h3>
 
                     {order.briefText && (
@@ -498,20 +502,20 @@ export function CabinetOrderHistorySection({
                         type="button"
                         data-testid={`cabinet-history-invoice-${order.orderNumber}`}
                         onClick={() => onOpenDocumentModal(order, 'invoice')}
-                        className="min-h-[44px] sm:min-h-[36px] px-3 py-1.5 rounded-lg border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+                        className="min-h-[40px] sm:min-h-[36px] px-3 py-1.5 rounded-lg border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                       >
                         <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                        <span>Счёт и договор (A4)</span>
+                        <span>Счёт и договор</span>
                       </button>
 
                       <button
                         type="button"
                         data-testid={`cabinet-history-act-${order.orderNumber}`}
                         onClick={() => onOpenDocumentModal(order, 'act')}
-                        className="min-h-[44px] sm:min-h-[36px] px-3 py-1.5 rounded-lg border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+                        className="min-h-[40px] sm:min-h-[36px] px-3 py-1.5 rounded-lg border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
                       >
                         <FileCheck2 className="w-3.5 h-3.5 text-[#166534] dark:text-[#4ADE80] shrink-0" aria-hidden="true" />
-                        <span>Акт сдачи (A4)</span>
+                        <span>Акт сдачи</span>
                       </button>
 
                       {order.cloudDiskUrl && (

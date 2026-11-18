@@ -123,10 +123,12 @@ export interface PendingEngineerTake {
   targetSlotSec: number;
   slotMatchStatus: BroadcastSlotMatchStatus;
   engineerNote: string;
-  status: 'pending_qc' | 'published' | 'archived';
+  status: 'pending_qc' | 'published' | 'rejected_qc' | 'archived';
   publishedDeliverableId?: string | null;
   publishedVersionCode?: string | null;
   publishedAt?: string | null;
+  rejectedAt?: string | null;
+  rejectedReason?: string | null;
 }
 
 export interface OrderApprovalWorkflow {
@@ -714,6 +716,201 @@ export function resolveStudioKanbanColumn(
     : 'col_ready_for_sound';
 }
 
+export type StudioQueueTurnFilter =
+  | 'all'
+  | 'producer_turn'
+  | 'engineer_turn'
+  | 'client_turn'
+  | 'sla_overdue';
+
+export interface OrderProductionSlaStatus {
+  level: 'completed' | 'ok' | 'warning' | 'overdue';
+  isOverdue: boolean;
+  elapsedHours: number;
+  thresholdHours: number;
+  shortLabel: string;
+}
+
+export const STUDIO_REWORK_REASON_PRESETS: readonly string[] = [
+  'Нарушен хронометраж слота — подрезать строго в ±0,05 с',
+  'Уточнить ударение в названии бренда / оффере',
+  'Подложка перебивает диктора — прибрать музыку на −3 дБ',
+  'Слишком быстрая подача — сделать паузу перед контактами',
+];
+
+export const CRM_STAGE_RETURN_NOTE_PRESETS: readonly string[] = [
+  'Уточнение реквизитов и счёта ЭДО по запросу клиента',
+  'Пересмотр формата ролика и сметы договора',
+  'Возврат на корректировку сценария и дисклеймера ФЗ-38',
+];
+
+export function evaluateOrderProductionSlaStatus(
+  order: {
+    createdAt?: string;
+    updatedAt?: string;
+    approvalWorkflow: OrderApprovalWorkflow;
+  },
+  nowMs: number = Date.now()
+): OrderProductionSlaStatus {
+  const turn = resolveWhoseTurn(order.approvalWorkflow);
+  if (turn.actor === 'completed') {
+    return {
+      level: 'completed',
+      isOverdue: false,
+      elapsedHours: 0,
+      thresholdHours: 0,
+      shortLabel: 'Принят клиентом',
+    };
+  }
+
+  const refIso = order.updatedAt || order.createdAt || '';
+  const refMs = refIso ? Date.parse(refIso) : Number.NaN;
+  const elapsedHours = Number.isFinite(refMs)
+    ? Math.max(0, Math.floor((nowMs - refMs) / 3_600_000))
+    : 0;
+
+  const thresholdHours = turn.actor === 'client' ? 48 : 24;
+  const warningHours = Math.floor(thresholdHours / 2);
+
+  if (elapsedHours >= thresholdHours) {
+    return {
+      level: 'overdue',
+      isOverdue: true,
+      elapsedHours,
+      thresholdHours,
+      shortLabel: `SLA: ${elapsedHours} ч · требует внимания`,
+    };
+  }
+
+  if (elapsedHours >= warningHours) {
+    return {
+      level: 'warning',
+      isOverdue: false,
+      elapsedHours,
+      thresholdHours,
+      shortLabel: `В очереди ${elapsedHours} ч`,
+    };
+  }
+
+  return {
+    level: 'ok',
+    isOverdue: false,
+    elapsedHours,
+    thresholdHours,
+    shortLabel: elapsedHours < 1 ? 'Обновлён < 1 ч назад' : `В очереди ${elapsedHours} ч`,
+  };
+}
+
+export function buildStudioQuickShareLinks(params: {
+  origin: string;
+  dispatchedDropUrl?: string | null;
+  latestEngineerEmailActionPath?: string | null;
+}): {
+  clientCabinetUrl: string;
+  engineerDropUrl: string | null;
+} {
+  const cleanOrigin = String(params.origin || 'https://fmworks.ru').replace(/\/+$/, '');
+  const clientCabinetUrl = `${cleanOrigin}/cabinet`;
+
+  const directDrop = String(params.dispatchedDropUrl || '').trim();
+  if (directDrop) {
+    return {
+      clientCabinetUrl,
+      engineerDropUrl: directDrop,
+    };
+  }
+
+  const emailPath = String(params.latestEngineerEmailActionPath || '').trim();
+  if (emailPath) {
+    const normalizedPath = emailPath.startsWith('/') ? emailPath : `/${emailPath}`;
+    return {
+      clientCabinetUrl,
+      engineerDropUrl: `${cleanOrigin}${normalizedPath}`,
+    };
+  }
+
+  return {
+    clientCabinetUrl,
+    engineerDropUrl: null,
+  };
+}
+
+export function filterProductionOrdersForStudioQueue<
+  T extends {
+    orderNumber: string;
+    createdAt?: string;
+    updatedAt?: string;
+    companyOrInn?: string;
+    contact?: string;
+    briefText?: string;
+    formatLabel?: string;
+    approvalWorkflow: OrderApprovalWorkflow;
+  },
+>(
+  orders: readonly T[],
+  options: {
+    columnFilter: 'all' | StudioKanbanColumnId;
+    turnFilter?: StudioQueueTurnFilter;
+    searchQuery?: string;
+    nowMs?: number;
+  }
+): T[] {
+  const query = String(options.searchQuery || '')
+    .trim()
+    .toLowerCase();
+  const turnFilter = options.turnFilter ?? 'all';
+  const nowMs = options.nowMs ?? Date.now();
+
+  return orders.filter((ord) => {
+    const wf = ord.approvalWorkflow;
+    if (
+      options.columnFilter !== 'all' &&
+      resolveStudioKanbanColumn(wf) !== options.columnFilter
+    ) {
+      return false;
+    }
+
+    if (turnFilter !== 'all') {
+      if (turnFilter === 'sla_overdue') {
+        const sla = evaluateOrderProductionSlaStatus(ord, nowMs);
+        if (!sla.isOverdue) {
+          return false;
+        }
+      } else {
+        const turn = resolveWhoseTurn(wf);
+        if (turnFilter === 'producer_turn' && turn.actor !== 'producer') {
+          return false;
+        }
+        if (turnFilter === 'engineer_turn' && turn.actor !== 'sound_engineer') {
+          return false;
+        }
+        if (turnFilter === 'client_turn' && turn.actor !== 'client') {
+          return false;
+        }
+      }
+    }
+
+    if (query) {
+      const haystack = [
+        ord.orderNumber,
+        ord.companyOrInn ?? '',
+        ord.contact ?? '',
+        ord.briefText ?? '',
+        ord.formatLabel ?? '',
+        wf.lockedScript?.conceptTitle ?? '',
+        wf.lockedScript?.bodyText ?? '',
+      ]
+        .join(' ')
+        .toLowerCase();
+      if (!haystack.includes(query)) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+}
+
 export function toClientApprovalWorkflowView(
   workflow: OrderApprovalWorkflow
 ): ClientApprovalWorkflowView {
@@ -1147,6 +1344,159 @@ export function applyPublishEngineerTakeToClient(
       : workflow.acceptedDeliverableId,
     pendingEngineerTakes: nextTakes,
     spotRevisions: nextRevisions,
+  };
+}
+
+export function applyRejectEngineerTakeForRework(
+  workflow: OrderApprovalWorkflow,
+  params: {
+    takeId: string;
+    revisionId: string;
+    note: string;
+    kind?: SpotRevisionKind;
+    timecodeSec?: number | null;
+  },
+  nowIso: string
+): OrderApprovalWorkflow {
+  const targetTake = workflow.pendingEngineerTakes.find(
+    (t) => t.id === params.takeId
+  );
+  if (!targetTake) {
+    throw new Error('Дубль звукорежиссёра не найден в буфере ОТК');
+  }
+
+  const cleanNote = String(params.note || '').trim().slice(0, 800);
+  if (cleanNote.length < 3) {
+    throw new Error('Укажите причину возврата на доработку (минимум 3 символа)');
+  }
+
+  const timecodeSec =
+    typeof params.timecodeSec === 'number' &&
+    Number.isFinite(params.timecodeSec) &&
+    params.timecodeSec >= 0 &&
+    params.timecodeSec <= 180
+      ? Math.round(params.timecodeSec * 10) / 10
+      : null;
+
+  const nextTakes = workflow.pendingEngineerTakes.map((t) =>
+    t.id === params.takeId
+      ? {
+          ...t,
+          status: 'rejected_qc' as const,
+          rejectedAt: nowIso,
+          rejectedReason: cleanNote,
+        }
+      : t
+  );
+
+  const qcRevision: SpotRevisionRequest = {
+    id: params.revisionId,
+    createdAt: nowIso,
+    kind: params.kind ?? 'balance_timecode',
+    timecodeSec,
+    comment: `Замечание ОТК продюсера к файлу ${targetTake.fileName}: ${cleanNote}`,
+    usedIncludedServiceRound: false,
+    status: 'sent_to_engineer',
+    producerResolutionMode: 'loyal_included',
+    producerResolutionNote: cleanNote,
+    resolvedAt: nowIso,
+  };
+
+  return {
+    ...workflow,
+    phase: 'revision_in_progress',
+    pendingEngineerTakes: nextTakes,
+    spotRevisions: [qcRevision, ...workflow.spotRevisions].slice(0, 20),
+  };
+}
+
+export function applyProducerDirectSpotRevision(
+  workflow: OrderApprovalWorkflow,
+  params: {
+    revisionId: string;
+    kind?: SpotRevisionKind;
+    timecodeSec?: number | null;
+    comment: string;
+  },
+  nowIso: string
+): OrderApprovalWorkflow {
+  const cleanComment = String(params.comment || '').trim().slice(0, 800);
+  if (cleanComment.length < 3) {
+    throw new Error('Опишите задачу на доработку ролика для звукорежиссёра');
+  }
+
+  const timecodeSec =
+    typeof params.timecodeSec === 'number' &&
+    Number.isFinite(params.timecodeSec) &&
+    params.timecodeSec >= 0 &&
+    params.timecodeSec <= 180
+      ? Math.round(params.timecodeSec * 10) / 10
+      : null;
+
+  const nextRevisions: SpotRevisionRequest = {
+    id: params.revisionId,
+    createdAt: nowIso,
+    kind: params.kind ?? 'balance_timecode',
+    timecodeSec,
+    comment: cleanComment,
+    usedIncludedServiceRound: false,
+    status: 'sent_to_engineer',
+    producerResolutionMode: 'loyal_included',
+    producerResolutionNote: 'Возвращено на доработку продюсером студии',
+    resolvedAt: nowIso,
+  };
+
+  const nextTakes = workflow.pendingEngineerTakes.map((t) =>
+    t.status === 'pending_qc'
+      ? {
+          ...t,
+          status: 'rejected_qc' as const,
+          rejectedAt: nowIso,
+          rejectedReason: cleanComment,
+        }
+      : t
+  );
+
+  return {
+    ...workflow,
+    phase: 'revision_in_progress',
+    acceptedAt: null,
+    pendingEngineerTakes: nextTakes,
+    spotRevisions: [nextRevisions, ...workflow.spotRevisions].slice(0, 20),
+  };
+}
+
+export function applyProducerReopenScriptForRework(
+  workflow: OrderApprovalWorkflow,
+  params: {
+    reason?: string;
+  },
+  nowIso: string
+): OrderApprovalWorkflow {
+  const cleanReason =
+    String(params.reason || '').trim().slice(0, 600) ||
+    'Сценарий возвращён продюсером на корректировку текста перед записью';
+
+  const latestVersion = workflow.scriptVersions[0];
+  const nextScriptVersions = latestVersion
+    ? [
+        {
+          ...latestVersion,
+          approvedConceptId: null,
+          approvedAt: null,
+          clientComment: cleanReason,
+          clientCommentAt: nowIso,
+        },
+        ...workflow.scriptVersions.slice(1),
+      ]
+    : workflow.scriptVersions;
+
+  return {
+    ...workflow,
+    phase: 'script_drafting',
+    lockedScript: null,
+    acceptedAt: null,
+    scriptVersions: nextScriptVersions,
   };
 }
 

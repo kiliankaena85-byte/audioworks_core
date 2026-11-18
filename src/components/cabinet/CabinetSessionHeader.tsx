@@ -1,5 +1,5 @@
-import { CheckCircle2, Copy, KeyRound, LogOut } from 'lucide-react';
-import { FormEvent } from 'react';
+import { CheckCircle2, Copy, KeyRound, LogOut, Settings2 } from 'lucide-react';
+import { FormEvent, useState } from 'react';
 import type { ClientAccountPublicProfile } from '../../data/clientAuthShared';
 import type {
   ClientAvatarPresetId,
@@ -77,35 +77,38 @@ export function CabinetSessionHeader({
   onDismissPendingBind,
   onSubmitBindEmail,
 }: CabinetSessionHeaderProps) {
+  const [isAccountToolsOpen, setIsAccountToolsOpen] = useState(false);
+
   if (clientAccount) {
     const cleanDisplayName = clientAccount.displayName.trim();
 
     return (
       <div
         data-testid="cabinet-authenticated-bar"
-        className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 px-4 py-3.5 sm:px-6 space-y-3"
+        className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 px-3.5 py-2.5 sm:px-5 sm:py-3 space-y-2.5"
       >
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5 min-w-0">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <CabinetProfileAvatar
               avatar={profileAvatar}
               isEditorOpen={isAvatarEditorOpen}
               onToggleEditor={onToggleAvatarEditor}
+              size="sm"
             />
 
-            <div className="min-w-0 space-y-0.5">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-[#111111] dark:text-[#F4F3EF]">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0 text-xs sm:text-sm text-[#111111] dark:text-[#F4F3EF]">
                 {cleanDisplayName && (
                   <>
                     <span
                       data-testid="cabinet-authenticated-name"
-                      className="font-semibold truncate max-w-[260px] sm:max-w-[340px]"
+                      className="font-semibold truncate max-w-[180px] sm:max-w-[300px]"
                     >
                       {cleanDisplayName}
                     </span>
                     <span
                       aria-hidden="true"
-                      className="text-[#111111]/45 dark:text-[#F4F3EF]/45"
+                      className="hidden sm:inline text-[#111111]/45 dark:text-[#F4F3EF]/45"
                     >
                       ·
                     </span>
@@ -115,47 +118,62 @@ export function CabinetSessionHeader({
                   data-testid="cabinet-authenticated-email"
                   className={
                     cleanDisplayName
-                      ? 'font-medium text-xs sm:text-sm text-[#111111]/82 dark:text-[#F4F3EF]/82 truncate'
+                      ? 'font-medium text-xs text-[#111111]/74 dark:text-[#F4F3EF]/74 truncate max-w-[200px] sm:max-w-none'
                       : 'font-semibold text-[#111111] dark:text-[#F4F3EF] truncate'
                   }
                 >
                   {clientAccount.email}
                 </strong>
               </div>
-
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72 tabular-nums">
-                <span>Защищённый вход по почте</span>
-                <span aria-hidden="true">·</span>
-                <span>Проектов в кабинете: {ordersCount}</span>
-                <span aria-hidden="true">·</span>
-                <button
-                  type="button"
-                  data-testid="cabinet-toggle-avatar-editor-btn"
-                  aria-expanded={isAvatarEditorOpen}
-                  onClick={onToggleAvatarEditor}
-                  className="font-medium text-[#111111]/86 dark:text-[#F4F3EF]/86 hover:text-[#C83210] dark:hover:text-[#FF6B47] underline decoration-[#111111]/30 dark:decoration-white/30 underline-offset-3 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
-                >
-                  {profileAvatar.hasCustomPhoto
-                    ? 'Изменить фото профиля'
-                    : `Аватар «${profileAvatar.initials}»`}
-                </button>
-              </div>
+              <p className="hidden sm:block text-[11px] text-[#111111]/66 dark:text-[#F4F3EF]/66 tabular-nums">
+                Проектов в кабинете: {ordersCount} · Вход без пароля
+              </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <button
+              type="button"
+              data-testid="cabinet-account-tools-toggle"
+              aria-expanded={isAccountToolsOpen}
+              onClick={() => setIsAccountToolsOpen((prev) => !prev)}
+              className={`min-h-[38px] sm:min-h-[34px] px-2.5 sm:px-3 py-1 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
+                isAccountToolsOpen
+                  ? 'border-[#C83210] bg-[#C83210]/8 text-[#111111] dark:text-[#F4F3EF]'
+                  : 'border-[#111111]/14 dark:border-white/14 hover:border-[#FF4820] text-[#111111]/82 dark:text-[#F4F3EF]/82'
+              }`}
+            >
+              <Settings2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+              <span className="hidden sm:inline">Доступ и профиль</span>
+              <span className="sm:hidden">Профиль</span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="cabinet-logout-btn"
+              onClick={onLogout}
+              className="min-h-[38px] sm:min-h-[34px] px-2.5 sm:px-3 py-1 rounded-xl border border-[#111111]/14 dark:border-white/14 hover:border-[#B91C1C] hover:text-[#B91C1C] dark:hover:text-[#F87171] text-xs font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78 inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+            >
+              <LogOut className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+              <span>Выйти</span>
+            </button>
+          </div>
+        </div>
+
+        {isAccountToolsOpen && (
+          <div className="pt-2.5 border-t border-[#111111]/10 dark:border-white/10 flex flex-wrap items-center gap-2">
             <button
               type="button"
               disabled={isIssuingCrossDeviceLink}
               data-testid="cabinet-cross-device-link-btn"
               onClick={onIssueCrossDeviceLink}
-              className="min-h-[44px] sm:min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+              className="min-h-[40px] sm:min-h-[34px] px-3 py-1.5 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
             >
               <Copy className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
               <span>
                 {isIssuingCrossDeviceLink
                   ? 'Создаём ссылку…'
-                  : 'Открыть на телефоне'}
+                  : 'Ссылка для другого устройства'}
               </span>
             </button>
 
@@ -163,23 +181,30 @@ export function CabinetSessionHeader({
               type="button"
               data-testid="cabinet-open-reset-btn"
               onClick={onOpenAccessReset}
-              className="min-h-[44px] sm:min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111]/85 dark:text-[#F4F3EF]/85 inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+              className="min-h-[40px] sm:min-h-[34px] px-3 py-1.5 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111]/85 dark:text-[#F4F3EF]/85 inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
             >
-              <KeyRound className="w-3.5 h-3.5 shrink-0 text-[#C83210] dark:text-[#FF6B47]" aria-hidden="true" />
-              <span>Защита сессий</span>
+              <KeyRound
+                className="w-3.5 h-3.5 shrink-0 text-[#C83210] dark:text-[#FF6B47]"
+                aria-hidden="true"
+              />
+              <span>Завершить другие сессии</span>
             </button>
 
             <button
               type="button"
-              data-testid="cabinet-logout-btn"
-              onClick={onLogout}
-              className="min-h-[44px] sm:min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#B91C1C] hover:text-[#B91C1C] dark:hover:text-[#F87171] text-xs font-semibold text-[#111111]/80 dark:text-[#F4F3EF]/80 inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+              data-testid="cabinet-toggle-avatar-editor-btn"
+              aria-expanded={isAvatarEditorOpen}
+              onClick={onToggleAvatarEditor}
+              className="min-h-[40px] sm:min-h-[34px] px-3 py-1.5 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] text-xs font-semibold text-[#111111]/85 dark:text-[#F4F3EF]/85 inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
             >
-              <LogOut className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-              <span>Выйти</span>
+              <span>
+                {profileAvatar.hasCustomPhoto
+                  ? 'Изменить фото профиля'
+                  : `Оформление аватара (${profileAvatar.initials})`}
+              </span>
             </button>
           </div>
-        </div>
+        )}
 
         {isAvatarEditorOpen && (
           <CabinetAvatarEditorStrip
@@ -201,7 +226,7 @@ export function CabinetSessionHeader({
             <p className="text-[#111111]/78 dark:text-[#F4F3EF]/78 break-all">
               {crossDeviceLink.copied
                 ? 'Одноразовая ссылка скопирована в буфер обмена (действует 30 мин): '
-                : 'Одноразовая ссылка для телефона или другого ПК (действует 30 мин): '}
+                : 'Одноразовая ссылка для входа на другом устройстве (действует 30 мин): '}
               <code className="font-mono text-[#111111] dark:text-[#F4F3EF]">
                 {crossDeviceLink.magicLinkUrl}
               </code>

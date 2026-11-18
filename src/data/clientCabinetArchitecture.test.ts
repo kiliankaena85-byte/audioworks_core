@@ -8,13 +8,21 @@ import {
   verifyClientSessionToken,
 } from './clientAuthCore';
 import {
+  buildAccountingLedgerCsv,
+  buildAccountingLedgerPlainText,
+  buildAccountingReconciliationSummary,
+  buildAccountingSummaryText,
   buildCabinetRouteForAccessTab,
   buildCabinetRouteForWorkspaceFilter,
+  buildClientActionQueue,
   buildDeliverableDownloadUrls,
+  buildDirectorFeedbackClipboardText,
   deriveCabinetLifecycleState,
   extractMagicTokenFromCabinetHref,
   extractOrderMasterFiles,
   filterCabinetHistoryOrders,
+  filterOrdersByExportPeriod,
+  formatQuickTimecodeLabel,
   inferOrderRepeatParameters,
   isCompletedOrderOlderThanSixMonths,
   isOrderArchivedInHistory,
@@ -25,8 +33,11 @@ import {
   resolveCabinetAccessUiFromRoute,
   resolveCabinetOrderVisualStatus,
   resolveWorkspaceFilterFromRoute,
+  shouldShowAudioBeforeApprovalActions,
+  shouldShowRepeatOrderAction,
   SIX_MONTHS_MS,
   sortActiveOrdersByClientTurn,
+  stripTrailingPriceFromOrderTitle,
   summarizeCabinetHistoryArchive,
   summarizeCabinetHistoryStatuses,
   verifyClientAttachmentMagicBytes,
@@ -40,6 +51,7 @@ import {
   parsePlatformRoute,
   resolveRouteSeoMeta,
   sanitizeCabinetMagicToken,
+  sanitizeGuestReviewToken,
 } from './platformRouter';
 
 const TEST_SECRET = 'cabinet-arch-test-secret-2026';
@@ -865,4 +877,246 @@ test('verifyClientAttachmentMagicBytes пропускает валидные д�
   assert.equal(verifyClientAttachmentMagicBytes(cleanTxt, '.txt').ok, true);
   assert.equal(verifyClientAttachmentMagicBytes(binaryInTxt, '.txt').ok, false);
 });
+
+test('P0 helpers: убирает дубль цены из заголовка, ограничивает «Повторить заказ» и ставит плеер выше приёмки на этапе 03', () => {
+  assert.equal(
+    stripTrailingPriceFromOrderTitle('Продакшн под ключ (20 сек) — 25 000 ₽', 25000),
+    'Продакшн под ключ (20 сек)'
+  );
+  assert.equal(
+    stripTrailingPriceFromOrderTitle('Игровой ролик / Мини-кино (30 сек) - 35 000 руб.', 35000),
+    'Игровой ролик / Мини-кино (30 сек)'
+  );
+  assert.equal(
+    stripTrailingPriceFromOrderTitle('Индивидуальный проект (договорная цена)', 0),
+    'Индивидуальный проект (договорная цена)'
+  );
+  assert.equal(
+    stripTrailingPriceFromOrderTitle('Голос и стиль (15 сек)', 15000),
+    'Голос и стиль (15 сек)'
+  );
+
+  // «Повторить заказ» скрыт на незавершённых этапах и доступен на принятых / эфирных / завершённых
+  assert.equal(
+    shouldShowRepeatOrderAction({
+      stage: 'in_production',
+      approvalWorkflow: { phase: 'script_client_review' } as never,
+    }),
+    false
+  );
+  assert.equal(
+    shouldShowRepeatOrderAction({
+      stage: 'in_production',
+      approvalWorkflow: { phase: 'spot_client_review' } as never,
+    }),
+    false
+  );
+  assert.equal(
+    shouldShowRepeatOrderAction({
+      stage: 'in_production',
+      approvalWorkflow: { phase: 'accepted' } as never,
+    }),
+    true
+  );
+  assert.equal(
+    shouldShowRepeatOrderAction({
+      stage: 'on_air',
+      approvalWorkflow: null,
+    }),
+    true
+  );
+  assert.equal(
+    shouldShowRepeatOrderAction({
+      stage: 'completed_ltv',
+      approvalWorkflow: null,
+    }),
+    true
+  );
+
+  // На этапе 03 до финальной приёмки плеер идёт выше кнопок приёмки
+  assert.equal(
+    shouldShowAudioBeforeApprovalActions({
+      externalStep: '03_spot',
+      phase: 'spot_client_review',
+    }),
+    true
+  );
+  assert.equal(
+    shouldShowAudioBeforeApprovalActions({
+      externalStep: '03_spot',
+      phase: 'revision_in_progress',
+    }),
+    true
+  );
+  assert.equal(
+    shouldShowAudioBeforeApprovalActions({
+      externalStep: '03_spot',
+      phase: 'accepted',
+    }),
+    false
+  );
+  assert.equal(
+    shouldShowAudioBeforeApprovalActions({
+      externalStep: '01_script',
+      phase: 'script_client_review',
+    }),
+    false
+  );
+  assert.equal(shouldShowAudioBeforeApprovalActions(null), false);
+});
+
+test('P1 helpers: очередь действий клиента, формат таймкода и сводка для бухгалтерии', () => {
+  const queue = buildClientActionQueue([
+    {
+      orderNumber: 'FM-100',
+      formatLabel: 'Продакшн под ключ (20 сек) — 25 000 ₽',
+      totalBudgetRub: 25_000,
+      createdAt: '2026-11-10T10:00:00.000Z',
+      approvalWorkflow: {
+        externalStep: '02_production',
+        whoseTurnActor: 'studio',
+      } as never,
+    },
+    {
+      orderNumber: 'FM-101',
+      formatLabel: 'Игровой ролик / Мини-кино (30 сек) — 35 000 ₽',
+      totalBudgetRub: 35_000,
+      createdAt: '2026-11-11T10:00:00.000Z',
+      approvalWorkflow: {
+        externalStep: '03_spot',
+        whoseTurnActor: 'client',
+      } as never,
+    },
+    {
+      orderNumber: 'FM-102',
+      formatLabel: 'Продакшн под ключ (20 сек) — 25 000 ₽',
+      totalBudgetRub: 25_000,
+      createdAt: '2026-11-12T10:00:00.000Z',
+      approvalWorkflow: {
+        externalStep: '01_script',
+        whoseTurnActor: 'client',
+      } as never,
+    },
+  ]);
+
+  assert.equal(queue.length, 2);
+  assert.equal(queue[0]?.orderNumber, 'FM-102');
+  assert.equal(queue[0]?.title, 'Продакшн под ключ (20 сек)');
+  assert.equal(queue[0]?.actionKind, 'approve_script');
+  assert.equal(queue[0]?.actionLabel, 'Утвердить сценарий');
+  assert.equal(queue[1]?.orderNumber, 'FM-101');
+  assert.equal(queue[1]?.title, 'Игровой ролик / Мини-кино (30 сек)');
+  assert.equal(queue[1]?.actionKind, 'accept_spot');
+  assert.equal(queue[1]?.actionLabel, 'Прослушать и принять ролик');
+
+  assert.equal(formatQuickTimecodeLabel(0), '00:00.0');
+  assert.equal(formatQuickTimecodeLabel(8.54), '00:08.5');
+  assert.equal(formatQuickTimecodeLabel(72.3), '01:12.3');
+  assert.equal(formatQuickTimecodeLabel(-5), '00:00.0');
+
+  const summary = buildAccountingSummaryText(
+    {
+      orderNumber: 'FM-2948',
+      createdAt: '2026-11-18T10:00:00.000Z',
+      formatLabel: 'Продакшн под ключ (20 сек) — 25 000 ₽',
+      totalBudgetRub: 25_000,
+      companyOrInn: 'АО «ТрансФлот Лизинг» · ИНН 7702070139',
+      stage: 'on_air',
+      approvalWorkflow: { phase: 'accepted' } as never,
+    },
+    'https://fmworks.ru/cabinet'
+  );
+  assert.match(summary, /FM-2948/);
+  assert.match(summary, /Продакшн под ключ \(20 сек\)/);
+  assert.doesNotMatch(summary, /Продакшн под ключ \(20 сек\) — 25 000/);
+  assert.match(summary, /25[\s\u00a0]000 ₽/);
+  assert.match(summary, /7702070139/);
+  assert.match(summary, /акт сдачи-приёмки/);
+  assert.match(summary, /https:\/\/fmworks\.ru\/cabinet/);
+});
+
+test('P2 helpers: фильтр периода, CSV-реестр бухгалтерии, текстовая ведомость и маршрут /review', () => {
+  const nowMs = Date.parse('2026-11-18T12:00:00.000Z');
+  const q4Order = {
+    orderNumber: 'FM-2948',
+    createdAt: '2026-11-10T10:00:00.000Z',
+    formatLabel: 'Продакшн под ключ (20 сек) — 25 000 ₽',
+    companyOrInn: 'АО «ТрансФлот; Лизинг» · ИНН 7702070139',
+    totalBudgetRub: 25_000,
+    stage: 'on_air' as const,
+    deliverables: [],
+    approvalWorkflow: { phase: 'accepted' } as never,
+  };
+  const q1Order = {
+    orderNumber: 'FM-2100',
+    createdAt: '2026-02-14T10:00:00.000Z',
+    formatLabel: 'Голос и стиль (15 сек) — 15 000 ₽',
+    companyOrInn: 'АО «ТрансФлот Лизинг» · ИНН 7702070139',
+    totalBudgetRub: 15_000,
+    stage: 'completed_ltv' as const,
+    deliverables: [],
+    approvalWorkflow: null,
+  };
+  const prevYearOrder = {
+    orderNumber: 'FM-1800',
+    createdAt: '2025-11-05T10:00:00.000Z',
+    formatLabel: 'Игровой ролик (30 сек) — 35 000 ₽',
+    companyOrInn: '',
+    totalBudgetRub: 35_000,
+    stage: 'in_production' as const,
+    deliverables: [],
+    approvalWorkflow: null,
+  };
+
+  const sample = [q4Order, q1Order, prevYearOrder];
+  assert.equal(filterOrdersByExportPeriod(sample, 'all', nowMs).length, 3);
+  assert.deepEqual(
+    filterOrdersByExportPeriod(sample, 'year', nowMs).map((o) => o.orderNumber),
+    ['FM-2948', 'FM-2100']
+  );
+  assert.deepEqual(
+    filterOrdersByExportPeriod(sample, 'quarter', nowMs).map((o) => o.orderNumber),
+    ['FM-2948']
+  );
+
+  const recon = buildAccountingReconciliationSummary(sample);
+  assert.deepEqual(recon, {
+    ordersCount: 3,
+    totalBudgetRub: 75_000,
+    readyDocsCount: 2,
+    inWorkCount: 1,
+  });
+
+  const csv = buildAccountingLedgerCsv(sample);
+  assert.ok(csv.startsWith('\uFEFFНомер заказа;Дата;Формат услуги;'));
+  assert.match(csv, /"АО «ТрансФлот; Лизинг» · ИНН 7702070139"/);
+  assert.match(csv, /ИТОГО;;Проектов: 3;;75000;;С актами: 2;/);
+
+  const plain = buildAccountingLedgerPlainText([q4Order], 'Текущий квартал');
+  assert.match(plain, /Текущий квартал/);
+  assert.match(plain, /#FM-2948/);
+  assert.match(plain, /25[\s\u00a0]000 ₽/);
+
+  const feedback = buildDirectorFeedbackClipboardText({
+    orderNumber: 'FM-2926',
+    formatTitle: 'Игровой ролик / Мини-кино (30 сек)',
+    verdict: 'approved',
+    comment: 'Отличная подача во второй версии',
+  });
+  assert.match(feedback, /FM-2926/);
+  assert.match(feedback, /Согласовано/);
+  assert.match(feedback, /Отличная подача/);
+
+  // Маршрут /review?token=... сохраняет регистр токена и не протекает в canonicalPath
+  const token = 'rev_Rk0tMjkyNg.AbCdEf0123456789_-XyZ123';
+  assert.equal(sanitizeGuestReviewToken(token), token);
+  assert.equal(sanitizeGuestReviewToken('bad-token'), undefined);
+  const parsedRoute = parsePlatformRoute('/review', `?token=${token}`);
+  assert.deepEqual(parsedRoute, { kind: 'guest-review', reviewToken: token });
+  assert.equal(buildPlatformPath(parsedRoute), `/review?token=${encodeURIComponent(token)}`);
+  const seoMeta = resolveRouteSeoMeta(parsedRoute);
+  assert.equal(seoMeta.canonicalPath, '/review');
+  assert.equal(seoMeta.noindex, true);
+});
+
 

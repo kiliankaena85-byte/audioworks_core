@@ -76,6 +76,10 @@ export type PlatformRoute =
       kind: 'proposal';
       shareToken?: string;
     }
+  | {
+      kind: 'guest-review';
+      reviewToken?: string;
+    }
   | { kind: 'admin' };
 
 export function resolveRouteScrollAnchor(route: PlatformRoute): string | undefined {
@@ -107,6 +111,8 @@ export function resolveRouteTransitionKey(route: PlatformRoute): string {
       return `sound-drop:${route.dropToken ?? 'default'}`;
     case 'proposal':
       return `proposal:${route.shareToken ?? 'default'}`;
+    case 'guest-review':
+      return `guest-review:${route.reviewToken ?? 'default'}`;
     default:
       return route.kind;
   }
@@ -141,6 +147,8 @@ export function resolveRouteSkeletonVariant(
       return 'hot-air';
     case 'proposal':
       return 'order';
+    case 'guest-review':
+      return 'cabinet';
     default:
       return route.kind;
   }
@@ -208,6 +216,14 @@ export function sanitizeProposalShareToken(raw: unknown): string | undefined {
   return trimmed;
 }
 
+export function sanitizeGuestReviewToken(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.length < 16 || trimmed.length > 256) return undefined;
+  if (!/^rev_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{16,64}$/.test(trimmed)) return undefined;
+  return trimmed;
+}
+
 /**
  * Разбирает URL браузера (включая обратную совместимость со старыми хеш-якорями и query-параметрами)
  * в строго типизированный маршрут многостраничной платформы FMWorks.
@@ -252,6 +268,16 @@ export function parsePlatformRoute(
     return {
       kind: 'proposal',
       ...(shareToken ? { shareToken } : {}),
+    };
+  }
+
+  if (normalizedPath === '/review' || normalizedPath.startsWith('/review/')) {
+    const reviewToken = sanitizeGuestReviewToken(
+      params.get('token') ?? params.get('review')
+    );
+    return {
+      kind: 'guest-review',
+      ...(reviewToken ? { reviewToken } : {}),
     };
   }
 
@@ -511,6 +537,12 @@ export function buildPlatformPath(route: PlatformRoute): string {
         ? `/proposal?token=${encodeURIComponent(cleanShare)}`
         : '/proposal';
     }
+    case 'guest-review': {
+      const cleanReview = sanitizeGuestReviewToken(route.reviewToken);
+      return cleanReview
+        ? `/review?token=${encodeURIComponent(cleanReview)}`
+        : '/review';
+    }
     case 'admin':
       return '/admin';
   }
@@ -544,6 +576,7 @@ export function resolveActiveTopNavSection(
     case 'cabinet':
     case 'sound-drop':
     case 'proposal':
+    case 'guest-review':
     case 'admin':
       return null;
   }
@@ -818,6 +851,19 @@ export function resolveRouteSeoMeta(
         breadcrumbs: [
           { name: 'Главная', path: '/' },
           { name: 'Согласование КП', path: '/proposal' },
+        ],
+      };
+    case 'guest-review':
+      return {
+        title: 'Согласование сценария и аудиоролика — Студия FMWorks',
+        description:
+          'Гостевая страница предпросмотра одного проекта без персональных данных и доступа к личному кабинету: сценарий, версии аудиоролика и студийный A/B-плеер.',
+        canonicalPath: '/review',
+        schemaType: 'WebSite',
+        noindex: true,
+        breadcrumbs: [
+          { name: 'Главная', path: '/' },
+          { name: 'Согласование ролика', path: '/review' },
         ],
       };
     case 'admin':

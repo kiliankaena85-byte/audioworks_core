@@ -1,8 +1,21 @@
-import { KeyboardEvent, useCallback, useRef } from 'react';
-import { ArrowLeft, Bell, Lock, Plus, RefreshCw, Undo2 } from 'lucide-react';
-import type { CabinetWorkspaceSectionFilter } from '../../data/clientCabinetArchitecture';
+import { KeyboardEvent, useCallback, useMemo, useRef, useState } from 'react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  Bell,
+  FileSpreadsheet,
+  Lock,
+  Plus,
+  RefreshCw,
+  Undo2,
+} from 'lucide-react';
+import {
+  buildClientActionQueue,
+  type CabinetWorkspaceSectionFilter,
+} from '../../data/clientCabinetArchitecture';
 import type { CabinetSubrouteMode } from '../../data/platformRouter';
 import { CabinetAccessPanel } from '../cabinet/CabinetAccessPanel';
+import { CabinetAccountingExportPanel } from '../cabinet/CabinetAccountingExportPanel';
 import { CabinetOrderCard } from '../cabinet/CabinetOrderCard';
 import { CabinetOrderHistorySection } from '../cabinet/CabinetOrderHistorySection';
 import {
@@ -35,6 +48,7 @@ export function ClientCabinetPage({
   });
 
   const workspaceTabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [isAccountingPanelOpen, setIsAccountingPanelOpen] = useState(false);
 
   const handleJumpToOrder = useCallback(
     (orderNumber: string, versionCode?: string) => {
@@ -78,6 +92,11 @@ export function ClientCabinetPage({
     },
     onJumpToOrder: handleJumpToOrder,
   });
+
+  const actionQueue = useMemo(
+    () => buildClientActionQueue(ctrl.activeOrders),
+    [ctrl.activeOrders]
+  );
 
   const workspaceTabs: readonly {
     id: CabinetWorkspaceSectionFilter;
@@ -124,17 +143,17 @@ export function ClientCabinetPage({
       data-testid="client-cabinet-page"
       data-lifecycle-state={ctrl.lifecycleState}
       aria-labelledby="cabinet-page-heading"
-      className="py-7 sm:py-10 lg:py-12"
+      className="py-5 sm:py-8 lg:py-10"
     >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 space-y-6 sm:space-y-7">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 space-y-4 sm:space-y-5">
         {/* Компактная строка навигации и заголовок кабинета */}
-        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 pb-5 border-b border-[#111111]/10 dark:border-white/10">
-          <div className="space-y-2 max-w-3xl">
-            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
+        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-3 pb-3.5 sm:pb-4 border-b border-[#111111]/10 dark:border-white/10">
+          <div className="space-y-1 max-w-3xl">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
               <button
                 type="button"
                 onClick={() => onNavigate({ kind: 'home' })}
-                className="min-h-[36px] inline-flex items-center gap-1.5 text-xs font-semibold text-[#111111]/76 dark:text-[#F4F3EF]/76 hover:text-[#111111] dark:hover:text-[#F4F3EF] transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+                className="min-h-[32px] inline-flex items-center gap-1.5 text-xs font-semibold text-[#111111]/76 dark:text-[#F4F3EF]/76 hover:text-[#111111] dark:hover:text-[#F4F3EF] transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
               >
                 <ArrowLeft className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                 <span>На главную</span>
@@ -151,7 +170,7 @@ export function ClientCabinetPage({
 
             <h1
               id="cabinet-page-heading"
-              className="text-2xl sm:text-4xl font-bold tracking-tight leading-[1.08] text-[#111111] dark:text-[#F4F3EF] editorial-balance"
+              className="text-xl sm:text-3xl font-bold tracking-tight leading-[1.1] text-[#111111] dark:text-[#F4F3EF] editorial-balance"
             >
               {subroute === 'reset' && ctrl.orders.length === 0
                 ? 'Восстановление доступа по почте'
@@ -161,35 +180,58 @@ export function ClientCabinetPage({
             </h1>
           </div>
 
-          {/* Панель инструментов кабинета (без дублирования яркого оранжевого CTA шапки сайта) */}
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            {ctrl.orders.length > 0 && (
-              <button
-                type="button"
-                data-testid="cabinet-toggle-lookup-btn"
-                onClick={() => {
-                  const nextOpen = !ctrl.showLookupForm;
-                  ctrl.setShowLookupForm(nextOpen);
-                  if (!nextOpen && subroute === 'reset') {
-                    onNavigate({ kind: 'cabinet' }, { replace: true });
-                  }
-                }}
-                className="min-h-[44px] sm:min-h-[38px] px-3.5 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 bg-white dark:bg-[#141418] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
-              >
-                <Plus className="w-3.5 h-3.5 text-[#C83210] dark:text-[#FF6B47]" aria-hidden="true" />
-                <span>
-                  {ctrl.showLookupForm ? 'Скрыть панель входа' : 'Найти заказ / вход'}
-                </span>
-              </button>
-            )}
+          {/* Панель инструментов кабинета — показывается только при наличии заказов или активной сессии */}
+          {(ctrl.orders.length > 0 || Boolean(ctrl.clientAccount)) && (
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 shrink-0">
+              {ctrl.orders.length > 0 && (
+                <button
+                  type="button"
+                  data-testid="cabinet-toggle-lookup-btn"
+                  onClick={() => {
+                    const nextOpen = !ctrl.showLookupForm;
+                    ctrl.setShowLookupForm(nextOpen);
+                    if (!nextOpen && subroute === 'reset') {
+                      onNavigate({ kind: 'cabinet' }, { replace: true });
+                    }
+                  }}
+                  className="min-h-[38px] sm:min-h-[36px] px-3 py-1.5 rounded-xl border border-[#111111]/16 dark:border-white/16 bg-white dark:bg-[#141418] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+                >
+                  <Plus
+                    className="w-3.5 h-3.5 text-[#C83210] dark:text-[#FF6B47]"
+                    aria-hidden="true"
+                  />
+                  <span>
+                    {ctrl.showLookupForm ? 'Скрыть вход' : 'Найти заказ'}
+                  </span>
+                </button>
+              )}
 
-            {(ctrl.orders.length > 0 || Boolean(ctrl.clientAccount)) && (
+              {ctrl.orders.length > 0 && (
+                <button
+                  type="button"
+                  data-testid="cabinet-accounting-export-toggle"
+                  aria-expanded={isAccountingPanelOpen}
+                  onClick={() => setIsAccountingPanelOpen((prev) => !prev)}
+                  className={`min-h-[38px] sm:min-h-[36px] px-3 py-1.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
+                    isAccountingPanelOpen
+                      ? 'border-[#C83210] bg-[#C83210]/10 text-[#111111] dark:text-[#F4F3EF]'
+                      : 'border-[#111111]/16 dark:border-white/16 bg-white dark:bg-[#141418] text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820]'
+                  }`}
+                >
+                  <FileSpreadsheet
+                    className="w-3.5 h-3.5 text-[#C83210] dark:text-[#FF6B47] shrink-0"
+                    aria-hidden="true"
+                  />
+                  <span>Реестр для бухгалтерии</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 data-testid="cabinet-notifications-trigger-btn"
                 aria-expanded={pushCtrl.isPanelOpen}
                 onClick={() => pushCtrl.setIsPanelOpen((prev) => !prev)}
-                className={`min-h-[44px] sm:min-h-[38px] px-3.5 py-2 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
+                className={`min-h-[38px] sm:min-h-[36px] px-3 py-1.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
                   pushCtrl.isPanelOpen
                     ? 'border-[#C83210] bg-[#C83210]/10 text-[#111111] dark:text-[#F4F3EF]'
                     : 'border-[#111111]/16 dark:border-white/16 bg-white dark:bg-[#141418] text-[#111111] dark:text-[#F4F3EF] hover:border-[#FF4820]'
@@ -209,32 +251,32 @@ export function ClientCabinetPage({
                     : 'Уведомления'}
                 </span>
               </button>
-            )}
 
-            <button
-              type="button"
-              onClick={() => {
-                void ctrl.reloadCabinet();
-                void pushCtrl.refreshNotifications();
-              }}
-              disabled={ctrl.isLoading}
-              aria-label="Обновить статусы заказов"
-              className="min-h-[44px] sm:min-h-[38px] px-3.5 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 bg-white dark:bg-[#141418] text-xs font-semibold text-[#111111]/82 dark:text-[#F4F3EF]/82 hover:border-[#FF4820] inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
-            >
-              <RefreshCw
-                className={`w-3.5 h-3.5 ${ctrl.isLoading ? 'animate-spin' : ''}`}
-                aria-hidden="true"
-              />
-              <span>Обновить</span>
-            </button>
-          </div>
+              <button
+                type="button"
+                onClick={() => {
+                  void ctrl.reloadCabinet();
+                  void pushCtrl.refreshNotifications();
+                }}
+                disabled={ctrl.isLoading}
+                aria-label="Обновить статусы заказов"
+                className="min-h-[38px] sm:min-h-[36px] px-2.5 sm:px-3 py-1.5 rounded-xl border border-[#111111]/16 dark:border-white/16 bg-white dark:bg-[#141418] text-xs font-semibold text-[#111111]/82 dark:text-[#F4F3EF]/82 hover:border-[#FF4820] inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+              >
+                <RefreshCw
+                  className={`w-3.5 h-3.5 ${ctrl.isLoading ? 'animate-spin' : ''}`}
+                  aria-hidden="true"
+                />
+                <span className="hidden sm:inline">Обновить</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {ctrl.statusError && (
           <div
             role="alert"
             data-testid="cabinet-status-error"
-            className="rounded-2xl px-4 py-3 bg-[#B91C1C]/10 border border-[#B91C1C]/30 text-xs sm:text-sm text-[#B91C1C] dark:text-[#F87171]"
+            className="rounded-xl px-4 py-2.5 bg-[#B91C1C]/10 border border-[#B91C1C]/30 text-xs sm:text-sm text-[#B91C1C] dark:text-[#F87171]"
           >
             {ctrl.statusError}
           </div>
@@ -244,13 +286,13 @@ export function ClientCabinetPage({
           <div
             role="status"
             data-testid="cabinet-auth-banner"
-            className="rounded-2xl px-4 py-3 bg-[#166534]/10 border border-[#166534]/30 text-xs sm:text-sm text-[#166534] dark:text-[#4ADE80] flex items-center justify-between gap-3"
+            className="rounded-xl px-3.5 py-2 bg-[#166534]/10 border border-[#166534]/25 text-xs text-[#166534] dark:text-[#4ADE80] flex items-center justify-between gap-3"
           >
-            <span>{ctrl.authBanner}</span>
+            <span className="truncate">{ctrl.authBanner}</span>
             <button
               type="button"
               onClick={() => ctrl.setAuthBanner(null)}
-              className="min-h-[36px] text-xs font-semibold underline underline-offset-2 cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+              className="min-h-[32px] text-xs font-semibold underline underline-offset-2 cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
             >
               Скрыть
             </button>
@@ -371,6 +413,17 @@ export function ClientCabinetPage({
           />
         )}
 
+        {/* Реестр заказов и выгрузка для бухгалтерии */}
+        {isAccountingPanelOpen && ctrl.orders.length > 0 && (
+          <CabinetAccountingExportPanel
+            orders={ctrl.orders}
+            onOpenDocumentModal={(order, initialDoc) =>
+              ctrl.openOrderDocumentModal(order, initialDoc)
+            }
+            onClose={() => setIsAccountingPanelOpen(false)}
+          />
+        )}
+
         {/* Панель входа по почте, сброса доступа и поиска заказа */}
         {ctrl.showLookupForm && (
           <CabinetAccessPanel
@@ -397,15 +450,7 @@ export function ClientCabinetPage({
             magicDispatchResult={ctrl.magicDispatchResult}
             onSubmitMagicLink={ctrl.handleMagicLinkSubmit}
             onTriggerDemoMagicEmail={(demoEmail) => {
-              ctrl.setMagicEmailInput(demoEmail);
-              if (ctrl.magicConsentAccepted) {
-                void ctrl.executeRequestMagicLink(demoEmail);
-              } else {
-                ctrl.setMagicRequestError(null);
-                ctrl.setMagicConsentError(
-                  'Для запуска демо-входа подтвердите согласие на обработку персональных данных (152-ФЗ) ниже.'
-                );
-              }
+              void ctrl.handleEnterDemoCabinet(demoEmail);
             }}
             onOpenPreviewMagicLink={ctrl.handleOpenPreviewMagicLink}
             orderNumberInput={ctrl.orderNumberInput}
@@ -425,25 +470,63 @@ export function ClientCabinetPage({
         {(ctrl.isLoading || ctrl.isVerifyingMagic) && ctrl.orders.length === 0 ? (
           <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-8 text-center text-sm text-[#111111]/74 dark:text-[#F4F3EF]/74">
             {ctrl.isVerifyingMagic
-              ? 'Проверяем одноразовую ссылку и восстанавливаем доступ к заказам…'
+              ? 'Открываем кабинет и загружаем ваши проекты…'
               : 'Проверяем статусы и готовые файлы ваших заказов…'}
           </div>
         ) : ctrl.orders.length === 0 ? (
           ctrl.showLookupForm ? (
-            <div
-              data-testid="cabinet-empty-state"
-              className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl bg-[#EFECE5]/55 dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 px-5 py-4"
-            >
-              <p className="text-xs sm:text-sm text-[#111111]/78 dark:text-[#F4F3EF]/78">
-                Ещё не оформляли заказ? Заявка создаётся за минуту — личный кабинет подключится к вашей почте автоматически без пароля.
-              </p>
-              <button
-                type="button"
-                onClick={() => onNavigate({ kind: 'order' })}
-                className="min-h-[44px] sm:min-h-[40px] px-5 py-2 rounded-xl bg-[#C83210] hover:bg-[#B02A0C] text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 self-start sm:self-auto focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
-              >
-                Оформить новый заказ →
-              </button>
+            <div data-testid="cabinet-empty-state" className="space-y-4">
+              {/* Компактная ценность кабинета для первого визита */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 pt-1">
+                <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-4 sm:p-5 space-y-1.5">
+                  <p className="font-mono text-[11px] font-semibold text-[#C83210] dark:text-[#FF6B47]">
+                    01 · БЕЗ ХАОСА В ЧАТАХ
+                  </p>
+                  <p className="text-sm font-bold text-[#111111] dark:text-[#F4F3EF]">
+                    Согласование сценария и правок по таймкоду
+                  </p>
+                  <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72 leading-relaxed">
+                    Фиксация текста, ударений и сносок ФЗ-38 плюс 1 сервисный раунд доводки ролика уже в цене.
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-4 sm:p-5 space-y-1.5">
+                  <p className="font-mono text-[11px] font-semibold text-[#C83210] dark:text-[#FF6B47]">
+                    02 · СТУДИЙНЫЙ ПЛЕЕР
+                  </p>
+                  <p className="text-sm font-bold text-[#111111] dark:text-[#F4F3EF]">
+                    A/B-сравнение версий и эфирный мастер WAV
+                  </p>
+                  <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72 leading-relaxed">
+                    Переключайте v1, v2 и мастер (−14 LUFS) с сохранением секунды прослушивания прямо в браузере.
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-4 sm:p-5 space-y-1.5">
+                  <p className="font-mono text-[11px] font-semibold text-[#C83210] dark:text-[#FF6B47]">
+                    03 · ДОКУМЕНТЫ В 1 КЛИК
+                  </p>
+                  <p className="text-sm font-bold text-[#111111] dark:text-[#F4F3EF]">
+                    Счёт, договор, акт и паспорт прав РАО/ВОИС
+                  </p>
+                  <p className="text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72 leading-relaxed">
+                    Автозаполнение реквизитов по ИНН (ФНС) и постоянный архив файлов для радиостанций и бухгалтерии.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl bg-[#EFECE5]/55 dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 px-5 py-4">
+                <p className="text-xs sm:text-sm text-[#111111]/78 dark:text-[#F4F3EF]/78">
+                  Ещё не оформляли заказ? Заявка создаётся за минуту — личный кабинет подключится к вашей почте автоматически без пароля.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => onNavigate({ kind: 'order' })}
+                  className="min-h-[44px] sm:min-h-[40px] px-5 py-2 rounded-xl bg-[#C83210] hover:bg-[#B02A0C] text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 self-start sm:self-auto focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+                >
+                  Оформить новый заказ →
+                </button>
+              </div>
             </div>
           ) : (
             <div
@@ -468,16 +551,16 @@ export function ClientCabinetPage({
             </div>
           )
         ) : (
-          <div className="space-y-7">
+          <div className="space-y-5">
             {/* WAI-ARIA tablist переключатель разделов с точной суммой счётчиков */}
             <div
               data-testid="cabinet-workspace-filter"
-              className="flex flex-wrap items-center justify-between gap-3"
+              className="flex flex-wrap items-center justify-between gap-2.5"
             >
               <div
                 role="tablist"
                 aria-label="Разделы личного кабинета"
-                className="inline-flex flex-wrap items-center gap-1 p-1 rounded-xl bg-[#EFECE5]/80 dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10"
+                className="w-full sm:w-auto flex sm:inline-flex items-center gap-0.5 sm:gap-1 p-1 rounded-xl bg-[#EFECE5]/80 dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 overflow-x-auto"
               >
                 {workspaceTabs.map((item, idx) => {
                   const active = ctrl.workspaceFilter === item.id;
@@ -496,7 +579,7 @@ export function ClientCabinetPage({
                       data-testid={`cabinet-filter-${item.id}`}
                       onKeyDown={(e) => handleWorkspaceTabKeyDown(e, idx)}
                       onClick={() => ctrl.selectWorkspaceFilter(item.id)}
-                      className={`min-h-[44px] sm:min-h-[36px] px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
+                      className={`flex-1 sm:flex-none min-h-[36px] sm:min-h-[34px] px-2 sm:px-3 py-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 tabular-nums text-center focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820] ${
                         active
                           ? 'bg-white dark:bg-[#0D0D0F] text-[#111111] dark:text-[#F4F3EF] border border-[#111111]/12 dark:border-white/14'
                           : 'text-[#111111]/74 dark:text-[#F4F3EF]/74 hover:text-[#111111] dark:hover:text-[#F4F3EF]'
@@ -523,28 +606,81 @@ export function ClientCabinetPage({
               </p>
             </div>
 
+            {/* Приоритетная сводка проектов, ожидающих решения клиента */}
+            {actionQueue.length > 0 && (
+              <section
+                aria-label="Проекты, ожидающие вашего решения"
+                data-testid="cabinet-action-queue"
+                className="rounded-xl bg-[#FFF8F6] dark:bg-[#191314] border border-[#C83210]/26 dark:border-[#FF6B47]/30 px-3.5 py-2.5 sm:px-4 sm:py-3 space-y-1.5 tabular-nums"
+              >
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="font-semibold text-[#C83210] dark:text-[#FF6B47]">
+                    Ждём вашего решения ({actionQueue.length})
+                  </span>
+                  <span className="hidden sm:inline text-[11px] text-[#111111]/66 dark:text-[#F4F3EF]/66">
+                    Перейти сразу к утверждению сценария или прослушиванию
+                  </span>
+                </div>
+
+                <ul className="divide-y divide-[#C83210]/12 dark:divide-white/10">
+                  {actionQueue.map((item) => (
+                    <li
+                      key={item.orderNumber}
+                      className="py-1.5 first:pt-0.5 last:pb-0 flex items-center justify-between gap-2.5 text-xs"
+                    >
+                      <div className="min-w-0 flex items-center gap-1.5 truncate">
+                        <span className="font-mono font-bold text-[#111111] dark:text-[#F4F3EF] shrink-0">
+                          #{item.orderNumber}
+                        </span>
+                        <span aria-hidden="true" className="text-[#111111]/45 dark:text-[#F4F3EF]/45 shrink-0">
+                          ·
+                        </span>
+                        <span className="text-[#111111]/82 dark:text-[#F4F3EF]/82 truncate">
+                          {item.title}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        data-testid={`cabinet-action-queue-jump-${item.orderNumber}`}
+                        onClick={() => handleJumpToOrder(item.orderNumber)}
+                        className="min-h-[34px] sm:min-h-[28px] px-1 text-xs font-semibold text-[#C83210] dark:text-[#FF6B47] hover:underline inline-flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+                      >
+                        <span>
+                          {item.actionKind === 'accept_spot'
+                            ? 'Прослушать и принять'
+                            : 'Утвердить сценарий'}
+                        </span>
+                        <ArrowRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
             <div
               id="cabinet-workspace-tabpanel"
               role="tabpanel"
               aria-labelledby={`cabinet-workspace-tab-${ctrl.workspaceFilter}`}
             >
-              <div key={ctrl.workspaceFilter} className="fmworks-panel-enter space-y-8">
+              <div key={ctrl.workspaceFilter} className="fmworks-panel-enter space-y-6">
               {/* ПРИОРИТЕТ 1 (ABOVE THE FOLD): АКТИВНЫЕ ЗАКАЗЫ В РАБОТЕ И НА ПРИЁМКЕ */}
               {ctrl.workspaceFilter !== 'history' &&
                 (ctrl.activeOrders.length > 0 ? (
-                  <div className="space-y-5">
+                  <div className="space-y-4">
                     {ctrl.workspaceFilter === 'all' && (
-                      <div className="space-y-1">
-                        <h2 className="text-lg sm:text-xl font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF]">
-                          Активные заказы: согласование, файлы и реквизиты ({ctrl.activeOrders.length})
+                      <div className="flex flex-wrap items-baseline justify-between gap-2">
+                        <h2 className="text-base sm:text-lg font-bold tracking-tight text-[#111111] dark:text-[#F4F3EF]">
+                          Активные заказы ({ctrl.activeOrders.length})
                         </h2>
-                        <p className="text-xs sm:text-sm text-[#111111]/74 dark:text-[#F4F3EF]/74">
-                          Проекты, требующие вашего решения по сценарию или готовому ролику, вынесены наверх списка.
+                        <p className="hidden sm:block text-xs text-[#111111]/68 dark:text-[#F4F3EF]/68">
+                          Проекты, требующие вашего решения, закреплены наверху
                         </p>
                       </div>
                     )}
 
-                    <div className="space-y-6">
+                    <div className="space-y-5">
                       {ctrl.activeOrders.map((order) => (
                         <CabinetOrderCard
                           key={order.orderNumber}
@@ -661,6 +797,9 @@ export function ClientCabinetPage({
                               order,
                               params
                             )
+                          }
+                          onOpenGuestReview={(reviewToken) =>
+                            onNavigate({ kind: 'guest-review', reviewToken })
                           }
                         />
                       ))}

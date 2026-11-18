@@ -5,6 +5,8 @@ import {
   ExternalLink,
   Mail,
   Plus,
+  RotateCcw,
+  Search,
   Send,
   Trash2,
   Users,
@@ -14,17 +16,23 @@ import { studioCmsStore } from '../../cms/studioCmsStore';
 import { formatFileSizeReadable } from '../../data/clientCabinetHelpers';
 import type { CrmOrderRecord } from '../../data/orderCrmTypes';
 import {
+  buildStudioQuickShareLinks,
   ensureOrderApprovalWorkflow,
   estimateRussianScriptDurationSec,
   evaluateBroadcastSlotFit,
+  evaluateOrderProductionSlaStatus,
+  filterProductionOrdersForStudioQueue,
   resolveStudioKanbanColumn,
   resolveWhoseTurn,
   SOUND_ENGINEER_EMAIL_CTA_LABEL,
   type SoundEngineerContact,
   type SoundEngineerEmailNotificationRecord,
   SPOT_REVISION_KIND_LABELS,
+  type SpotRevisionKind,
   STUDIO_KANBAN_COLUMNS,
+  STUDIO_REWORK_REASON_PRESETS,
   type StudioKanbanColumnId,
+  type StudioQueueTurnFilter,
 } from '../../data/productionApprovalWorkflow';
 import { formatRubCompact } from '../../data/radioInventory';
 import { resolveNextTabIdOnArrowKey } from '../../security/adminSessionStandards';
@@ -96,6 +104,8 @@ export function AdminProductionKanbanView({
   const [columnFilter, setColumnFilter] = useState<
     'all' | StudioKanbanColumnId
   >('all');
+  const [turnFilter, setTurnFilter] = useState<StudioQueueTurnFilter>('all');
+  const [kanbanSearchQuery, setKanbanSearchQuery] = useState<string>('');
 
   const handleKanbanTabKeyDown = (
     event: KeyboardEvent<HTMLButtonElement>,
@@ -136,15 +146,38 @@ export function AdminProductionKanbanView({
     useState<boolean>(false);
   const [dispatchedBundle, setDispatchedBundle] =
     useState<DispatchedEngineerBundle | null>(null);
-  const [copiedField, setCopiedField] = useState<'url' | 'sheet' | null>(null);
+  const [copiedField, setCopiedField] = useState<
+    'url' | 'sheet' | 'client_cabinet' | 'engineer_quick' | null
+  >(null);
 
-  // Публикация дубля из буфера ОТК клиенту
+  // Публикация или возврат дубля из буфера ОТК
   const [publishVersionByTake, setPublishVersionByTake] = useState<
     Record<string, 'v1' | 'v2' | 'master'>
   >({});
   const [isPublishingTakeId, setIsPublishingTakeId] = useState<string | null>(
     null
   );
+  const [rejectNoteByTake, setRejectNoteByTake] = useState<
+    Record<string, string>
+  >({});
+  const [rejectingTakeId, setRejectingTakeId] = useState<string | null>(null);
+  const [isRejectingTake, setIsRejectingTake] = useState<boolean>(false);
+
+  // Оперативный возврат заказа на доработку продюсером (звукорежиссёру или сценаристу)
+  const [isReworkDrawerOpen, setIsReworkDrawerOpen] = useState<boolean>(false);
+  const [producerRevisionKind, setProducerRevisionKind] =
+    useState<SpotRevisionKind>('balance_timecode');
+  const [producerRevisionTimecode, setProducerRevisionTimecode] =
+    useState<string>('');
+  const [producerRevisionComment, setProducerRevisionComment] =
+    useState<string>('');
+  const [isSendingProducerRevision, setIsSendingProducerRevision] =
+    useState<boolean>(false);
+  const [reopenScriptReasonDraft, setReopenScriptReasonDraft] =
+    useState<string>('');
+  const [isReopeningScript, setIsReopeningScript] = useState<boolean>(false);
+  const [isStageTimelineExpanded, setIsStageTimelineExpanded] =
+    useState<boolean>(false);
 
   // Решение продюсера по эскалации
   const [escalationNoteDraft, setEscalationNoteDraft] = useState<string>('');
@@ -177,12 +210,32 @@ export function AdminProductionKanbanView({
     return counts;
   }, [hydratedOrders]);
 
-  const visibleOrders = useMemo(() => {
-    if (columnFilter === 'all') return hydratedOrders;
-    return hydratedOrders.filter(
-      (ord) => resolveStudioKanbanColumn(ord.approvalWorkflow) === columnFilter
-    );
-  }, [columnFilter, hydratedOrders]);
+  const turnCounts = useMemo(() => {
+    let producer = 0;
+    let engineer = 0;
+    let client = 0;
+    let slaOverdue = 0;
+    for (const ord of hydratedOrders) {
+      const turn = resolveWhoseTurn(ord.approvalWorkflow);
+      if (turn.actor === 'producer') producer += 1;
+      else if (turn.actor === 'sound_engineer') engineer += 1;
+      else if (turn.actor === 'client') client += 1;
+      if (evaluateOrderProductionSlaStatus(ord).isOverdue) {
+        slaOverdue += 1;
+      }
+    }
+    return { producer, engineer, client, slaOverdue };
+  }, [hydratedOrders]);
+
+  const visibleOrders = useMemo(
+    () =>
+      filterProductionOrdersForStudioQueue(hydratedOrders, {
+        columnFilter,
+        turnFilter,
+        searchQuery: kanbanSearchQuery,
+      }),
+    [columnFilter, hydratedOrders, kanbanSearchQuery, turnFilter]
+  );
 
   const activeOrder = useMemo(() => {
     return (
@@ -581,15 +634,201 @@ export function AdminProductionKanbanView({
     }
   };
 
-  const copyTextHelper = async (text: string, field: 'url' | 'sheet') => {
+  const handleRejectTakeToEngineer = async (takeId: string) => {
+    if (!activeOrder || isRejectingTake) return;
+    const note = (rejectNoteByTake[takeId] ?? '').trim();
+    if (note.length < 3) {
+      onFeedback({
+        kind: 'error',
+        text: 'Укажите замечание ОТК для звукорежиссёра (минимум 3 символа).',
+      });
+      return;
+    }
+
+    setIsRejectingTake(true);
+    try {
+      const res = await fetch(
+        `/api/cms/orders/${encodeURIComponent(activeOrder.id)}/approval/reject-take`,
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            ...studioCmsStore.getAuthHeaders(),
+          },
+          body: JSON.stringify({
+            takeId,
+            note,
+            kind: 'balance_timecode',
+          }),
+        }
+      );
+      const json = (await res.json()) as {
+        ok?: boolean;
+        order?: CrmOrderRecord;
+        soundEngineerEmails?: SoundEngineerEmailNotificationRecord[];
+        error?: string;
+      };
+      if (!res.ok || !json.ok || !json.order) {
+        throw new Error(json.error ?? 'Не удалось вернуть дубль на доработку');
+      }
+      onOrderUpdated(json.order);
+      if (Array.isArray(json.soundEngineerEmails)) {
+        onSoundEngineerEmailsUpdated?.(json.soundEngineerEmails);
+      }
+      setRejectingTakeId(null);
+      setRejectNoteByTake((prev) => ({ ...prev, [takeId]: '' }));
+      onFeedback({
+        kind: 'ok',
+        text: `Дубль по заказу #${json.order.orderNumber} возвращён звукорежиссёру на доработку с замечанием ОТК и свежей ссылкой сдачи.`,
+      });
+    } catch (err) {
+      onFeedback({
+        kind: 'error',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Ошибка возврата дубля звукорежиссёру',
+      });
+    } finally {
+      setIsRejectingTake(false);
+    }
+  };
+
+  const handleSendProducerDirectRevision = async () => {
+    if (!activeOrder || isSendingProducerRevision) return;
+    const comment = producerRevisionComment.trim();
+    if (comment.length < 3) {
+      onFeedback({
+        kind: 'error',
+        text: 'Опишите задачу на доработку ролика для звукорежиссёра (минимум 3 символа).',
+      });
+      return;
+    }
+    const parsedTimecode = Number.parseFloat(
+      producerRevisionTimecode.replace(',', '.')
+    );
+    const timecodeSec =
+      Number.isFinite(parsedTimecode) && parsedTimecode >= 0
+        ? parsedTimecode
+        : null;
+
+    setIsSendingProducerRevision(true);
+    try {
+      const res = await fetch(
+        `/api/cms/orders/${encodeURIComponent(activeOrder.id)}/approval/producer-revision`,
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            ...studioCmsStore.getAuthHeaders(),
+          },
+          body: JSON.stringify({
+            kind: producerRevisionKind,
+            timecodeSec,
+            comment,
+          }),
+        }
+      );
+      const json = (await res.json()) as {
+        ok?: boolean;
+        order?: CrmOrderRecord;
+        soundEngineerEmails?: SoundEngineerEmailNotificationRecord[];
+        error?: string;
+      };
+      if (!res.ok || !json.ok || !json.order) {
+        throw new Error(
+          json.error ?? 'Не удалось отправить заказ на доработку звукорежиссёру'
+        );
+      }
+      onOrderUpdated(json.order);
+      if (Array.isArray(json.soundEngineerEmails)) {
+        onSoundEngineerEmailsUpdated?.(json.soundEngineerEmails);
+      }
+      setProducerRevisionComment('');
+      setProducerRevisionTimecode('');
+      setIsReworkDrawerOpen(false);
+      onFeedback({
+        kind: 'ok',
+        text: `Заказ #${json.order.orderNumber} возвращён звукорежиссёру на доработку — техлист и ссылка /sound-drop обновлены.`,
+      });
+    } catch (err) {
+      onFeedback({
+        kind: 'error',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Ошибка отправки задачи на доработку звука',
+      });
+    } finally {
+      setIsSendingProducerRevision(false);
+    }
+  };
+
+  const handleReopenScriptForRework = async () => {
+    if (!activeOrder || isReopeningScript) return;
+    setIsReopeningScript(true);
+    try {
+      const res = await fetch(
+        `/api/cms/orders/${encodeURIComponent(activeOrder.id)}/approval/reopen-script`,
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            ...studioCmsStore.getAuthHeaders(),
+          },
+          body: JSON.stringify({
+            reason:
+              reopenScriptReasonDraft.trim() ||
+              'Сценарий возвращён продюсером на корректировку текста',
+          }),
+        }
+      );
+      const json = (await res.json()) as {
+        ok?: boolean;
+        order?: CrmOrderRecord;
+        error?: string;
+      };
+      if (!res.ok || !json.ok || !json.order) {
+        throw new Error(
+          json.error ?? 'Не удалось вернуть сценарий на корректировку'
+        );
+      }
+      onOrderUpdated(json.order);
+      setReopenScriptReasonDraft('');
+      setIsReworkDrawerOpen(false);
+      onFeedback({
+        kind: 'ok',
+        text: `Сценарий по заказу #${json.order.orderNumber} разблокирован и переведён в колонку «01. Сценарий» для внесения правок.`,
+      });
+    } catch (err) {
+      onFeedback({
+        kind: 'error',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Ошибка возврата сценария на корректировку',
+      });
+    } finally {
+      setIsReopeningScript(false);
+    }
+  };
+
+  const copyTextHelper = async (
+    text: string,
+    field: 'url' | 'sheet' | 'client_cabinet' | 'engineer_quick'
+  ) => {
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
-        setCopiedField(field);
-        window.setTimeout(() => setCopiedField(null), 2000);
       }
+      setCopiedField(field);
+      window.setTimeout(() => setCopiedField(null), 2000);
     } catch {
-      setCopiedField(null);
+      setCopiedField(field);
+      window.setTimeout(() => setCopiedField(null), 2000);
     }
   };
 
@@ -696,6 +935,81 @@ export function AdminProductionKanbanView({
               </button>
             );
           })}
+        </div>
+
+        {/* Быстрый срез по очереди («Ваш ход», «У звукорежиссёра», «Ждём клиента») + строка поиска по цеху */}
+        <div className="pt-2 border-t border-[#111111]/10 dark:border-white/10 flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
+          <div
+            role="group"
+            aria-label="Срез очереди по ответственному"
+            className="inline-flex flex-wrap items-center gap-1.5"
+          >
+            {(
+              [
+                {
+                  id: 'all',
+                  label: `Вся очередь (${hydratedOrders.length})`,
+                },
+                {
+                  id: 'producer_turn',
+                  label: `Ваш ход · студия (${turnCounts.producer})`,
+                },
+                {
+                  id: 'engineer_turn',
+                  label: `У звукорежиссёра (${turnCounts.engineer})`,
+                },
+                {
+                  id: 'client_turn',
+                  label: `Ждём клиента (${turnCounts.client})`,
+                },
+                {
+                  id: 'sla_overdue',
+                  label: `Требуют внимания · SLA (${turnCounts.slaOverdue})`,
+                },
+              ] as const
+            ).map((tf) => {
+              const isTurnActive = turnFilter === tf.id;
+              return (
+                <button
+                  key={tf.id}
+                  type="button"
+                  data-testid={`kanban-turn-filter-${tf.id}`}
+                  aria-pressed={isTurnActive}
+                  onClick={() => setTurnFilter(tf.id)}
+                  className={`min-h-[34px] px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    isTurnActive
+                      ? tf.id === 'producer_turn' || tf.id === 'sla_overdue'
+                        ? 'bg-[#C83210] text-white border-[#C83210]'
+                        : 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:border-[#F4F3EF]'
+                      : tf.id === 'sla_overdue' && turnCounts.slaOverdue > 0
+                        ? 'bg-[#C83210]/8 dark:bg-[#FF7A5C]/12 border-[#C83210]/30 dark:border-[#FF7A5C]/30 text-[#B82D0D] dark:text-[#FF7A5C] hover:border-[#C83210]'
+                        : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] border-[#111111]/12 dark:border-white/12 text-[#111111]/82 dark:text-[#F4F3EF]/82 hover:border-[#C83210]'
+                  }`}
+                >
+                  {tf.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="relative min-w-[240px] lg:w-[320px]">
+            <label htmlFor="kanban-search-input" className="sr-only">
+              Поиск заказа в цехе озвучки
+            </label>
+            <Search
+              className="w-3.5 h-3.5 text-[#111111]/65 dark:text-[#F4F3EF]/65 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+              aria-hidden="true"
+            />
+            <input
+              id="kanban-search-input"
+              data-testid="kanban-search-input"
+              type="search"
+              value={kanbanSearchQuery}
+              onChange={(e) => setKanbanSearchQuery(e.target.value)}
+              placeholder="Поиск по #FM-..., компании, ИНН или тексту…"
+              className="w-full min-h-[36px] pl-8 pr-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 text-xs text-[#111111] dark:text-[#F4F3EF]"
+            />
+          </div>
         </div>
 
         {/* Раскрывающийся справочник внешних звукорежиссёров (смена за 5 секунд без обучения CRM) */}
@@ -845,11 +1159,15 @@ export function AdminProductionKanbanView({
           {visibleOrders.length === 0 ? (
             <div className="p-6 text-center space-y-2">
               <p className="text-xs font-semibold text-[#111111] dark:text-[#F4F3EF]">
-                В выбранной колонке сейчас нет заказов
+                По выбранным фильтрам сейчас нет заказов
               </p>
               <button
                 type="button"
-                onClick={() => setColumnFilter('all')}
+                onClick={() => {
+                  setColumnFilter('all');
+                  setTurnFilter('all');
+                  setKanbanSearchQuery('');
+                }}
                 className="min-h-[32px] px-3 py-1 rounded-lg text-xs font-semibold text-[#B82D0D] dark:text-[#FF7A5C] hover:underline cursor-pointer"
               >
                 Показать все заказы ({hydratedOrders.length})
@@ -865,6 +1183,7 @@ export function AdminProductionKanbanView({
               const pendingQcCount = wf.pendingEngineerTakes.filter(
                 (t) => t.status === 'pending_qc'
               ).length;
+              const sla = evaluateOrderProductionSlaStatus(ord);
 
               return (
                 <button
@@ -891,18 +1210,34 @@ export function AdminProductionKanbanView({
                     {ord.companyOrInn || ord.contact}
                   </p>
 
-                  <p
-                    className={`text-[11px] font-semibold ${
-                      turn.actor === 'producer'
-                        ? 'text-[#B82D0D] dark:text-[#FF7A5C]'
-                        : turn.actor === 'completed'
-                          ? 'text-[#166534] dark:text-[#4ADE80]'
-                          : 'text-[#111111]/72 dark:text-[#F4F3EF]/72'
-                    }`}
-                  >
-                    {turn.labelForProducer}
-                    {pendingQcCount > 0 ? ` · дублей в ОТК: ${pendingQcCount}` : ''}
-                  </p>
+                  <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
+                    <p
+                      className={`text-[11px] font-semibold ${
+                        turn.actor === 'producer'
+                          ? 'text-[#B82D0D] dark:text-[#FF7A5C]'
+                          : turn.actor === 'completed'
+                            ? 'text-[#166534] dark:text-[#4ADE80]'
+                            : 'text-[#111111]/72 dark:text-[#F4F3EF]/72'
+                      }`}
+                    >
+                      {turn.labelForProducer}
+                      {pendingQcCount > 0 ? ` · дублей в ОТК: ${pendingQcCount}` : ''}
+                    </p>
+                    {sla.level !== 'completed' && (
+                      <span
+                        data-testid={`kanban-order-sla-${ord.orderNumber}`}
+                        className={`text-[11px] font-semibold ${
+                          sla.level === 'overdue'
+                            ? 'text-[#B91C1C] dark:text-[#F87171]'
+                            : sla.level === 'warning'
+                              ? 'text-[#92400E] dark:text-[#FBBF24]'
+                              : 'text-[#111111]/55 dark:text-[#F4F3EF]/55'
+                        }`}
+                      >
+                        {sla.shortLabel}
+                      </span>
+                    )}
+                  </div>
                 </button>
               );
             })
@@ -910,12 +1245,30 @@ export function AdminProductionKanbanView({
         </div>
 
         {/* Правый пульт управления конвейером выбранного заказа */}
-        {activeOrder && (
+        {activeOrder && (() => {
+          const activeSla = evaluateOrderProductionSlaStatus(activeOrder);
+          const latestOrderEmail = soundEngineerEmails.find(
+            (m) => m.orderId === activeOrder.id
+          );
+          const quickLinks = buildStudioQuickShareLinks({
+            origin:
+              typeof window !== 'undefined'
+                ? window.location.origin
+                : 'https://fmworks.ru',
+            dispatchedDropUrl:
+              dispatchedBundle && dispatchedBundle.orderId === activeOrder.id
+                ? dispatchedBundle.dropUrl
+                : null,
+            latestEngineerEmailActionPath:
+              latestOrderEmail?.emailActionPath ?? null,
+          });
+
+          return (
           <div
             data-testid={`kanban-inspector-${activeOrder.orderNumber}`}
             className="lg:col-span-8 rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 p-5 sm:p-6 space-y-6"
           >
-            {/* Шапка выбранного заказа */}
+            {/* Шапка выбранного заказа + быстрые ссылки + кнопка оперативного возврата на доработку */}
             <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-[#111111]/10 dark:border-white/10">
               <div className="space-y-1">
                 <div className="flex flex-wrap items-center gap-2 text-xs text-[#111111]/72 dark:text-[#F4F3EF]/72">
@@ -928,6 +1281,23 @@ export function AdminProductionKanbanView({
                   <span className="font-semibold text-[#B82D0D] dark:text-[#FF7A5C]">
                     {resolveWhoseTurn(activeOrder.approvalWorkflow).labelForProducer}
                   </span>
+                  {activeSla.level !== 'completed' && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span
+                        data-testid="kanban-active-order-sla"
+                        className={`font-semibold ${
+                          activeSla.level === 'overdue'
+                            ? 'text-[#B91C1C] dark:text-[#F87171]'
+                            : activeSla.level === 'warning'
+                              ? 'text-[#92400E] dark:text-[#FBBF24]'
+                              : 'text-[#111111]/65 dark:text-[#F4F3EF]/65'
+                        }`}
+                      >
+                        {activeSla.shortLabel}
+                      </span>
+                    </>
+                  )}
                 </div>
                 <h3 className="text-lg font-bold text-[#111111] dark:text-[#F4F3EF]">
                   {activeOrder.companyOrInn || activeOrder.contact}
@@ -942,18 +1312,259 @@ export function AdminProductionKanbanView({
                   </strong>
                 </p>
               </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="kanban-copy-client-cabinet-link"
+                  onClick={() =>
+                    void copyTextHelper(
+                      quickLinks.clientCabinetUrl,
+                      'client_cabinet'
+                    )
+                  }
+                  className="min-h-[38px] px-3 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] bg-[#F7F6F2] dark:bg-[#0D0D0F] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  {copiedField === 'client_cabinet' ? (
+                    <Check
+                      className="w-3.5 h-3.5 text-[#166534] dark:text-[#4ADE80] shrink-0"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  )}
+                  <span>
+                    {copiedField === 'client_cabinet'
+                      ? 'Ссылка ЛК скопирована'
+                      : 'Ссылка ЛК клиента'}
+                  </span>
+                </button>
+
+                {quickLinks.engineerDropUrl && (
+                  <button
+                    type="button"
+                    data-testid="kanban-copy-engineer-drop-link"
+                    onClick={() =>
+                      void copyTextHelper(
+                        quickLinks.engineerDropUrl!,
+                        'engineer_quick'
+                      )
+                    }
+                    className="min-h-[38px] px-3 py-1.5 rounded-xl border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] bg-[#F7F6F2] dark:bg-[#0D0D0F] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    {copiedField === 'engineer_quick' ? (
+                      <Check
+                        className="w-3.5 h-3.5 text-[#166534] dark:text-[#4ADE80] shrink-0"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    )}
+                    <span>
+                      {copiedField === 'engineer_quick'
+                        ? 'Шлюз скопирован'
+                        : 'Шлюз звукорежиссёра'}
+                    </span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  data-testid="kanban-toggle-rework-drawer-btn"
+                  onClick={() => setIsReworkDrawerOpen((prev) => !prev)}
+                  className={`min-h-[38px] px-3.5 py-1.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    isReworkDrawerOpen
+                      ? 'bg-[#111111] text-white border-[#111111] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:border-[#F4F3EF]'
+                      : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] border-[#111111]/16 dark:border-white/16 text-[#111111] dark:text-[#F4F3EF] hover:border-[#C83210]'
+                  }`}
+                >
+                  <RotateCcw className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  <span>
+                    {isReworkDrawerOpen
+                      ? 'Скрыть панель доработки'
+                      : 'Вернуть на доработку'}
+                  </span>
+                </button>
+              </div>
             </div>
 
-            {/* Визуальная история перемещений заказа по этапам */}
-            <OrderStageHistoryTimeline
-              order={activeOrder}
-              assignedEngineerName={
-                soundEngineers.find(
-                  (eng) => eng.id === activeOrder.approvalWorkflow.assignedEngineerId
-                )?.name ?? null
-              }
-              compact
-            />
+            {/* Раскрывающаяся панель оперативного возврата заказа на доработку продюсером */}
+            {isReworkDrawerOpen && (
+              <section
+                data-testid="kanban-producer-rework-drawer"
+                className="p-4 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 space-y-4"
+              >
+                <div className="space-y-0.5">
+                  <h4 className="text-xs sm:text-sm font-bold text-[#111111] dark:text-[#F4F3EF]">
+                    Оперативный возврат заказа на доработку (по решению продюсера или звонку клиента)
+                  </h4>
+                  <p className="text-[11px] text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                    Отправьте задачу напрямую звукорежиссёру с обновлением техлиста{' '}
+                    <code className="font-mono">/sound-drop</code> или верните
+                    утверждённый сценарий в черновик для правки текста.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  {/* Левая карточка: возврат звукорежиссёру на доработку звука */}
+                  <div className="p-3.5 rounded-xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 space-y-2.5">
+                    <p className="text-xs font-bold text-[#111111] dark:text-[#F4F3EF]">
+                      А. Вернуть звукорежиссёру на доработку звука
+                    </p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div className="sm:col-span-2">
+                        <label
+                          htmlFor="kanban-producer-rev-kind"
+                          className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                        >
+                          Тип доработки
+                        </label>
+                        <select
+                          id="kanban-producer-rev-kind"
+                          data-testid="kanban-producer-rev-kind-select"
+                          value={producerRevisionKind}
+                          onChange={(e) =>
+                            setProducerRevisionKind(
+                              e.target.value as SpotRevisionKind
+                            )
+                          }
+                          className="w-full min-h-[36px] px-2.5 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                        >
+                          <option value="balance_timecode">
+                            {SPOT_REVISION_KIND_LABELS.balance_timecode}
+                          </option>
+                          <option value="music_replacement">
+                            {SPOT_REVISION_KIND_LABELS.music_replacement}
+                          </option>
+                          <option value="text_change_escalation">
+                            {SPOT_REVISION_KIND_LABELS.text_change_escalation}
+                          </option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="kanban-producer-rev-timecode"
+                          className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                        >
+                          Таймкод, с
+                        </label>
+                        <input
+                          id="kanban-producer-rev-timecode"
+                          data-testid="kanban-producer-rev-timecode-input"
+                          type="text"
+                          inputMode="decimal"
+                          value={producerRevisionTimecode}
+                          onChange={(e) =>
+                            setProducerRevisionTimecode(e.target.value)
+                          }
+                          placeholder="напр. 12.5"
+                          className="w-full min-h-[36px] px-2.5 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs tabular-nums"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="kanban-producer-rev-comment"
+                        className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                      >
+                        Задание звукорежиссёру в техлист
+                      </label>
+                      <input
+                        id="kanban-producer-rev-comment"
+                        data-testid="kanban-producer-rev-comment-input"
+                        type="text"
+                        value={producerRevisionComment}
+                        onChange={(e) =>
+                          setProducerRevisionComment(e.target.value)
+                        }
+                        placeholder="Напр.: сделать музыку тише на −3 дБ под телефоном и свести ровно в 20,00 с"
+                        className="w-full min-h-[36px] px-2.5 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                      />
+                      <div className="flex flex-wrap items-center gap-1.5 pt-2">
+                        {STUDIO_REWORK_REASON_PRESETS.map((preset, idx) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            data-testid={`kanban-rework-preset-${idx}`}
+                            onClick={() => setProducerRevisionComment(preset)}
+                            className="px-2 py-1 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 hover:border-[#C83210] text-[11px] font-medium text-[#111111]/82 dark:text-[#F4F3EF]/82 transition-colors cursor-pointer text-left"
+                          >
+                            {preset}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={isSendingProducerRevision}
+                      data-testid="kanban-producer-rev-submit-btn"
+                      onClick={() => void handleSendProducerDirectRevision()}
+                      className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap disabled:opacity-50"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                      <span>
+                        {isSendingProducerRevision
+                          ? 'Отправка в цех…'
+                          : 'Отправить звукорежиссёру на доработку'}
+                      </span>
+                    </button>
+                  </div>
+
+                  {/* Правая карточка: возврат сценария на корректировку текста */}
+                  <div className="p-3.5 rounded-xl bg-white dark:bg-[#141418] border border-[#111111]/10 dark:border-white/10 flex flex-col justify-between space-y-2.5">
+                    <div className="space-y-2">
+                      <p className="text-xs font-bold text-[#111111] dark:text-[#F4F3EF]">
+                        Б. Вернуть сценарий на корректировку текста
+                      </p>
+                      <p className="text-[11px] text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                        Снимает фиксацию утверждённого сценария и возвращает заказ
+                        в колонку «01. Сценарий» для выпуска обновлённой версии текста.
+                      </p>
+                      <div>
+                        <label
+                          htmlFor="kanban-reopen-script-reason"
+                          className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                        >
+                          Пометка для редактора и истории заказа
+                        </label>
+                        <input
+                          id="kanban-reopen-script-reason"
+                          data-testid="kanban-reopen-script-reason-input"
+                          type="text"
+                          value={reopenScriptReasonDraft}
+                          onChange={(e) =>
+                            setReopenScriptReasonDraft(e.target.value)
+                          }
+                          placeholder="Напр.: обновляем дату акции и номер телефона по просьбе клиента"
+                          className="w-full min-h-[36px] px-2.5 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <button
+                        type="button"
+                        disabled={isReopeningScript}
+                        data-testid="kanban-reopen-script-submit-btn"
+                        onClick={() => void handleReopenScriptForRework()}
+                        className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#111111] hover:bg-[#C83210] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#C83210] dark:hover:text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap disabled:opacity-50"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                        <span>
+                          {isReopeningScript
+                            ? 'Возврат сценария…'
+                            : 'Разблокировать сценарий для правки'}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
 
             {/* БЛОК А: Буфер ОТК продюсера (если звукорежиссёр загрузил дубль по прямой ссылке) */}
             {activeOrder.approvalWorkflow.pendingEngineerTakes.filter(
@@ -979,6 +1590,7 @@ export function AdminProductionKanbanView({
                         take.targetSlotSec
                       );
                       const chosenVer = publishVersionByTake[take.id] ?? 'v1';
+                      const isRejectFormOpen = rejectingTakeId === take.id;
 
                       return (
                         <div
@@ -1044,21 +1656,103 @@ export function AdminProductionKanbanView({
                               ))}
                             </div>
 
-                            <button
-                              type="button"
-                              disabled={isPublishingTakeId === take.id}
-                              data-testid={`kanban-publish-take-btn-${take.id}`}
-                              onClick={() => void handlePublishTakeToClient(take.id)}
-                              className="min-h-[38px] px-4 py-1.5 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
-                            >
-                              <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
-                              <span>
-                                {isPublishingTakeId === take.id
-                                  ? 'Публикация…'
-                                  : 'Опубликовать клиенту'}
-                              </span>
-                            </button>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                data-testid={`kanban-toggle-reject-take-btn-${take.id}`}
+                                onClick={() =>
+                                  setRejectingTakeId((prev) =>
+                                    prev === take.id ? null : take.id
+                                  )
+                                }
+                                className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#C83210] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+                                <span>
+                                  {isRejectFormOpen
+                                    ? 'Отмена возврата'
+                                    : 'На доработку звукорежиссёру'}
+                                </span>
+                              </button>
+
+                              <button
+                                type="button"
+                                disabled={isPublishingTakeId === take.id}
+                                data-testid={`kanban-publish-take-btn-${take.id}`}
+                                onClick={() => void handlePublishTakeToClient(take.id)}
+                                className="min-h-[38px] px-4 py-1.5 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
+                                <span>
+                                  {isPublishingTakeId === take.id
+                                    ? 'Публикация…'
+                                    : 'Опубликовать клиенту'}
+                                </span>
+                              </button>
+                            </div>
                           </div>
+
+                          {isRejectFormOpen && (
+                            <div
+                              data-testid={`kanban-reject-take-form-${take.id}`}
+                              className="p-3 rounded-xl bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 space-y-2"
+                            >
+                              <label
+                                htmlFor={`kanban-reject-note-${take.id}`}
+                                className="block text-[11px] font-semibold text-[#111111] dark:text-[#F4F3EF]"
+                              >
+                                Замечание ОТК продюсера (уйдёт в техлист и обновит задачу{' '}
+                                <code className="font-mono">/sound-drop</code>):
+                              </label>
+                              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                                <input
+                                  id={`kanban-reject-note-${take.id}`}
+                                  data-testid={`kanban-reject-take-note-input-${take.id}`}
+                                  type="text"
+                                  value={rejectNoteByTake[take.id] ?? ''}
+                                  onChange={(e) =>
+                                    setRejectNoteByTake((prev) => ({
+                                      ...prev,
+                                      [take.id]: e.target.value,
+                                    }))
+                                  }
+                                  placeholder="Напр.: подрезать хвост под слот ±0,05 с и прибрать музыку на 12-й секунде"
+                                  className="flex-1 min-h-[36px] px-3 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                                />
+                                <button
+                                  type="button"
+                                  disabled={isRejectingTake}
+                                  data-testid={`kanban-confirm-reject-take-btn-${take.id}`}
+                                  onClick={() =>
+                                    void handleRejectTakeToEngineer(take.id)
+                                  }
+                                  className="min-h-[36px] px-3.5 py-1.5 rounded-lg bg-[#111111] hover:bg-[#C83210] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#C83210] dark:hover:text-white text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+                                >
+                                  {isRejectingTake
+                                    ? 'Возврат…'
+                                    : 'Вернуть звукорежиссёру'}
+                                </button>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                                {STUDIO_REWORK_REASON_PRESETS.map((preset, idx) => (
+                                  <button
+                                    key={preset}
+                                    type="button"
+                                    data-testid={`kanban-qc-preset-${take.id}-${idx}`}
+                                    onClick={() =>
+                                      setRejectNoteByTake((prev) => ({
+                                        ...prev,
+                                        [take.id]: preset,
+                                      }))
+                                    }
+                                    className="px-2 py-1 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 hover:border-[#C83210] text-[11px] font-medium text-[#111111]/82 dark:text-[#F4F3EF]/82 transition-colors cursor-pointer text-left"
+                                  >
+                                    {preset}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -1152,7 +1846,189 @@ export function AdminProductionKanbanView({
               </section>
             )}
 
-            {/* БЛОК В: Шлюз звукорежиссёра (Почта / Telegram + однокнопочная ссылка /sound-drop) */}
+            {/* БЛОК 01: Подготовка и публикация режиссёрского сценария клиенту (стоит первым на экране!) */}
+            <section
+              data-testid="kanban-script-editor-section"
+              className="space-y-3 pb-5 border-b border-[#111111]/10 dark:border-white/10"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-xs sm:text-sm font-bold text-[#111111] dark:text-[#F4F3EF]">
+                  01. Режиссёрский сценарий для клиента (без промежуточных кастингов)
+                </h4>
+                <span className="text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
+                  Хронометраж текста: ~{chronoPreview.estimatedSec} с (
+                  {chronoPreview.wordsCount} сл.) при слоте {targetSlotDraft} с
+                </span>
+              </div>
+
+              {activeOrder.approvalWorkflow.scriptVersions[0]?.clientComment && (
+                <div className="p-3 rounded-xl bg-[#C83210]/10 text-xs space-y-0.5">
+                  <p className="font-bold text-[#B82D0D] dark:text-[#FF7A5C]">
+                    Замечание к сценарию v
+                    {activeOrder.approvalWorkflow.scriptVersions[0].versionNumber}:
+                  </p>
+                  <p className="text-[#111111] dark:text-[#F4F3EF]">
+                    «{activeOrder.approvalWorkflow.scriptVersions[0].clientComment}»
+                  </p>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                <div>
+                  <label
+                    htmlFor="kanban-target-slot"
+                    className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                  >
+                    Эфирный слот
+                  </label>
+                  <select
+                    id="kanban-target-slot"
+                    value={targetSlotDraft}
+                    onChange={(e) =>
+                      setTargetSlotDraft(Number.parseInt(e.target.value, 10) || 20)
+                    }
+                    className="w-full min-h-[38px] px-3 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs font-semibold"
+                  >
+                    <option value={10}>10,00 секунд</option>
+                    <option value={15}>15,00 секунд</option>
+                    <option value={20}>20,00 секунд</option>
+                    <option value={30}>30,00 секунд</option>
+                  </select>
+                </div>
+
+                <div className="sm:col-span-3">
+                  <label
+                    htmlFor="kanban-concept1-title"
+                    className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                  >
+                    Название концепции
+                  </label>
+                  <input
+                    id="kanban-concept1-title"
+                    type="text"
+                    value={concept1Title}
+                    onChange={(e) => setConcept1Title(e.target.value)}
+                    className="w-full min-h-[38px] px-3 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="kanban-concept1-body"
+                  className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                >
+                  Чистовой текст ролика для озвучивания
+                </label>
+                <textarea
+                  id="kanban-concept1-body"
+                  rows={3}
+                  data-testid="kanban-script-body-input"
+                  value={concept1Body}
+                  onChange={(e) => setConcept1Body(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs sm:text-sm"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label
+                    htmlFor="kanban-concept1-stresses"
+                    className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                  >
+                    Ударения и произношение брендов
+                  </label>
+                  <input
+                    id="kanban-concept1-stresses"
+                    type="text"
+                    value={concept1Stresses}
+                    onChange={(e) => setConcept1Stresses(e.target.value)}
+                    placeholder="напр. Трансфло́т, ли́зинг"
+                    className="w-full min-h-[38px] px-3 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="kanban-concept1-disclaimer"
+                    className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                  >
+                    Обязательный дисклеймер ФЗ-38
+                  </label>
+                  <input
+                    id="kanban-concept1-disclaimer"
+                    type="text"
+                    value={concept1Disclaimer}
+                    onChange={(e) => setConcept1Disclaimer(e.target.value)}
+                    placeholder="напр. ООО «Компания». Подробности на сайте."
+                    className="w-full min-h-[38px] px-3 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="kanban-concept1-approach"
+                  className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
+                >
+                  Режиссёрская экспликация студии (характер диктора и музыки)
+                </label>
+                <input
+                  id="kanban-concept1-approach"
+                  type="text"
+                  value={concept1Approach}
+                  onChange={(e) => setConcept1Approach(e.target.value)}
+                  className="w-full min-h-[38px] px-3 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                />
+              </div>
+
+              {showConcept2 && (
+                <div className="pt-3 border-t border-[#111111]/10 dark:border-white/10 space-y-2.5">
+                  <input
+                    type="text"
+                    aria-label="Название второго варианта сценария"
+                    value={concept2Title}
+                    onChange={(e) => setConcept2Title(e.target.value)}
+                    placeholder="Название варианта 2"
+                    className="w-full min-h-[36px] px-3 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                  />
+                  <textarea
+                    rows={2}
+                    aria-label="Текст второго варианта сценария"
+                    value={concept2Body}
+                    onChange={(e) => setConcept2Body(e.target.value)}
+                    placeholder="Текст второго варианта сценария…"
+                    className="w-full px-3 py-2 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
+                  />
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowConcept2((prev) => !prev)}
+                  className="min-h-[36px] px-3 py-1.5 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  {showConcept2
+                    ? 'Оставить 1 основной вариант'
+                    : '+ Добавить вариант 2 (на выбор)'}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isPublishingScript}
+                  data-testid="kanban-publish-script-btn"
+                  onClick={() => void handlePublishScript()}
+                  className="min-h-[40px] px-4 py-2 rounded-xl bg-[#111111] hover:bg-[#C83210] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#C83210] dark:hover:text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+                >
+                  {isPublishingScript
+                    ? 'Публикация…'
+                    : 'Опубликовать сценарий клиенту'}
+                </button>
+              </div>
+            </section>
+
+            {/* БЛОК 02: Шлюз звукорежиссёра (Почта / Telegram + однокнопочная ссылка /sound-drop) */}
             <section
               data-testid="kanban-sound-dispatch-section"
               className="space-y-3 pb-5 border-b border-[#111111]/10 dark:border-white/10"
@@ -1354,189 +2230,40 @@ export function AdminProductionKanbanView({
               })()}
             </section>
 
-            {/* БЛОК Г: Подготовка и публикация режиссёрского сценария клиенту */}
-            <section
-              data-testid="kanban-script-editor-section"
-              className="space-y-3"
-            >
+            {/* Компактная сворачиваемая история перемещений по этапам внизу карточки цеха */}
+            <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h4 className="text-xs sm:text-sm font-bold text-[#111111] dark:text-[#F4F3EF]">
-                  01. Режиссёрский сценарий для клиента (без промежуточных кастингов)
-                </h4>
-                <span className="text-xs font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72">
-                  Хронометраж текста: ~{chronoPreview.estimatedSec} с (
-                  {chronoPreview.wordsCount} сл.) при слоте {targetSlotDraft} с
-                </span>
-              </div>
-
-              {activeOrder.approvalWorkflow.scriptVersions[0]?.clientComment && (
-                <div className="p-3 rounded-xl bg-[#C83210]/10 text-xs space-y-0.5">
-                  <p className="font-bold text-[#B82D0D] dark:text-[#FF7A5C]">
-                    Замечание клиента к сценарию v
-                    {activeOrder.approvalWorkflow.scriptVersions[0].versionNumber}:
-                  </p>
-                  <p className="text-[#111111] dark:text-[#F4F3EF]">
-                    «{activeOrder.approvalWorkflow.scriptVersions[0].clientComment}»
-                  </p>
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
-                <div>
-                  <label
-                    htmlFor="kanban-target-slot"
-                    className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
-                  >
-                    Эфирный слот
-                  </label>
-                  <select
-                    id="kanban-target-slot"
-                    value={targetSlotDraft}
-                    onChange={(e) =>
-                      setTargetSlotDraft(Number.parseInt(e.target.value, 10) || 20)
-                    }
-                    className="w-full min-h-[38px] px-3 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs font-semibold"
-                  >
-                    <option value={10}>10,00 секунд</option>
-                    <option value={15}>15,00 секунд</option>
-                    <option value={20}>20,00 секунд</option>
-                    <option value={30}>30,00 секунд</option>
-                  </select>
-                </div>
-
-                <div className="sm:col-span-3">
-                  <label
-                    htmlFor="kanban-concept1-title"
-                    className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
-                  >
-                    Название концепции
-                  </label>
-                  <input
-                    id="kanban-concept1-title"
-                    type="text"
-                    value={concept1Title}
-                    onChange={(e) => setConcept1Title(e.target.value)}
-                    className="w-full min-h-[38px] px-3 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="kanban-concept1-body"
-                  className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
-                >
-                  Чистовой текст ролика для озвучивания
-                </label>
-                <textarea
-                  id="kanban-concept1-body"
-                  rows={3}
-                  data-testid="kanban-script-body-input"
-                  value={concept1Body}
-                  onChange={(e) => setConcept1Body(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs sm:text-sm"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <div>
-                  <label
-                    htmlFor="kanban-concept1-stresses"
-                    className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
-                  >
-                    Ударения и произношение брендов
-                  </label>
-                  <input
-                    id="kanban-concept1-stresses"
-                    type="text"
-                    value={concept1Stresses}
-                    onChange={(e) => setConcept1Stresses(e.target.value)}
-                    placeholder="напр. Трансфло́т, ли́зинг"
-                    className="w-full min-h-[38px] px-3 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="kanban-concept1-disclaimer"
-                    className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
-                  >
-                    Обязательный дисклеймер ФЗ-38
-                  </label>
-                  <input
-                    id="kanban-concept1-disclaimer"
-                    type="text"
-                    value={concept1Disclaimer}
-                    onChange={(e) => setConcept1Disclaimer(e.target.value)}
-                    placeholder="напр. ООО «Компания». Подробности на сайте."
-                    className="w-full min-h-[38px] px-3 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="kanban-concept1-approach"
-                  className="block text-[11px] font-medium text-[#111111]/72 dark:text-[#F4F3EF]/72 mb-1"
-                >
-                  Режиссёрская экспликация студии (характер диктора и музыки)
-                </label>
-                <input
-                  id="kanban-concept1-approach"
-                  type="text"
-                  value={concept1Approach}
-                  onChange={(e) => setConcept1Approach(e.target.value)}
-                  className="w-full min-h-[38px] px-3 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
-                />
-              </div>
-
-              {showConcept2 && (
-                <div className="pt-3 border-t border-[#111111]/10 dark:border-white/10 space-y-2.5">
-                  <input
-                    type="text"
-                    aria-label="Название второго варианта сценария"
-                    value={concept2Title}
-                    onChange={(e) => setConcept2Title(e.target.value)}
-                    placeholder="Название варианта 2"
-                    className="w-full min-h-[36px] px-3 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
-                  />
-                  <textarea
-                    rows={2}
-                    aria-label="Текст второго варианта сценария"
-                    value={concept2Body}
-                    onChange={(e) => setConcept2Body(e.target.value)}
-                    placeholder="Текст второго варианта сценария…"
-                    className="w-full px-3 py-2 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs"
-                  />
-                </div>
-              )}
-
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <p className="text-xs font-semibold text-[#111111]/78 dark:text-[#F4F3EF]/78">
+                  Журнал перемещений заказа по этапам ({activeOrder.stageHistory?.length ?? 1} зап.)
+                </p>
                 <button
                   type="button"
-                  onClick={() => setShowConcept2((prev) => !prev)}
-                  className="min-h-[36px] px-3 py-1.5 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0"
+                  data-testid="kanban-toggle-stage-history-btn"
+                  onClick={() => setIsStageTimelineExpanded((prev) => !prev)}
+                  className="min-h-[32px] px-3 py-1 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] cursor-pointer whitespace-nowrap"
                 >
-                  {showConcept2
-                    ? 'Оставить 1 основной вариант'
-                    : '+ Добавить вариант 2 (на выбор)'}
-                </button>
-
-                <button
-                  type="button"
-                  disabled={isPublishingScript}
-                  data-testid="kanban-publish-script-btn"
-                  onClick={() => void handlePublishScript()}
-                  className="min-h-[40px] px-4 py-2 rounded-xl bg-[#111111] hover:bg-[#C83210] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F] dark:hover:bg-[#C83210] dark:hover:text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
-                >
-                  {isPublishingScript
-                    ? 'Публикация…'
-                    : 'Опубликовать сценарий клиенту'}
+                  {isStageTimelineExpanded
+                    ? 'Свернуть журнал этапов'
+                    : 'Развернуть журнал этапов'}
                 </button>
               </div>
-            </section>
+
+              {isStageTimelineExpanded && (
+                <OrderStageHistoryTimeline
+                  order={activeOrder}
+                  assignedEngineerName={
+                    soundEngineers.find(
+                      (eng) =>
+                        eng.id === activeOrder.approvalWorkflow.assignedEngineerId
+                    )?.name ?? null
+                  }
+                  compact
+                />
+              )}
+            </div>
           </div>
-        )}
+          );
+        })()}
       </div>
     </div>
   );

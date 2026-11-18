@@ -943,3 +943,432 @@ export function verifyClientAttachmentMagicBytes(
   return { ok: true };
 }
 
+/**
+ * Убирает дублирующий хвост цены из названия формата («Продакшн под ключ (20 сек) — 25 000 ₽» -> «Продакшн под ключ (20 сек)»),
+ * когда итоговый бюджет уже выводится крупным числом в правой части шапки карточки.
+ */
+export function stripTrailingPriceFromOrderTitle(
+  formatLabel: string,
+  totalBudgetRub?: number | null
+): string {
+  const clean = (formatLabel || '').trim();
+  if (!clean) return '';
+  if (typeof totalBudgetRub === 'number' && totalBudgetRub <= 0) {
+    return clean;
+  }
+  const stripped = clean
+    .replace(/\s*[—–-]\s*\d[\d\s\u00a0]*\s*(?:₽|руб\.?|р\.?)\s*$/iu, '')
+    .trim();
+  return stripped || clean;
+}
+
+/**
+ * Показывает кнопку «Повторить заказ» только для принятых, эфирных или завершённых проектов,
+ * чтобы не сбивать клиента предложением повторить ролик, который ещё не записан.
+ */
+export function shouldShowRepeatOrderAction(
+  order: Pick<ClientCabinetOrderSummary, 'stage' | 'approvalWorkflow'>
+): boolean {
+  if (order.stage === 'completed_ltv' || order.stage === 'on_air') {
+    return true;
+  }
+  return order.approvalWorkflow?.phase === 'accepted';
+}
+
+/**
+ * На этапе 03 (приёмка готового ролика до окончательного утверждения) аудиоплеер
+ * и версии ролика должны идти выше кнопок «Принять готовый ролик / Внести поправку».
+ */
+export function shouldShowAudioBeforeApprovalActions(
+  workflow?: Pick<
+    NonNullable<ClientCabinetOrderSummary['approvalWorkflow']>,
+    'externalStep' | 'phase'
+  > | null
+): boolean {
+  if (!workflow) return false;
+  return workflow.externalStep === '03_spot' && workflow.phase !== 'accepted';
+}
+
+export interface ClientActionQueueItem {
+  orderNumber: string;
+  title: string;
+  actionKind: 'approve_script' | 'accept_spot';
+  actionLabel: string;
+  stageShortLabel: string;
+}
+
+/**
+ * Формирует приоритетную очередь действий клиента («Ждём вашего решения»)
+ * по активным заказам на этапах утверждения сценария (01) или приёмки ролика (03).
+ */
+export function buildClientActionQueue(
+  activeOrders: readonly Pick<
+    ClientCabinetOrderSummary,
+    'orderNumber' | 'formatLabel' | 'totalBudgetRub' | 'createdAt' | 'approvalWorkflow'
+  >[]
+): ClientActionQueueItem[] {
+  const ordered = sortActiveOrdersByClientTurn(activeOrders);
+  const queue: ClientActionQueueItem[] = [];
+
+  for (const order of ordered) {
+    const wf = order.approvalWorkflow;
+    if (!wf || wf.whoseTurnActor !== 'client') {
+      continue;
+    }
+    const isSpotStep = wf.externalStep === '03_spot';
+    queue.push({
+      orderNumber: order.orderNumber,
+      title: stripTrailingPriceFromOrderTitle(
+        order.formatLabel,
+        order.totalBudgetRub
+      ),
+      actionKind: isSpotStep ? 'accept_spot' : 'approve_script',
+      actionLabel: isSpotStep
+        ? 'Прослушать и принять ролик'
+        : 'Утвердить сценарий',
+      stageShortLabel: isSpotStep
+        ? 'Этап 03 · Готовый ролик'
+        : 'Этап 01 · Сценарий',
+    });
+  }
+
+  return queue;
+}
+
+/**
+ * Форматирует секунды плеера в компактный таймкод `MM:SS.t` для кнопки быстрой поправки.
+ */
+export function formatQuickTimecodeLabel(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return '00:00.0';
+  const rounded = Math.round(sec * 10) / 10;
+  const mins = Math.floor(rounded / 60);
+  const rem = rounded - mins * 60;
+  const whole = Math.floor(rem);
+  const tenths = Math.min(9, Math.max(0, Math.round((rem - whole) * 10)));
+  return `${String(mins).padStart(2, '0')}:${String(whole).padStart(2, '0')}.${tenths}`;
+}
+
+/**
+ * Формирует готовую текстовую сводку по заказу для пересылки бухгалтеру или юристу в 1 клик.
+ */
+export function buildAccountingSummaryText(
+  order: Pick<
+    ClientCabinetOrderSummary,
+    | 'orderNumber'
+    | 'createdAt'
+    | 'formatLabel'
+    | 'totalBudgetRub'
+    | 'companyOrInn'
+    | 'stage'
+    | 'approvalWorkflow'
+  >,
+  cabinetUrl?: string
+): string {
+  const cleanTitle = stripTrailingPriceFromOrderTitle(
+    order.formatLabel,
+    order.totalBudgetRub
+  );
+  const formattedDate = (() => {
+    const d = new Date(order.createdAt);
+    if (Number.isNaN(d.getTime())) return order.createdAt;
+    return d.toLocaleDateString('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    });
+  })();
+  const amountText =
+    order.totalBudgetRub > 0
+      ? `${new Intl.NumberFormat('ru-RU').format(Math.round(order.totalBudgetRub))} ₽`
+      : 'Договорная';
+  const payerText = order.companyOrInn?.trim()
+    ? order.companyOrInn.trim()
+    : 'Реквизиты не указаны (можно заполнить по ИНН в личном кабинете)';
+  const isReady =
+    order.stage === 'on_air' ||
+    order.stage === 'completed_ltv' ||
+    order.approvalWorkflow?.phase === 'accepted';
+  const docsList = isReady
+    ? 'Счёт на оплату, договор, акт сдачи-приёмки и паспорт прав РАО/ВОИС'
+    : 'Счёт на оплату, договор и черновик паспорта прав РАО/ВОИС';
+
+  const lines = [
+    `FMWorks · Документы для бухгалтерии — заказ #${order.orderNumber} от ${formattedDate}`,
+    `Услуга: ${cleanTitle}`,
+    `Сумма: ${amountText}`,
+    `Плательщик: ${payerText}`,
+    `Доступные документы: ${docsList}`,
+  ];
+  if (cabinetUrl?.trim()) {
+    lines.push(`Личный кабинет клиента: ${cabinetUrl.trim()}`);
+  }
+  return lines.join('\n');
+}
+
+export type CabinetExportPeriodId = 'all' | 'quarter' | 'year';
+
+export const CABINET_EXPORT_PERIOD_LABELS: Record<CabinetExportPeriodId, string> = {
+  all: 'Все проекты',
+  quarter: 'Текущий квартал',
+  year: 'Текущий год',
+};
+
+/**
+ * Фильтрует список заказов клиента по отчётному периоду бухгалтерии (все, текущий квартал, текущий год).
+ */
+export function filterOrdersByExportPeriod<
+  T extends Pick<ClientCabinetOrderSummary, 'createdAt'>,
+>(
+  orders: readonly T[],
+  period: CabinetExportPeriodId,
+  nowMs = Date.now()
+): T[] {
+  if (period === 'all') {
+    return [...orders];
+  }
+  const now = new Date(nowMs);
+  const currentYear = now.getUTCFullYear();
+  const currentQuarter = Math.floor(now.getUTCMonth() / 3);
+
+  return orders.filter((order) => {
+    const parsed = new Date(order.createdAt);
+    if (Number.isNaN(parsed.getTime())) return false;
+    if (period === 'year') {
+      return parsed.getUTCFullYear() === currentYear;
+    }
+    return (
+      parsed.getUTCFullYear() === currentYear &&
+      Math.floor(parsed.getUTCMonth() / 3) === currentQuarter
+    );
+  });
+}
+
+export interface AccountingReconciliationSummary {
+  ordersCount: number;
+  totalBudgetRub: number;
+  readyDocsCount: number;
+  inWorkCount: number;
+}
+
+/**
+ * Считает итоговую бухгалтерскую сводку по выбранному срезу заказов.
+ */
+export function buildAccountingReconciliationSummary(
+  orders: readonly Pick<
+    ClientCabinetOrderSummary,
+    'totalBudgetRub' | 'stage' | 'deliverables' | 'approvalWorkflow'
+  >[]
+): AccountingReconciliationSummary {
+  let totalBudgetRub = 0;
+  let readyDocsCount = 0;
+  let inWorkCount = 0;
+
+  for (const order of orders) {
+    if (typeof order.totalBudgetRub === 'number' && order.totalBudgetRub > 0) {
+      totalBudgetRub += Math.round(order.totalBudgetRub);
+    }
+    const isReady =
+      order.stage === 'on_air' ||
+      order.stage === 'completed_ltv' ||
+      order.approvalWorkflow?.phase === 'accepted' ||
+      extractOrderMasterFiles(order).masterFiles.length > 0;
+    if (isReady) {
+      readyDocsCount += 1;
+    } else {
+      inWorkCount += 1;
+    }
+  }
+
+  return {
+    ordersCount: orders.length,
+    totalBudgetRub,
+    readyDocsCount,
+    inWorkCount,
+  };
+}
+
+function escapeCsvCellSemicolon(raw: string): string {
+  const safe = raw.replace(/\r?\n/g, ' ').trim();
+  if (safe.includes(';') || safe.includes('"')) {
+    return `"${safe.replace(/"/g, '""')}"`;
+  }
+  return safe;
+}
+
+function formatShortRuDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
+/**
+ * Генерирует Excel-совместимый реестр заказов для бухгалтерии в формате CSV (UTF-8 BOM + разделитель `;`).
+ */
+export function buildAccountingLedgerCsv(
+  orders: readonly Pick<
+    ClientCabinetOrderSummary,
+    | 'orderNumber'
+    | 'createdAt'
+    | 'formatLabel'
+    | 'companyOrInn'
+    | 'totalBudgetRub'
+    | 'stage'
+    | 'deliverables'
+    | 'approvalWorkflow'
+  >[]
+): string {
+  const header = [
+    'Номер заказа',
+    'Дата',
+    'Формат услуги',
+    'Плательщик / ИНН',
+    'Сумма (руб.)',
+    'Статус',
+    'Закрывающие документы',
+    'Мастер WAV',
+  ];
+
+  const rows = orders.map((order) => {
+    const cleanTitle = stripTrailingPriceFromOrderTitle(
+      order.formatLabel,
+      order.totalBudgetRub
+    );
+    const visual = resolveCabinetOrderVisualStatus(order);
+    const { masterFiles } = extractOrderMasterFiles(order);
+    const isReady =
+      order.stage === 'on_air' ||
+      order.stage === 'completed_ltv' ||
+      order.approvalWorkflow?.phase === 'accepted' ||
+      masterFiles.length > 0;
+
+    return [
+      `#${order.orderNumber}`,
+      formatShortRuDate(order.createdAt),
+      cleanTitle,
+      order.companyOrInn?.trim() || 'Не указаны',
+      order.totalBudgetRub > 0 ? String(Math.round(order.totalBudgetRub)) : 'Договорная',
+      visual.label,
+      isReady ? 'Счёт, договор, акт, паспорт РАО/ВОИС' : 'Счёт и договор',
+      masterFiles.length > 0 ? `Готов (${masterFiles.length})` : 'В производстве',
+    ]
+      .map(escapeCsvCellSemicolon)
+      .join(';');
+  });
+
+  const summary = buildAccountingReconciliationSummary(orders);
+  const totalRow = [
+    'ИТОГО',
+    '',
+    `Проектов: ${summary.ordersCount}`,
+    '',
+    String(summary.totalBudgetRub),
+    '',
+    `С актами: ${summary.readyDocsCount}`,
+    '',
+  ]
+    .map(escapeCsvCellSemicolon)
+    .join(';');
+
+  return `\uFEFF${[header.join(';'), ...rows, totalRow].join('\r\n')}`;
+}
+
+/**
+ * Формирует текстовую ведомость по проектам для мгновенной пересылки бухгалтеру в почту или мессенджер.
+ */
+export function buildAccountingLedgerPlainText(
+  orders: readonly Pick<
+    ClientCabinetOrderSummary,
+    | 'orderNumber'
+    | 'createdAt'
+    | 'formatLabel'
+    | 'companyOrInn'
+    | 'totalBudgetRub'
+    | 'stage'
+    | 'deliverables'
+    | 'approvalWorkflow'
+  >[],
+  periodLabel: string
+): string {
+  const summary = buildAccountingReconciliationSummary(orders);
+  const formattedTotal = new Intl.NumberFormat('ru-RU').format(summary.totalBudgetRub);
+  const lines = [
+    `FMWorks · Реестр заказов для бухгалтерии (${periodLabel})`,
+    `Проектов: ${summary.ordersCount} · Итого: ${formattedTotal} ₽ · С закрывающими актами: ${summary.readyDocsCount}`,
+    '',
+  ];
+
+  for (const order of orders) {
+    const cleanTitle = stripTrailingPriceFromOrderTitle(
+      order.formatLabel,
+      order.totalBudgetRub
+    );
+    const visual = resolveCabinetOrderVisualStatus(order);
+    const amount =
+      order.totalBudgetRub > 0
+        ? `${new Intl.NumberFormat('ru-RU').format(Math.round(order.totalBudgetRub))} ₽`
+        : 'Договорная';
+    const payer = order.companyOrInn?.trim() ? ` · ${order.companyOrInn.trim()}` : '';
+    lines.push(
+      `• #${order.orderNumber} от ${formatShortRuDate(order.createdAt)} — ${cleanTitle} — ${amount} (${visual.label})${payer}`
+    );
+  }
+
+  return lines.join('\n');
+}
+
+export interface GuestReviewAudioVersion {
+  id: string;
+  versionCode: string;
+  stageLabel: string;
+  title: string;
+  fileName: string;
+  versionNote?: string;
+  sizeBytes: number;
+  uploadedAt: string;
+  isFinalMaster: boolean;
+  isCurrentLatest: boolean;
+  previewUrl: string;
+  downloadUrl: string;
+}
+
+export interface GuestOrderReviewPayload {
+  orderNumber: string;
+  createdAt: string;
+  formatTitle: string;
+  stageBadgeLabel: string;
+  targetSlotSec: number;
+  briefText?: string;
+  approvalWorkflow: ClientCabinetOrderSummary['approvalWorkflow'];
+  audioVersions: GuestReviewAudioVersion[];
+  progressionChainText: string;
+}
+
+/**
+ * Формирует лаконичное заключение руководителя по гостевой ссылке для отправки коллеге.
+ */
+export function buildDirectorFeedbackClipboardText(params: {
+  orderNumber: string;
+  formatTitle: string;
+  verdict: 'approved' | 'needs_edits';
+  comment?: string;
+}): string {
+  const verdictLine =
+    params.verdict === 'approved'
+      ? 'Согласовано, можно утверждать в личном кабинете FMWorks.'
+      : 'Нужны корректировки перед утверждением в личном кабинете FMWorks.';
+  const cleanComment = (params.comment ?? '').trim();
+  const lines = [
+    `Согласование аудиоролика #${params.orderNumber} (${params.formatTitle})`,
+    `Решение: ${verdictLine}`,
+  ];
+  if (cleanComment) {
+    lines.push(`Комментарий: ${cleanComment}`);
+  }
+  return lines.join('\n');
+}
+
+

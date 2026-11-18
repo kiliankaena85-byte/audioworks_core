@@ -1,7 +1,7 @@
 import { Check, Copy, PhoneCall, Send } from 'lucide-react';
-import { MouseEvent as ReactMouseEvent, useEffect, useState } from 'react';
+import { MouseEvent as ReactMouseEvent, Suspense, useEffect, useState } from 'react';
 import { useStudioLegalConfig } from '../context/StudioLegalConfigContext';
-import { BrandDomainVariant } from '../data/brandKitData';
+import type { BrandDomainVariant } from '../data/brandKitData';
 import { AIRTIME_SALES_ENABLED } from '../data/platformFeatures';
 import {
   buildPlatformPath,
@@ -14,8 +14,13 @@ import {
   normalizeTelegramContact,
   resolveAdaptiveBrandTagline,
 } from '../utils/footerContactsFormat';
+import { lazyNamedExport } from '../utils/lazyWithRetry';
 import { BrandLogo } from './BrandLogo';
-import { PersonalData152FzModal } from './legal/PersonalData152FzModal';
+
+const PersonalData152FzModal = lazyNamedExport(
+  () => import('./legal/PersonalData152FzModal'),
+  'PersonalData152FzModal'
+);
 
 function readStudioTimeHHMM(): string {
   const now = new Date();
@@ -619,10 +624,14 @@ export function Footer({
         </div>
       </div>
 
-      <PersonalData152FzModal
-        isOpen={isPdnModalOpen}
-        onClose={() => setIsPdnModalOpen(false)}
-      />
+      {isPdnModalOpen && (
+        <Suspense fallback={null}>
+          <PersonalData152FzModal
+            isOpen={isPdnModalOpen}
+            onClose={() => setIsPdnModalOpen(false)}
+          />
+        </Suspense>
+      )}
     </footer>
   );
 }

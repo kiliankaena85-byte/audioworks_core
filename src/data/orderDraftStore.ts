@@ -12,7 +12,7 @@ import {
 import { AIRTIME_SALES_ENABLED, isAirtimeSalesEnabled } from './platformFeatures';
 import { IndustryVerticalSlug, isValidIndustrySlug } from './platformRouter';
 import { OrderFormatId } from './pricingData';
-import {
+import type {
   ComputedReservationTotals,
   MediaGridReservationPayload,
   ReservationProductionSelection,

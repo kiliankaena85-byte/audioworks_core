@@ -1,12 +1,15 @@
 import { ShieldCheck } from 'lucide-react';
-import { MouseEvent, useEffect, useState } from 'react';
+import { MouseEvent, Suspense, useEffect, useState } from 'react';
 import { useStudioLegalConfig } from '../../context/StudioLegalConfigContext';
 import type { PlatformRoute } from '../../data/platformRouter';
 import { RF_STORAGE_NOTICE_STORAGE_KEY } from '../../security/rfLegalCompliance';
-import {
-  PersonalData152FzModal,
-  PersonalData152FzTab,
-} from './PersonalData152FzModal';
+import { lazyNamedExport } from '../../utils/lazyWithRetry';
+import type { PersonalData152FzTab } from './PersonalData152FzModal';
+
+const PersonalData152FzModal = lazyNamedExport(
+  () => import('./PersonalData152FzModal'),
+  'PersonalData152FzModal'
+);
 
 interface RfStorageNoticeBannerProps {
   liftForFloatingPlayer?: boolean;
@@ -75,18 +78,22 @@ export function RfStorageNoticeBanner({
           data-nosnippet
           aria-label="Уведомление о технических файлах cookie и локальном хранении по 152-ФЗ"
           data-testid="rf-storage-notice-banner"
-          className={`fixed inset-x-3 sm:inset-x-auto sm:right-6 sm:max-w-lg z-40 rounded-2xl bg-[#FFFFFF]/96 dark:bg-[#141418]/96 backdrop-blur-md border border-[#111111]/14 dark:border-white/14 shadow-lg px-3.5 py-2.5 transition-opacity print:hidden ${
-            liftForFloatingPlayer ? 'bottom-24 sm:bottom-24' : 'bottom-3 sm:bottom-4'
+          className={`fixed inset-x-2.5 sm:inset-x-auto sm:right-6 sm:max-w-lg z-40 rounded-xl sm:rounded-2xl bg-[#FFFFFF]/96 dark:bg-[#141418]/96 backdrop-blur-md border border-[#111111]/14 dark:border-white/14 shadow-lg px-3 py-1.5 sm:px-3.5 sm:py-2.5 transition-opacity print:hidden ${
+            liftForFloatingPlayer ? 'bottom-24 sm:bottom-24' : 'bottom-2.5 sm:bottom-4'
           }`}
         >
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center justify-between gap-2.5 sm:gap-3">
             <div className="flex items-center gap-2 min-w-0">
               <ShieldCheck
                 className="w-4 h-4 text-[#C83210] dark:text-[#FF6B47] shrink-0 hidden sm:block"
                 aria-hidden="true"
               />
-              <p className="text-[11px] sm:text-xs leading-snug text-[#111111]/84 dark:text-[#F4F3EF]/84">
-                <strong>Технические cookie (152-ФЗ):</strong> только для сессии кабинета и черновика в РФ без трекеров.{' '}
+              <p className="text-[11px] sm:text-xs leading-tight sm:leading-snug text-[#111111]/84 dark:text-[#F4F3EF]/84">
+                <strong>Технические cookie (152-ФЗ):</strong>{' '}
+                <span className="sm:hidden">сессия в РФ без трекеров.</span>
+                <span className="hidden sm:inline">
+                  только для сессии кабинета и черновика в РФ без трекеров.
+                </span>{' '}
                 <a
                   href="/privacy?tab=rf_security"
                   data-testid="rf-banner-details-btn"
@@ -102,7 +109,7 @@ export function RfStorageNoticeBanner({
               type="button"
               data-testid="rf-banner-accept-btn"
               onClick={handleAcceptNotice}
-              className="min-h-[36px] px-3.5 py-1.5 rounded-xl bg-[#111111] hover:bg-[#27272A] dark:bg-[#F4F3EF] dark:hover:bg-white text-white dark:text-[#0D0D0F] text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              className="min-h-[32px] sm:min-h-[36px] px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-lg sm:rounded-xl bg-[#111111] hover:bg-[#27272A] dark:bg-[#F4F3EF] dark:hover:bg-white text-white dark:text-[#0D0D0F] text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
               Понятно
             </button>
@@ -110,11 +117,15 @@ export function RfStorageNoticeBanner({
         </aside>
       )}
 
-      <PersonalData152FzModal
-        isOpen={modalOpen}
-        initialTab={modalTab}
-        onClose={() => setModalOpen(false)}
-      />
+      {modalOpen && (
+        <Suspense fallback={null}>
+          <PersonalData152FzModal
+            isOpen={modalOpen}
+            initialTab={modalTab}
+            onClose={() => setModalOpen(false)}
+          />
+        </Suspense>
+      )}
     </>
   );
 }

@@ -41,9 +41,10 @@ import {
   getCrmStageMetaForOrder,
   type OrderComplianceChecklist,
 } from '../../data/orderCrmTypes';
-import type {
-  SoundEngineerContact,
-  SoundEngineerEmailNotificationRecord,
+import {
+  CRM_STAGE_RETURN_NOTE_PRESETS,
+  type SoundEngineerContact,
+  type SoundEngineerEmailNotificationRecord,
 } from '../../data/productionApprovalWorkflow';
 import { formatRubCompact } from '../../data/radioInventory';
 import {
@@ -64,6 +65,7 @@ const DOSSIER_TAB_IDS: readonly B2bDossierTabId[] = [
 
 export interface PatchOrderPayload {
   stage?: CrmOrderStage;
+  stageNote?: string;
   producerNotes?: string;
   compliance?: Partial<OrderComplianceChecklist>;
   documentMeta?: OrderDocumentMeta;
@@ -199,6 +201,7 @@ export function AdminB2bOrderDossier({
     useState<boolean>(false);
   const [confirmingRemoveDeliverableId, setConfirmingRemoveDeliverableId] =
     useState<string | null>(null);
+  const [stageNoteDraft, setStageNoteDraft] = useState<string>('');
 
   useEffect(() => {
     setNotesDraft(order.producerNotes);
@@ -213,6 +216,7 @@ export function AdminB2bOrderDossier({
     setAuditCategory('auto');
     setConfirmingAnonymize(false);
     setConfirmingRemoveDeliverableId(null);
+    setStageNoteDraft('');
   }, [order]);
 
   const handleDossierTabKeyDown = (
@@ -230,6 +234,13 @@ export function AdminB2bOrderDossier({
     () => getCrmStageMetaForOrder(order.stage, 'production_only'),
     [order.stage]
   );
+
+  const prevStageMeta = useMemo(() => {
+    const idx = CRM_ORDER_STAGES.findIndex((st) => st.id === order.stage);
+    if (idx <= 0) return null;
+    const prevId = CRM_ORDER_STAGES[idx - 1].id;
+    return getCrmStageMetaForOrder(prevId, 'production_only');
+  }, [order.stage]);
 
   const orderSuite = useMemo(
     () =>
@@ -355,48 +366,109 @@ export function AdminB2bOrderDossier({
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <label htmlFor="inspector-stage-select" className="sr-only">
-              Этап сделки
-            </label>
-            <select
-              id="inspector-stage-select"
-              data-testid="crm-inspector-stage-select"
-              disabled={isUpdatingOrder}
-              value={order.stage}
-              onChange={(e) =>
-                void onPatchOrder(
-                  order.id,
-                  { stage: e.target.value as CrmOrderStage },
-                  `Этап сделки #${order.orderNumber} обновлён.`
-                )
-              }
-              className="min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] cursor-pointer"
-            >
-              {CRM_ORDER_STAGES.map((st) => (
-                <option key={st.id} value={st.id}>
-                  {getCrmStageMetaForOrder(st.id, 'production_only').fullTitle}
-                </option>
-              ))}
-            </select>
+          <div className="flex flex-col sm:items-end gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {prevStageMeta && (
+                <button
+                  type="button"
+                  disabled={isUpdatingOrder}
+                  data-testid="crm-revert-stage-btn"
+                  title={`Вернуть сделку на этап «${prevStageMeta.fullTitle}»`}
+                  onClick={() => {
+                    const note =
+                      stageNoteDraft.trim() ||
+                      `Возврат на этап «${prevStageMeta.fullTitle}» продюсером студии`;
+                    void onPatchOrder(
+                      order.id,
+                      {
+                        stage: prevStageMeta.id,
+                        stageNote: note,
+                      },
+                      `Сделка #${order.orderNumber} возвращена на этап «${prevStageMeta.fullTitle}».`
+                    );
+                    setStageNoteDraft('');
+                  }}
+                  className="min-h-[38px] px-3 py-1.5 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#C83210]/50 text-[#111111] dark:text-[#F4F3EF] text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  ← На пред. этап
+                </button>
+              )}
 
-            {stageMeta.nextStage && stageMeta.nextActionLabel && (
-              <button
-                type="button"
+              <label htmlFor="inspector-stage-select" className="sr-only">
+                Этап сделки
+              </label>
+              <select
+                id="inspector-stage-select"
+                data-testid="crm-inspector-stage-select"
                 disabled={isUpdatingOrder}
-                data-testid="crm-advance-stage-btn"
-                onClick={() =>
+                value={order.stage}
+                onChange={(e) => {
+                  const nextStage = e.target.value as CrmOrderStage;
+                  const note = stageNoteDraft.trim();
                   void onPatchOrder(
                     order.id,
-                    { stage: stageMeta.nextStage! },
-                    `Сделка #${order.orderNumber} переведена на следующий этап.`
-                  )
-                }
-                className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] disabled:opacity-50 text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                    {
+                      stage: nextStage,
+                      ...(note ? { stageNote: note } : {}),
+                    },
+                    `Этап сделки #${order.orderNumber} обновлён.`
+                  );
+                  setStageNoteDraft('');
+                }}
+                className="min-h-[38px] px-3 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-xs font-semibold text-[#111111] dark:text-[#F4F3EF] cursor-pointer"
               >
-                {stageMeta.nextActionLabel}
-              </button>
-            )}
+                {CRM_ORDER_STAGES.map((st) => (
+                  <option key={st.id} value={st.id}>
+                    {getCrmStageMetaForOrder(st.id, 'production_only').fullTitle}
+                  </option>
+                ))}
+              </select>
+
+              {stageMeta.nextStage && stageMeta.nextActionLabel && (
+                <button
+                  type="button"
+                  disabled={isUpdatingOrder}
+                  data-testid="crm-advance-stage-btn"
+                  onClick={() => {
+                    const note = stageNoteDraft.trim();
+                    void onPatchOrder(
+                      order.id,
+                      {
+                        stage: stageMeta.nextStage!,
+                        ...(note ? { stageNote: note } : {}),
+                      },
+                      `Сделка #${order.orderNumber} переведена на следующий этап.`
+                    );
+                    setStageNoteDraft('');
+                  }}
+                  className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#C83210] hover:bg-[#AE2A0C] disabled:opacity-50 text-white text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  {stageMeta.nextActionLabel}
+                </button>
+              )}
+            </div>
+
+            <input
+              type="text"
+              value={stageNoteDraft}
+              onChange={(e) => setStageNoteDraft(e.target.value)}
+              data-testid="crm-stage-note-input"
+              placeholder="Комментарий к смене / возврату этапа для журнала аудита..."
+              className="w-full sm:w-80 min-h-[32px] px-2.5 py-1 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 text-[11px] text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/45 dark:placeholder:text-[#F4F3EF]/45"
+            />
+            <div className="flex flex-wrap sm:justify-end items-center gap-1 max-w-md">
+              {CRM_STAGE_RETURN_NOTE_PRESETS.map((preset, idx) => (
+                <button
+                  key={preset}
+                  type="button"
+                  data-testid={`crm-stage-note-preset-${idx}`}
+                  onClick={() => setStageNoteDraft(preset)}
+                  className="px-2 py-0.5 rounded-md bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 hover:border-[#C83210] text-[10px] font-medium text-[#111111]/75 dark:text-[#F4F3EF]/75 transition-colors cursor-pointer"
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>

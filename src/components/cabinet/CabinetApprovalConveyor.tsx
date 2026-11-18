@@ -7,7 +7,7 @@ import {
   MessageSquare,
   SlidersHorizontal,
 } from 'lucide-react';
-import { KeyboardEvent, useRef, useState } from 'react';
+import { KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import {
   type ClientApprovalWorkflowView,
   SPOT_REVISION_KIND_LABELS,
@@ -46,6 +46,10 @@ export interface CabinetApprovalConveyorProps {
     timecodeSec: number | null;
     comment: string;
   }) => Promise<void> | void;
+  /** Слот со студийным аудиоплеером, выводимый выше кнопок приёмки на этапе 03 */
+  spotAudioPreviewSlot?: ReactNode;
+  /** Сигнал мгновенной фиксации таймкода прямо из студийного плеера */
+  quickRevisionTrigger?: { timeSec: number; nonce: number } | null;
 }
 
 const EXTERNAL_STEPS: readonly {
@@ -69,12 +73,15 @@ export function CabinetApprovalConveyor({
   onRequestScriptChanges,
   onAcceptSpot,
   onRequestSpotRevision,
+  spotAudioPreviewSlot,
+  quickRevisionTrigger,
 }: CabinetApprovalConveyorProps) {
   const latestScriptDraft = workflow.scriptVersions[0] ?? null;
   const [selectedConceptId, setSelectedConceptId] = useState<string>(
     () => latestScriptDraft?.concepts[0]?.id ?? ''
   );
   const conceptTabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const revisionCommentInputRef = useRef<HTMLInputElement | null>(null);
 
   const [isScriptCommentOpen, setIsScriptCommentOpen] = useState<boolean>(false);
   const [scriptCommentDraft, setScriptCommentDraft] = useState<string>('');
@@ -86,6 +93,25 @@ export function CabinetApprovalConveyor({
     useState<SpotRevisionKind>('balance_timecode');
   const [revisionTimecodeInput, setRevisionTimecodeInput] = useState<string>('');
   const [revisionCommentDraft, setRevisionCommentDraft] = useState<string>('');
+
+  useEffect(() => {
+    if (!quickRevisionTrigger || workflow.phase !== 'spot_client_review') {
+      return;
+    }
+    const rounded = Math.max(0, Math.round(quickRevisionTrigger.timeSec * 10) / 10);
+    setRevisionKind('balance_timecode');
+    setRevisionTimecodeInput(rounded.toFixed(1));
+    setLocalError(null);
+    setIsSpotRevisionOpen(true);
+    const timerId = window.setTimeout(() => {
+      const inputEl = revisionCommentInputRef.current;
+      if (inputEl) {
+        inputEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        inputEl.focus();
+      }
+    }, 60);
+    return () => window.clearTimeout(timerId);
+  }, [quickRevisionTrigger, workflow.phase]);
 
   const activeStepIdx = EXTERNAL_STEPS.findIndex(
     (s) => s.id === workflow.externalStep
@@ -212,12 +238,12 @@ export function CabinetApprovalConveyor({
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[#111111]/72 dark:text-[#F4F3EF]/72">
           <span className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
-            Конвейер согласования
+            Ход производства
           </span>
           <span aria-hidden="true">·</span>
           <span>Слот {workflow.targetSlotSec},00 с</span>
           <span aria-hidden="true">·</span>
-          <span>Режиссёрский мандат студии</span>
+          <span>Диктор и музыка — подбор студии</span>
         </div>
 
         <span
@@ -573,8 +599,19 @@ export function CabinetApprovalConveyor({
               </div>
             </div>
           ) : (
-            <div className="p-4 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] space-y-3">
-              {/* Уведомление о зашитом в цену 1 сервисном раунде доводки без микро-счетов */}
+            <div className="space-y-4">
+              {/* Сначала прослушивание версий ролика, затем — кнопки приёмки / правки */}
+              {spotAudioPreviewSlot && (
+                <div
+                  data-testid={`cabinet-spot-audio-first-${orderNumber}`}
+                  className="pt-1"
+                >
+                  {spotAudioPreviewSlot}
+                </div>
+              )}
+
+              <div className="p-4 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] space-y-3">
+                {/* Уведомление о зашитом в цену 1 сервисном раунде доводки без микро-счетов */}
               <p
                 data-testid={`cabinet-service-round-note-${orderNumber}`}
                 className="text-xs text-[#111111]/78 dark:text-[#F4F3EF]/78 leading-relaxed"
@@ -768,6 +805,7 @@ export function CabinetApprovalConveyor({
                         Комментарий для студии
                       </label>
                       <input
+                        ref={revisionCommentInputRef}
                         id={`rev-comment-${orderNumber}`}
                         type="text"
                         data-testid={`cabinet-revision-comment-${orderNumber}`}
@@ -800,6 +838,7 @@ export function CabinetApprovalConveyor({
                   </div>
                 </div>
               )}
+              </div>
             </div>
           )}
         </div>

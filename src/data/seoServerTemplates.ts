@@ -143,6 +143,7 @@ export function buildRobotsTxt(
     'Disallow: /checkout',
     'Disallow: /cabinet',
     'Disallow: /account',
+    'Disallow: /review',
     'Disallow: /sound-drop',
     'Disallow: /api/',
     ...(!airtimeEnabled ? ['Disallow: /hot-air', 'Disallow: /hot-air/'] : []),
@@ -557,6 +558,7 @@ const EXACT_STATIC_KNOWN_PATHS = new Set<string>([
   '/cabinet/archive',
   '/cabinet/reset',
   '/cabinet/recovery',
+  '/review',
   '/sound-drop',
   '/admin',
 ]);

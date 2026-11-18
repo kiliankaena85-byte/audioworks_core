@@ -10,7 +10,7 @@ export interface CabinetProfileAvatarProps {
   avatar: ResolvedClientAvatarModel;
   isEditorOpen: boolean;
   onToggleEditor: () => void;
-  size?: 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg';
 }
 
 export function CabinetProfileAvatar({
@@ -34,9 +34,17 @@ export function CabinetProfileAvatar({
     avatar.hasCustomPhoto && Boolean(avatar.customPhotoUrl) && !customPhotoFailed;
 
   const boxSizeClass =
-    size === 'lg' ? 'w-14 h-14 sm:w-16 sm:h-16' : 'w-12 h-12 sm:w-14 sm:h-14';
+    size === 'sm'
+      ? 'w-9 h-9 sm:w-10 sm:h-10'
+      : size === 'lg'
+        ? 'w-14 h-14 sm:w-16 sm:h-16'
+        : 'w-12 h-12 sm:w-14 sm:h-14';
   const initialsTextClass =
-    size === 'lg' ? 'text-lg sm:text-xl' : 'text-base sm:text-lg';
+    size === 'sm'
+      ? 'text-xs sm:text-sm'
+      : size === 'lg'
+        ? 'text-lg sm:text-xl'
+        : 'text-base sm:text-lg';
 
   return (
     <button

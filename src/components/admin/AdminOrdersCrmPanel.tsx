@@ -1476,7 +1476,7 @@ export function AdminOrdersCrmPanel({
                           Этап · права
                         </th>
                         <th scope="col" className="py-2.5 pl-2 pr-4 text-right whitespace-nowrap">
-                          Документы
+                          Документы и цех
                         </th>
                       </tr>
                     </thead>
@@ -1587,22 +1587,39 @@ export function AdminOrdersCrmPanel({
                             </td>
 
                             <td className="py-2.5 pl-2 pr-4 text-right align-middle whitespace-nowrap">
-                              <button
-                                type="button"
-                                data-testid={`ledger-open-a4-${order.orderNumber}`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSelectedOrderId(order.id);
-                                  setEdoModalOrder(order);
-                                }}
-                                className="min-h-[32px] px-2.5 py-1 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] text-[11px] font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                              >
-                                <FileSpreadsheet
-                                  className="w-3 h-3 shrink-0"
-                                  aria-hidden="true"
-                                />
-                                <span>Пакет A4</span>
-                              </button>
+                              <div className="inline-flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  data-testid={`ledger-open-a4-${order.orderNumber}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedOrderId(order.id);
+                                    setEdoModalOrder(order);
+                                  }}
+                                  className="min-h-[32px] px-2.5 py-1 rounded-lg border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] text-[11px] font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                                >
+                                  <FileSpreadsheet
+                                    className="w-3 h-3 shrink-0"
+                                    aria-hidden="true"
+                                  />
+                                  <span>Пакет A4</span>
+                                </button>
+
+                                {onNavigateToProductionOrder && (
+                                  <button
+                                    type="button"
+                                    data-testid={`ledger-open-production-${order.orderNumber}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedOrderId(order.id);
+                                      onNavigateToProductionOrder(order.id);
+                                    }}
+                                    className="min-h-[32px] px-2.5 py-1 rounded-lg bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 hover:border-[#C83210] hover:text-[#B82D0D] dark:hover:text-[#FF7A5C] text-[11px] font-semibold text-[#111111] dark:text-[#F4F3EF] inline-flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                                  >
+                                    <span>В цех →</span>
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         );

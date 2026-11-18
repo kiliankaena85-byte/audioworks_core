@@ -3,6 +3,7 @@ import type {
   ClientNotificationPreferences,
 } from '../../data/cabinetPushNotifications';
 import type { ClientAccountPublicProfile } from '../../data/clientAuthShared';
+import type { GuestOrderReviewPayload } from '../../data/clientCabinetArchitecture';
 import type {
   ClientCabinetOrderSummary,
   ClientDeliveryChannel,
@@ -491,4 +492,67 @@ export async function submitClientSpotDecisionApi(params: {
     routedTo: json.routedTo ?? 'sound_engineer_included_round',
   };
 }
+
+export interface GuestReviewLinkResponse {
+  ok: true;
+  orderNumber: string;
+  reviewToken: string;
+  reviewPath: string;
+  reviewUrl: string;
+}
+
+export async function createGuestReviewLinkApi(params: {
+  orderNumber: string;
+  rescueToken?: string;
+}): Promise<GuestReviewLinkResponse> {
+  const res = await fetch(
+    `/api/orders/${encodeURIComponent(params.orderNumber)}/guest-review-link`,
+    {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rescueToken: params.rescueToken,
+      }),
+    }
+  );
+  const json = (await res.json()) as Partial<GuestReviewLinkResponse> & {
+    error?: string;
+  };
+  if (!res.ok || !json.ok || !json.reviewToken || !json.reviewUrl) {
+    throw new Error(
+      json.error ?? 'Не удалось создать гостевую ссылку для руководителя'
+    );
+  }
+  return {
+    ok: true,
+    orderNumber: json.orderNumber ?? params.orderNumber,
+    reviewToken: json.reviewToken,
+    reviewPath: json.reviewPath ?? `/review?token=${encodeURIComponent(json.reviewToken)}`,
+    reviewUrl: json.reviewUrl,
+  };
+}
+
+export async function fetchGuestOrderReviewApi(
+  reviewToken: string
+): Promise<GuestOrderReviewPayload> {
+  const res = await fetch(
+    `/api/guest-review/${encodeURIComponent(reviewToken)}`,
+    {
+      headers: { Accept: 'application/json' },
+    }
+  );
+  const json = (await res.json()) as {
+    ok?: boolean;
+    review?: GuestOrderReviewPayload;
+    error?: string;
+  };
+  if (!res.ok || !json.ok || !json.review) {
+    throw new Error(
+      json.error ?? 'Гостевая ссылка недействительна или проект больше не доступен'
+    );
+  }
+  return json.review;
+}
+
 

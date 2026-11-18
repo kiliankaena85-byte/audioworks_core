@@ -1,5 +1,6 @@
 import {
   CheckCircle2,
+  Crosshair,
   Download,
   FileAudio,
   History,
@@ -16,6 +17,7 @@ import {
 } from '../../audio/audioFocusCoordinator';
 import {
   buildDeliverableDownloadUrls,
+  formatQuickTimecodeLabel,
   type OrderAudioVersionHistory,
 } from '../../data/clientCabinetArchitecture';
 import { formatFileSizeReadable } from '../../data/clientCabinetHelpers';
@@ -54,6 +56,12 @@ function formatStudioTimecode(sec: number): string {
   return `${String(mins).padStart(2, '0')}:${String(wholeSec).padStart(2, '0')}.${Math.min(9, Math.max(0, tenths))}`;
 }
 
+export interface SavedRevisionTimecodeMarker {
+  id: string;
+  timecodeSec: number;
+  label: string;
+}
+
 interface StudioVersionAudioDeckProps {
   orderNumber: string;
   rescueToken: string;
@@ -66,6 +74,8 @@ interface StudioVersionAudioDeckProps {
   resumeState?: { timeSec: number; autoResume: boolean } | null;
   onConsumeResumeState?: () => void;
   onTimeUpdateSec?: (timeSec: number) => void;
+  onQuickTimecodeComment?: (timeSec: number) => void;
+  savedRevisionTimecodes?: readonly SavedRevisionTimecodeMarker[];
 }
 
 function StudioVersionAudioDeck({
@@ -80,6 +90,8 @@ function StudioVersionAudioDeck({
   resumeState,
   onConsumeResumeState,
   onTimeUpdateSec,
+  onQuickTimecodeComment,
+  savedRevisionTimecodes = [],
 }: StudioVersionAudioDeckProps) {
   const instanceId = useId();
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -364,6 +376,52 @@ function StudioVersionAudioDeck({
         </button>
       </div>
 
+      {(onQuickTimecodeComment || savedRevisionTimecodes.length > 0) && (
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#111111]/10 dark:border-white/10 text-xs tabular-nums">
+          {savedRevisionTimecodes.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[#111111]/72 dark:text-[#F4F3EF]/72">
+              <span>Метки правок:</span>
+              {savedRevisionTimecodes.slice(0, 4).map((marker, idx) => (
+                <span key={marker.id} className="inline-flex items-center gap-1.5">
+                  {idx > 0 && <span aria-hidden="true">·</span>}
+                  <button
+                    type="button"
+                    data-testid={`studio-marker-jump-${orderNumber}-${marker.id}`}
+                    onClick={() => seekTo(marker.timecodeSec)}
+                    title={marker.label}
+                    className="font-mono font-semibold text-[#C83210] dark:text-[#FF6B47] hover:underline cursor-pointer whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+                  >
+                    {formatQuickTimecodeLabel(marker.timecodeSec)}
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <span className="text-[11px] text-[#111111]/66 dark:text-[#F4F3EF]/66">
+              Нажмите на нужной секунде, чтобы зафиксировать поправку с точным таймкодом
+            </span>
+          )}
+
+          {onQuickTimecodeComment && (
+            <button
+              type="button"
+              data-testid={`studio-quick-timecode-btn-${orderNumber}`}
+              onClick={() => {
+                const el = audioRef.current;
+                if (el && !el.paused) {
+                  el.pause();
+                }
+                onQuickTimecodeComment(currentTime);
+              }}
+              className="min-h-[36px] sm:min-h-[30px] px-2.5 py-1 rounded-lg border border-[#C83210]/30 bg-white dark:bg-[#141418] hover:border-[#FF4820] text-[11px] font-semibold text-[#C83210] dark:text-[#FF6B47] inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+            >
+              <Crosshair className="w-3 h-3 shrink-0" aria-hidden="true" />
+              <span>Поправка на {formatQuickTimecodeLabel(currentTime)}</span>
+            </button>
+          )}
+        </div>
+      )}
+
       {loadError && (
         <p role="alert" className="text-xs font-medium text-[#DC2626] dark:text-[#F87171]">
           Потоковое воспроизведение недоступно в текущем окружении — скачайте файл кнопкой справа.
@@ -383,6 +441,8 @@ export interface CabinetAudioVersionHistoryProps {
   highlightedVersionCode?: string;
   seekRequest?: AudioSeekRequest;
   onTimeUpdateSec?: (timeSec: number) => void;
+  onQuickTimecodeComment?: (timeSec: number) => void;
+  savedRevisionTimecodes?: readonly SavedRevisionTimecodeMarker[];
 }
 
 export function CabinetAudioVersionHistory({
@@ -395,6 +455,8 @@ export function CabinetAudioVersionHistory({
   highlightedVersionCode,
   seekRequest,
   onTimeUpdateSec,
+  onQuickTimecodeComment,
+  savedRevisionTimecodes = [],
 }: CabinetAudioVersionHistoryProps) {
   const [openFileId, setOpenFileId] = useState<string | null>(() => {
     if (defaultExpandLatestAudio && history.latestVersion) {
@@ -699,6 +761,8 @@ export function CabinetAudioVersionHistory({
                   }
                   onConsumeResumeState={() => setResumeState(null)}
                   onTimeUpdateSec={onTimeUpdateSec}
+                  onQuickTimecodeComment={onQuickTimecodeComment}
+                  savedRevisionTimecodes={savedRevisionTimecodes}
                 />
               )}
             </li>

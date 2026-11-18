@@ -32,20 +32,15 @@ export interface CabinetAccessPanelProps {
   onTriggerDemoOrderLookup: () => void;
 }
 
-const ACCESS_TABS: readonly {
-  id: CabinetAccessTabId;
+const PRIMARY_ACCESS_TABS: readonly {
+  id: Exclude<CabinetAccessTabId, 'access_reset'>;
   testId: string;
   label: string;
 }[] = [
   {
     id: 'magic_email',
     testId: 'cabinet-tab-magic',
-    label: 'По почте (вход без пароля)',
-  },
-  {
-    id: 'access_reset',
-    testId: 'cabinet-tab-reset',
-    label: 'Сброс доступа и сессий',
+    label: 'Вход по почте',
   },
   {
     id: 'order_number',
@@ -91,17 +86,19 @@ export function CabinetAccessPanel({
   ) => {
     let nextIdx = -1;
     if (e.key === 'ArrowRight') {
-      nextIdx = (currentIdx + 1) % ACCESS_TABS.length;
+      nextIdx = (currentIdx + 1) % PRIMARY_ACCESS_TABS.length;
     } else if (e.key === 'ArrowLeft') {
-      nextIdx = (currentIdx - 1 + ACCESS_TABS.length) % ACCESS_TABS.length;
+      nextIdx =
+        (currentIdx - 1 + PRIMARY_ACCESS_TABS.length) %
+        PRIMARY_ACCESS_TABS.length;
     } else if (e.key === 'Home') {
       nextIdx = 0;
     } else if (e.key === 'End') {
-      nextIdx = ACCESS_TABS.length - 1;
+      nextIdx = PRIMARY_ACCESS_TABS.length - 1;
     }
     if (nextIdx >= 0) {
       e.preventDefault();
-      const target = ACCESS_TABS[nextIdx];
+      const target = PRIMARY_ACCESS_TABS[nextIdx];
       onSelectTab(target.id);
       tabRefs.current[target.id]?.focus();
     }
@@ -110,17 +107,18 @@ export function CabinetAccessPanel({
   return (
     <section
       data-testid="cabinet-lookup-card"
-      aria-label="Вход по почте, защита сессий и поиск заказа"
+      aria-label="Вход по почте и поиск заказа"
       className="rounded-2xl bg-white dark:bg-[#141418] border border-[#111111]/12 dark:border-white/12 p-5 sm:p-7 space-y-5"
     >
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div
           role="tablist"
           aria-label="Способ доступа к личному кабинету"
           className="inline-flex flex-wrap items-center gap-1 p-1 rounded-xl bg-[#EFECE5] dark:bg-[#0D0D0F] border border-[#111111]/10 dark:border-white/10 self-start"
         >
-          {ACCESS_TABS.map((tab, idx) => {
-            const selected = accessTab === tab.id;
+          {PRIMARY_ACCESS_TABS.map((tab, idx) => {
+            const selected =
+              accessTab === tab.id || (tab.id === 'magic_email' && isResetTab);
             return (
               <button
                 key={tab.id}
@@ -148,16 +146,18 @@ export function CabinetAccessPanel({
           })}
         </div>
 
-        {/* Спокойная вспомогательная кнопка демо-примера без конкуренции с главным CTA */}
+        {/* Быстрый вход в публичный демо-кабинет в 1 клик без ПДн-барьера */}
         {isEmailFlow ? (
           <button
             type="button"
             data-testid="cabinet-demo-magic-btn"
             disabled={isRequestingMagic || isVerifyingMagic}
             onClick={() => onTriggerDemoMagicEmail(DEMO_CLIENT_CABINET_EMAIL)}
-            className="min-h-[44px] sm:min-h-[38px] px-3.5 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] bg-[#F7F6F2] dark:bg-[#0D0D0F] text-xs font-medium text-[#111111]/82 dark:text-[#F4F3EF]/82 transition-colors cursor-pointer whitespace-nowrap shrink-0 self-start lg:self-auto focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+            className="min-h-[44px] sm:min-h-[38px] px-3.5 py-2 rounded-xl border border-[#C83210]/30 hover:border-[#FF4820] bg-[#C83210]/[0.06] hover:bg-[#C83210]/[0.11] text-xs font-semibold text-[#C83210] dark:text-[#FF6B47] transition-colors cursor-pointer whitespace-nowrap shrink-0 self-start sm:self-auto disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
           >
-            Пример кабинета ({DEMO_CLIENT_CABINET_EMAIL})
+            {isRequestingMagic || isVerifyingMagic
+              ? 'Открываем пример…'
+              : 'Посмотреть пример кабинета →'}
           </button>
         ) : (
           <button
@@ -165,9 +165,9 @@ export function CabinetAccessPanel({
             data-testid="cabinet-demo-order-btn"
             disabled={isLookingUp}
             onClick={onTriggerDemoOrderLookup}
-            className="min-h-[44px] sm:min-h-[38px] px-3.5 py-2 rounded-xl border border-[#111111]/16 dark:border-white/16 hover:border-[#FF4820] bg-[#F7F6F2] dark:bg-[#0D0D0F] text-xs font-medium text-[#111111]/82 dark:text-[#F4F3EF]/82 transition-colors cursor-pointer whitespace-nowrap shrink-0 self-start lg:self-auto focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+            className="min-h-[44px] sm:min-h-[38px] px-3.5 py-2 rounded-xl border border-[#C83210]/30 hover:border-[#FF4820] bg-[#C83210]/[0.06] hover:bg-[#C83210]/[0.11] text-xs font-semibold text-[#C83210] dark:text-[#FF6B47] transition-colors cursor-pointer whitespace-nowrap shrink-0 self-start sm:self-auto disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
           >
-            Пример заказа (FM-HOLD-2854)
+            Открыть пример заказа (FM-HOLD-2854) →
           </button>
         )}
       </div>
@@ -175,22 +175,33 @@ export function CabinetAccessPanel({
       <div
         id={panelId}
         role="tabpanel"
-        aria-labelledby={`cabinet-access-tab-${accessTab}`}
+        aria-labelledby={`cabinet-access-tab-${isResetTab ? 'magic_email' : accessTab}`}
         tabIndex={0}
         className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
       >
         {isEmailFlow ? (
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <h2 className="text-lg font-bold text-[#111111] dark:text-[#F4F3EF]">
-                {isResetTab
-                  ? 'Восстановление доступа и завершение старых сессий'
-                  : 'Вход и регистрация по почте без пароля'}
-              </h2>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-lg font-bold text-[#111111] dark:text-[#F4F3EF]">
+                  {isResetTab
+                    ? 'Восстановление доступа и завершение старых сессий'
+                    : 'Вход по почте без пароля'}
+                </h2>
+                {isResetTab && (
+                  <button
+                    type="button"
+                    onClick={() => onSelectTab('magic_email')}
+                    className="min-h-[36px] text-xs font-semibold text-[#C83210] dark:text-[#FF6B47] hover:underline cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+                  >
+                    ← Обычный вход по почте
+                  </button>
+                )}
+              </div>
               <p className="text-xs sm:text-sm text-[#111111]/74 dark:text-[#F4F3EF]/74 leading-relaxed max-w-3xl">
                 {isResetTab
-                  ? 'Если вы сменили ноутбук, очистили браузер или открывали кабинет на чужом устройстве — укажите вашу почту. Мы отправим одноразовую ссылку (30 мин), восстановим все заказы и завершим старые сессии.'
-                  : 'Укажите рабочую или личную почту — мы отправим одноразовую ссылку для входа ко всем текущим и завершённым проектам вашей компании.'}
+                  ? 'Сменили ноутбук или открывали кабинет на чужом устройстве? Укажите почту — отправим одноразовую ссылку (30 мин), восстановим заказы и завершим старые сессии.'
+                  : 'Укажите рабочую или личную почту — отправим одноразовую ссылку ко всем текущим и завершённым проектам вашей компании.'}
               </p>
             </div>
 
@@ -250,7 +261,7 @@ export function CabinetAccessPanel({
               </div>
             </form>
 
-            {isResetTab && (
+            {isResetTab ? (
               <label className="inline-flex items-start gap-2.5 text-xs text-[#111111]/80 dark:text-[#F4F3EF]/80 cursor-pointer select-none">
                 <input
                   type="checkbox"
@@ -265,6 +276,17 @@ export function CabinetAccessPanel({
                   Завершить активные сессии на других устройствах и браузерах после перехода по новой ссылке
                 </span>
               </label>
+            ) : (
+              <div className="pt-0.5">
+                <button
+                  type="button"
+                  data-testid="cabinet-tab-reset"
+                  onClick={() => onSelectTab('access_reset')}
+                  className="min-h-[36px] text-xs font-medium text-[#111111]/68 dark:text-[#F4F3EF]/68 hover:text-[#C83210] dark:hover:text-[#FF6B47] underline decoration-[#111111]/25 dark:decoration-white/25 underline-offset-3 transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF4820]"
+                >
+                  Потеряли доступ или нужно завершить сессии на других устройствах?
+                </button>
+              </div>
             )}
 
             {magicRequestError && (

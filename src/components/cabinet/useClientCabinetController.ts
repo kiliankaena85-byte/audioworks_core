@@ -811,6 +811,54 @@ export function useClientCabinetController({
     );
   }, [magicDispatchResult?.magicLinkPath, onNavigate]);
 
+  const handleEnterDemoCabinet = useCallback(
+    async (demoEmail: string) => {
+      const cleanEmail = normalizeClientEmail(demoEmail);
+      if (!cleanEmail || isRequestingMagic || isVerifyingMagic) return;
+
+      setIsRequestingMagic(true);
+      setMagicRequestError(null);
+      setMagicConsentError(null);
+      setStatusError(null);
+      setMagicDispatchResult(null);
+      try {
+        const result = await requestClientMagicLinkApi({
+          email: cleanEmail,
+          mode: 'login',
+          revokeOtherSessions: false,
+          pdnConsentAccepted: false,
+        });
+
+        const extracted = extractMagicTokenFromCabinetHref(result.magicLinkPath);
+        if (extracted.token) {
+          await verifyAndConsumeMagicToken(extracted.token, {
+            revokeOtherSessions: false,
+          });
+          return;
+        }
+
+        setMagicDispatchResult({
+          email: result.email,
+          intent: result.intent,
+          revokeOtherSessions: result.revokeOtherSessions,
+          isNewRegistration: result.isNewRegistration,
+          deliveryMode: result.deliveryMode,
+          magicLinkPath: result.magicLinkPath,
+          magicLinkUrl: result.magicLinkUrl,
+        });
+      } catch (err) {
+        setMagicRequestError(
+          err instanceof Error
+            ? err.message
+            : 'Не удалось открыть демонстрационный кабинет'
+        );
+      } finally {
+        setIsRequestingMagic(false);
+      }
+    },
+    [isRequestingMagic, isVerifyingMagic, verifyAndConsumeMagicToken]
+  );
+
   const handleConfirmPendingBindMagicLink = useCallback(() => {
     const extracted = extractMagicTokenFromCabinetHref(
       pendingBindVerification?.magicLinkPath
@@ -1787,6 +1835,7 @@ export function useClientCabinetController({
     reloadCabinet: () => loadStoredOrders(),
     executeRequestMagicLink,
     handleMagicLinkSubmit,
+    handleEnterDemoCabinet,
     handleOpenPreviewMagicLink,
     handleIssueCrossDeviceMagicLink,
     handleBindAnonymousOrdersToEmail,

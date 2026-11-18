@@ -27,7 +27,7 @@ export default defineConfig(() => {
     },
     build: {
       sourcemap: false,
-      target: 'es2020',
+      target: 'es2022',
       cssCodeSplit: true,
       assetsInlineLimit: 4096,
       rolldownOptions: {
@@ -37,7 +37,7 @@ export default defineConfig(() => {
               {
                 name: 'react-vendor',
                 priority: 40,
-                test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+                test: /[\\/]node_modules[\\/](react|react-dom|scheduler|react-is|@babel[\\/]runtime)[\\/]/,
               },
               {
                 name: 'motion-vendor',
@@ -57,7 +57,12 @@ export default defineConfig(() => {
               {
                 name: 'charts-vendor',
                 priority: 20,
-                test: /[\\/]node_modules[\\/](recharts|d3-[^\\/]+|victory-vendor|react-redux|react-is)[\\/]/,
+                test: /[\\/]node_modules[\\/](recharts|d3-[^\\/]+|victory-vendor|react-redux)[\\/]/,
+              },
+              {
+                name: 'studio-legal-core',
+                priority: 15,
+                test: /[\\/]src[\\/](data[\\/]studioDocumentsCore|security[\\/]legalDocumentBuilder|context[\\/]StudioLegalConfigContext)\.tsx?$/,
               },
             ],
           },

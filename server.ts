@@ -161,6 +161,7 @@ import type {
   KonturIntegrationStatus,
 } from './src/data/konturIntegrationCore.ts';
 import {
+  mapCrmStageToClientProgress,
   matchesOrderLookupVerifier,
   normalizeDeliveryPreferences,
   sanitizeCloudDiskUrl,
@@ -198,10 +199,13 @@ import {
 import {
   applyClientScriptDecision,
   applyClientSpotDecision,
+  applyProducerDirectSpotRevision,
   applyProducerEscalationResolution,
+  applyProducerReopenScriptForRework,
   applyPublishEngineerTakeToClient,
   applyPublishScriptDraft,
   applyRecordEngineerTake,
+  applyRejectEngineerTakeForRework,
   createDefaultSoundEngineerRoster,
   ensureOrderApprovalWorkflow,
   formatSoundEngineerProductionSheet,
@@ -241,7 +245,14 @@ import {
   verifyClientSessionToken,
 } from './src/data/clientAuthCore.ts';
 import type { ClientAccountRecord } from './src/data/clientAuthCore.ts';
-import { verifyClientAttachmentMagicBytes } from './src/data/clientCabinetArchitecture.ts';
+import { DEMO_CLIENT_CABINET_EMAIL } from './src/data/clientAuthShared.ts';
+import {
+  buildOrderAudioVersionHistory,
+  type GuestOrderReviewPayload,
+  isAudioSpotDeliverable,
+  stripTrailingPriceFromOrderTitle,
+  verifyClientAttachmentMagicBytes,
+} from './src/data/clientCabinetArchitecture.ts';
 import {
   createZeroPdnSharedProposalRecord,
   sanitizeSharedProposalToken,
@@ -1186,6 +1197,41 @@ function verifyOrderRescueToken(
   if (!providedToken || typeof providedToken !== 'string') return false;
   const expected = issueOrderRescueToken(orderNumber);
   return safeCompareStrings(providedToken.trim(), expected);
+}
+
+function issueGuestReviewToken(orderNumber: string): string {
+  const encodedOrder = Buffer.from(orderNumber.trim(), 'utf8').toString('base64url');
+  const sig = crypto
+    .createHmac('sha256', getSessionSecret())
+    .update(`guest-review-v1:${orderNumber.trim()}`)
+    .digest('base64url')
+    .slice(0, 28);
+  return `rev_${encodedOrder}.${sig}`;
+}
+
+function verifyGuestReviewToken(rawToken: string | undefined | null): string | null {
+  if (!rawToken || typeof rawToken !== 'string') return null;
+  const trimmed = rawToken.trim();
+  if (!/^rev_[A-Za-z0-9_-]{3,80}\.[A-Za-z0-9_-]{16,64}$/.test(trimmed)) {
+    return null;
+  }
+  const dotIdx = trimmed.indexOf('.');
+  if (dotIdx <= 4) return null;
+  const encodedOrder = trimmed.slice(4, dotIdx);
+  const providedSig = trimmed.slice(dotIdx + 1);
+  let orderNumber = '';
+  try {
+    orderNumber = Buffer.from(encodedOrder, 'base64url').toString('utf8').trim();
+  } catch {
+    return null;
+  }
+  if (!orderNumber || orderNumber.length > 64) return null;
+  const expectedSig = crypto
+    .createHmac('sha256', getSessionSecret())
+    .update(`guest-review-v1:${orderNumber}`)
+    .digest('base64url')
+    .slice(0, 28);
+  return safeCompareStrings(providedSig, expectedSig) ? orderNumber : null;
 }
 
 function canClientAccessOrder(
@@ -2539,10 +2585,12 @@ async function startServer() {
     app.set('trust proxy', 1);
   }
 
+  const hasBuiltDist = fs.existsSync(path.join(__dirname, 'dist', 'index.html'));
   const useProdDist =
-    process.env.NODE_ENV === 'production' ||
-    process.env.npm_lifecycle_event === 'start' ||
-    Boolean(process.env.K_SERVICE);
+    hasBuiltDist &&
+    (process.env.NODE_ENV === 'production' ||
+      process.env.npm_lifecycle_event === 'start' ||
+      Boolean(process.env.K_SERVICE));
 
   const isPreviewFrameContainer = Boolean(process.env.K_SERVICE);
 
@@ -3927,7 +3975,12 @@ async function startServer() {
 
       const activeSession = getVerifiedClientSession(req);
       const isAlreadyAuthenticatedForEmail = activeSession?.email === email;
-      if (!isAlreadyAuthenticatedForEmail && body.pdnConsentAccepted !== true) {
+      const isPublicDemoEmail = email === DEMO_CLIENT_CABINET_EMAIL;
+      if (
+        !isAlreadyAuthenticatedForEmail &&
+        !isPublicDemoEmail &&
+        body.pdnConsentAccepted !== true
+      ) {
         res.status(400).json({
           ok: false,
           error:
@@ -5478,6 +5531,173 @@ async function startServer() {
     res.sendFile(absPath);
   });
 
+  // Выпуск подписанной гостевой ссылки на прослушивание и просмотр сценария одного заказа (Zero-PII, без цен и ПДн)
+  app.post('/api/orders/:orderNumber/guest-review-link', (req, res) => {
+    const orderNumber = String(req.params.orderNumber || '').trim();
+    const body = (req.body ?? {}) as { rescueToken?: string };
+    const isAdmin = verifyAdminToken(extractStudioToken(req));
+    const crmStore = readOrdersCrmStore();
+    const order = crmStore.orders.find((o) => o.orderNumber === orderNumber);
+
+    if (!order || order.pdnAnonymizedAt) {
+      res.status(404).json({ ok: false, error: 'Заказ не найден' });
+      return;
+    }
+
+    if (!isAdmin && !canClientAccessOrder(req, order, body.rescueToken, crmStore)) {
+      res.status(403).json({
+        ok: false,
+        error: 'Нет доступа для выпуска гостевой ссылки по этому заказу',
+      });
+      return;
+    }
+
+    const reviewToken = issueGuestReviewToken(order.orderNumber);
+    const reviewPath = `/review?token=${encodeURIComponent(reviewToken)}`;
+    const reviewUrl = `${resolveSafePublicOrigin(req)}${reviewPath}`;
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      ok: true,
+      orderNumber: order.orderNumber,
+      reviewToken,
+      reviewPath,
+      reviewUrl,
+    });
+  });
+
+  // Публичная Zero-PII страница гостевого прослушивания для руководителя (строго без ПДн, ИНН, контактов и цен)
+  app.get('/api/guest-review/:token', (req, res) => {
+    const rawToken = String(req.params.token || '').trim();
+    const orderNumber = verifyGuestReviewToken(rawToken);
+    if (!orderNumber) {
+      res.status(404).json({
+        ok: false,
+        error: 'Гостевая ссылка недействительна или повреждена',
+      });
+      return;
+    }
+
+    const crmStore = readOrdersCrmStore();
+    const order = crmStore.orders.find((o) => o.orderNumber === orderNumber);
+    if (!order || order.pdnAnonymizedAt) {
+      res.status(404).json({
+        ok: false,
+        error: 'Проект по этой ссылке не найден или архивирован',
+      });
+      return;
+    }
+
+    const ensured = ensureOrderApprovalWorkflow(order);
+    const workflowView = toClientApprovalWorkflowView(ensured.approvalWorkflow);
+    const progress = mapCrmStageToClientProgress(order.stage);
+    const deliverables = Array.isArray(order.deliverables) ? order.deliverables : [];
+    const audioHistory = buildOrderAudioVersionHistory({ deliverables });
+
+    const audioVersions = audioHistory.versionsChronological.map((item) => ({
+      id: item.file.id,
+      versionCode: item.versionCode,
+      stageLabel: item.stageLabel,
+      title: item.file.title,
+      fileName: item.file.fileName,
+      versionNote: item.versionNote || undefined,
+      sizeBytes: item.file.sizeBytes,
+      uploadedAt: item.file.uploadedAt,
+      isFinalMaster: item.isFinalMaster,
+      isCurrentLatest: item.isCurrentLatest,
+      previewUrl: `/api/guest-review/${encodeURIComponent(rawToken)}/audio/${encodeURIComponent(item.file.id)}?preview=1`,
+      downloadUrl: `/api/guest-review/${encodeURIComponent(rawToken)}/audio/${encodeURIComponent(item.file.id)}`,
+    }));
+
+    const safeBrief =
+      typeof order.briefText === 'string' &&
+      order.briefText.trim().length > 0 &&
+      !containsDirectPersonalData(order.briefText)
+        ? order.briefText.trim()
+        : undefined;
+
+    const creativeStageLabel =
+      workflowView.phase === 'accepted'
+        ? 'Ролик утверждён'
+        : workflowView.externalStep === '03_spot'
+          ? 'Прослушивание готового ролика'
+          : workflowView.externalStep === '02_production'
+            ? 'Озвучка и сведение'
+            : workflowView.phase === 'script_client_review'
+              ? 'Согласование сценария'
+              : progress.badgeLabel.replace(/\s+и\s+счёт/iu, '');
+
+    const payload: GuestOrderReviewPayload = {
+      orderNumber: order.orderNumber,
+      createdAt: order.createdAt,
+      formatTitle: stripTrailingPriceFromOrderTitle(
+        order.formatLabel,
+        order.totalBudgetRub
+      ),
+      stageBadgeLabel: creativeStageLabel,
+      targetSlotSec:
+        workflowView.targetSlotSec ||
+        order.documentMeta?.spotExactDurationSec ||
+        20,
+      briefText: safeBrief,
+      approvalWorkflow: workflowView,
+      audioVersions,
+      progressionChainText: audioHistory.progressionChainText,
+    };
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    res.json({ ok: true, review: payload });
+  });
+
+  // Гостевой стриминг только аудиоверсий ролика по подписанному токену (закрывает доступ к счетам, актам и загрузкам клиента)
+  app.get('/api/guest-review/:token/audio/:fileId', (req, res) => {
+    const rawToken = String(req.params.token || '').trim();
+    const fileId = String(req.params.fileId || '').trim();
+    const orderNumber = verifyGuestReviewToken(rawToken);
+    if (!orderNumber || !fileId) {
+      res.status(404).json({ ok: false, error: 'Аудиофайл не найден' });
+      return;
+    }
+
+    const crmStore = readOrdersCrmStore();
+    const order = crmStore.orders.find((o) => o.orderNumber === orderNumber);
+    if (!order || order.pdnAnonymizedAt) {
+      res.status(404).json({ ok: false, error: 'Проект не найден' });
+      return;
+    }
+
+    const deliverable = order.deliverables?.find((d) => d.id === fileId);
+    if (!deliverable || !isAudioSpotDeliverable(deliverable)) {
+      res.status(404).json({ ok: false, error: 'Аудиоверсия не найдена' });
+      return;
+    }
+
+    const absPath = deliverable.storageKey
+      ? resolveContainedStoragePath(ORDER_DELIVERABLES_DIR, deliverable.storageKey)
+      : deliverable.staticAssetUrl
+        ? resolveSeedPublicAudioPath(deliverable.staticAssetUrl)
+        : null;
+
+    if (!absPath || !fs.existsSync(absPath)) {
+      res.status(404).json({ ok: false, error: 'Аудиофайл отсутствует на диске' });
+      return;
+    }
+
+    const isAudioPreview =
+      req.query.preview === '1' && deliverable.mimeType.startsWith('audio/');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    res.setHeader('Content-Type', deliverable.mimeType || 'audio/wav');
+    res.setHeader(
+      'Content-Disposition',
+      `${isAudioPreview ? 'inline' : 'attachment'}; filename="${encodeURIComponent(
+        path.basename(deliverable.fileName)
+      )}"`
+    );
+    res.sendFile(absPath);
+  });
+
   // =========================================================================
   // Studio CRM Orders Funnel & Outbox Dispatch Endpoints
   // =========================================================================
@@ -5630,6 +5850,7 @@ async function startServer() {
         preferredDeliveryDetail?: string;
         cloudDiskUrl?: string | null;
         removeDeliverableId?: string;
+        stageNote?: string;
       };
 
       const crmStore = readOrdersCrmStore();
@@ -5711,6 +5932,10 @@ async function startServer() {
           : existing.deliverables ?? [];
 
       const activeOperatorName = resolveRequestOperatorName(req);
+      const explicitStageNote =
+        typeof body.stageNote === 'string' && body.stageNote.trim()
+          ? body.stageNote.trim().slice(0, 600)
+          : null;
       const nextStageHistory = stageChanged
         ? recordOrderStageTransition(existing, {
             timestamp: nowIso,
@@ -5722,11 +5947,12 @@ async function startServer() {
               getCrmStageMetaForOrder(nextStage, existing.checkoutMode).shortLabel
             }»`,
             note:
-              typeof body.producerNotes === 'string' &&
+              explicitStageNote ??
+              (typeof body.producerNotes === 'string' &&
               body.producerNotes.trim() &&
               body.producerNotes.trim() !== existing.producerNotes.trim()
                 ? body.producerNotes.trim()
-                : null,
+                : null),
           })
         : ensureOrderStageHistory(existing).stageHistory;
 
@@ -6986,6 +7212,285 @@ async function startServer() {
         ok: true,
         order: updatedOrder,
         deliverable,
+      });
+    }
+  );
+
+  app.post(
+    '/api/cms/orders/:orderId/approval/reject-take',
+    requireStudioAuth,
+    express.json({ limit: '32kb' }),
+    async (req, res) => {
+      const { orderId } = req.params;
+      const body = (req.body ?? {}) as {
+        takeId?: string;
+        note?: string;
+        kind?: SpotRevisionKind;
+        timecodeSec?: number | null;
+      };
+
+      const crmStore = readOrdersCrmStore();
+      const idx = crmStore.orders.findIndex((o) => o.id === orderId);
+      if (idx === -1) {
+        res.status(404).json({ ok: false, error: 'Заказ не найден в реестре CRM' });
+        return;
+      }
+
+      const existing = ensureOrderApprovalWorkflow(crmStore.orders[idx]);
+      const nowIso = new Date().toISOString();
+
+      try {
+        const nextWorkflow = applyRejectEngineerTakeForRework(
+          existing.approvalWorkflow,
+          {
+            takeId: String(body.takeId || ''),
+            revisionId: `rev-qc-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+            note: String(body.note || ''),
+            kind: body.kind,
+            timecodeSec: body.timecodeSec ?? null,
+          },
+          nowIso
+        );
+
+        let updatedOrder: CrmOrderRecord = {
+          ...existing,
+          stageHistory: recordOrderStageTransition(existing, {
+            timestamp: nowIso,
+            previousStage: existing.stage,
+            nextStage: existing.stage,
+            actor: 'producer_crm',
+            workflowStepLabel: 'ОТК продюсера вернул дубль звукорежиссёру на доработку',
+            note: String(body.note || '').trim() || null,
+          }),
+          updatedAt: nowIso,
+          approvalWorkflow: nextWorkflow,
+        };
+
+        const roster = sanitizeSoundEngineerRoster(crmStore.soundEngineers);
+        const assignedEng =
+          roster.find((e) => e.id === nextWorkflow.assignedEngineerId) ??
+          roster.find((e) => e.isDefault) ??
+          roster[0];
+        let latestEngineerEmail: SoundEngineerEmailNotificationRecord | null = null;
+
+        if (assignedEng) {
+          const stageLabel =
+            CRM_ORDER_STAGES.find((s) => s.id === updatedOrder.stage)?.shortLabel ??
+            updatedOrder.stage;
+          const dispatched = await buildAndDispatchSoundEngineerSheet({
+            req,
+            order: updatedOrder,
+            engineer: assignedEng,
+            crmStore,
+            autoSendExternal: true,
+            triggerReason: 'revision_requested',
+            currentStageLabel: stageLabel,
+            triggerSummary: `ОТК продюсера вернул дубль по заказу #${updatedOrder.orderNumber} на доработку звукорежиссёру.`,
+          });
+          latestEngineerEmail = dispatched.emailNotification;
+          updatedOrder = {
+            ...updatedOrder,
+            approvalWorkflow: {
+              ...updatedOrder.approvalWorkflow!,
+              assignedEngineerId: assignedEng.id,
+              lastDispatchedToEngineerAt: nowIso,
+              lastDispatchChannelSummary: dispatched.channelSummary,
+            },
+          };
+        }
+
+        crmStore.orders[idx] = updatedOrder;
+        writeOrdersCrmStore(crmStore);
+
+        res.json({
+          ok: true,
+          order: updatedOrder,
+          soundEngineerEmail: latestEngineerEmail,
+          soundEngineerEmails: (crmStore.soundEngineerEmails ?? []).slice(0, 30),
+        });
+      } catch (err) {
+        res.status(400).json({
+          ok: false,
+          error:
+            err instanceof Error
+              ? err.message
+              : 'Не удалось вернуть дубль на доработку',
+        });
+      }
+    }
+  );
+
+  app.post(
+    '/api/cms/orders/:orderId/approval/producer-revision',
+    requireStudioAuth,
+    express.json({ limit: '32kb' }),
+    async (req, res) => {
+      const { orderId } = req.params;
+      const body = (req.body ?? {}) as {
+        kind?: SpotRevisionKind;
+        timecodeSec?: number | null;
+        comment?: string;
+      };
+
+      const crmStore = readOrdersCrmStore();
+      const idx = crmStore.orders.findIndex((o) => o.id === orderId);
+      if (idx === -1) {
+        res.status(404).json({ ok: false, error: 'Заказ не найден в реестре CRM' });
+        return;
+      }
+
+      const existing = ensureOrderApprovalWorkflow(crmStore.orders[idx]);
+      const nowIso = new Date().toISOString();
+      const validKinds: readonly SpotRevisionKind[] = [
+        'balance_timecode',
+        'music_replacement',
+        'text_change_escalation',
+      ];
+      const kind: SpotRevisionKind = validKinds.includes(
+        body.kind as SpotRevisionKind
+      )
+        ? (body.kind as SpotRevisionKind)
+        : 'balance_timecode';
+
+      try {
+        const nextWorkflow = applyProducerDirectSpotRevision(
+          existing.approvalWorkflow,
+          {
+            revisionId: `rev-prod-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+            kind,
+            timecodeSec: body.timecodeSec ?? null,
+            comment: String(body.comment || ''),
+          },
+          nowIso
+        );
+
+        const nextStage: CrmOrderStage =
+          existing.stage === 'on_air' || existing.stage === 'completed_ltv'
+            ? 'in_production'
+            : existing.stage;
+
+        let updatedOrder: CrmOrderRecord = {
+          ...existing,
+          stage: nextStage,
+          stageHistory: recordOrderStageTransition(existing, {
+            timestamp: nowIso,
+            previousStage: existing.stage,
+            nextStage,
+            actor: 'producer_crm',
+            workflowStepLabel: 'Продюсер вернул заказ в студию на доработку звука',
+            note: String(body.comment || '').trim() || null,
+          }),
+          updatedAt: nowIso,
+          approvalWorkflow: nextWorkflow,
+        };
+
+        const roster = sanitizeSoundEngineerRoster(crmStore.soundEngineers);
+        const assignedEng =
+          roster.find((e) => e.id === nextWorkflow.assignedEngineerId) ??
+          roster.find((e) => e.isDefault) ??
+          roster[0];
+        let latestEngineerEmail: SoundEngineerEmailNotificationRecord | null = null;
+
+        if (assignedEng) {
+          const stageLabel =
+            CRM_ORDER_STAGES.find((s) => s.id === updatedOrder.stage)?.shortLabel ??
+            updatedOrder.stage;
+          const dispatched = await buildAndDispatchSoundEngineerSheet({
+            req,
+            order: updatedOrder,
+            engineer: assignedEng,
+            crmStore,
+            autoSendExternal: true,
+            triggerReason: 'revision_requested',
+            currentStageLabel: stageLabel,
+            triggerSummary: `Продюсер поставил задачу на доработку звука по заказу #${updatedOrder.orderNumber}.`,
+          });
+          latestEngineerEmail = dispatched.emailNotification;
+          updatedOrder = {
+            ...updatedOrder,
+            approvalWorkflow: {
+              ...updatedOrder.approvalWorkflow!,
+              assignedEngineerId: assignedEng.id,
+              lastDispatchedToEngineerAt: nowIso,
+              lastDispatchChannelSummary: dispatched.channelSummary,
+            },
+          };
+        }
+
+        crmStore.orders[idx] = updatedOrder;
+        writeOrdersCrmStore(crmStore);
+
+        res.json({
+          ok: true,
+          order: updatedOrder,
+          soundEngineerEmail: latestEngineerEmail,
+          soundEngineerEmails: (crmStore.soundEngineerEmails ?? []).slice(0, 30),
+        });
+      } catch (err) {
+        res.status(400).json({
+          ok: false,
+          error:
+            err instanceof Error
+              ? err.message
+              : 'Не удалось поставить задачу на доработку звука',
+        });
+      }
+    }
+  );
+
+  app.post(
+    '/api/cms/orders/:orderId/approval/reopen-script',
+    requireStudioAuth,
+    express.json({ limit: '32kb' }),
+    (req, res) => {
+      const { orderId } = req.params;
+      const body = (req.body ?? {}) as {
+        reason?: string;
+      };
+
+      const crmStore = readOrdersCrmStore();
+      const idx = crmStore.orders.findIndex((o) => o.id === orderId);
+      if (idx === -1) {
+        res.status(404).json({ ok: false, error: 'Заказ не найден в реестре CRM' });
+        return;
+      }
+
+      const existing = ensureOrderApprovalWorkflow(crmStore.orders[idx]);
+      const nowIso = new Date().toISOString();
+      const nextWorkflow = applyProducerReopenScriptForRework(
+        existing.approvalWorkflow,
+        { reason: body.reason },
+        nowIso
+      );
+
+      const nextStage: CrmOrderStage =
+        existing.stage === 'on_air' || existing.stage === 'completed_ltv'
+          ? 'in_production'
+          : existing.stage;
+
+      const updatedOrder: CrmOrderRecord = {
+        ...existing,
+        stage: nextStage,
+        stageHistory: recordOrderStageTransition(existing, {
+          timestamp: nowIso,
+          previousStage: existing.stage,
+          nextStage,
+          actor: 'producer_crm',
+          workflowStepLabel: 'Продюсер вернул сценарий на корректировку текста',
+          note:
+            String(body.reason || '').trim() ||
+            'Сценарий разблокирован продюсером для обновления текста',
+        }),
+        updatedAt: nowIso,
+        approvalWorkflow: nextWorkflow,
+      };
+
+      crmStore.orders[idx] = updatedOrder;
+      writeOrdersCrmStore(crmStore);
+
+      res.json({
+        ok: true,
+        order: updatedOrder,
       });
     }
   );
@@ -8759,10 +9264,7 @@ async function startServer() {
     res.status(404).json({ ok: false, error: 'Запрошенный API-метод не найден' });
   });
 
-  const isProd =
-    process.env.NODE_ENV === 'production' ||
-    process.env.npm_lifecycle_event === 'start' ||
-    Boolean(process.env.K_SERVICE);
+  const isProd = useProdDist;
 
   const isNonHtmlAssetPath = (reqPath: string): boolean => {
     if (
@@ -8778,9 +9280,14 @@ async function startServer() {
   };
 
   if (!isProd) {
+    const disableViteHmr =
+      process.env.DISABLE_HMR === 'true' || isPreviewFrameContainer;
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        ...(disableViteHmr ? { hmr: false, ws: false } : {}),
+      },
       appType: 'spa',
     });
 
@@ -8799,10 +9306,16 @@ async function startServer() {
       try {
         const templatePath = path.join(__dirname, 'index.html');
         const rawTemplate = fs.readFileSync(templatePath, 'utf8');
-        const transformed = await vite.transformIndexHtml(
+        const rawTransformed = await vite.transformIndexHtml(
           req.originalUrl,
           rawTemplate
         );
+        const transformed = disableViteHmr
+          ? rawTransformed.replace(
+              /<script\s+type="module"\s+src="\/@vite\/client"><\/script>\s*/gi,
+              ''
+            )
+          : rawTransformed;
         const searchIdx = req.originalUrl.indexOf('?');
         const search = searchIdx >= 0 ? req.originalUrl.slice(searchIdx) : '';
         const cms = readPersistedCmsSnapshot();

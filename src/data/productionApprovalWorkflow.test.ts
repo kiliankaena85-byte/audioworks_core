@@ -4,15 +4,22 @@ import test from 'node:test';
 import {
   applyClientScriptDecision,
   applyClientSpotDecision,
+  applyProducerDirectSpotRevision,
   applyProducerEscalationResolution,
+  applyProducerReopenScriptForRework,
   applyPublishEngineerTakeToClient,
   applyPublishScriptDraft,
   applyRecordEngineerTake,
+  applyRejectEngineerTakeForRework,
+  buildStudioQuickShareLinks,
   buildSyntheticSilentWavBytes,
   createDefaultSoundEngineerRoster,
   createSeedApprovalWorkflowForOrder,
+  CRM_STAGE_RETURN_NOTE_PRESETS,
   estimateRussianScriptDurationSec,
   evaluateBroadcastSlotFit,
+  evaluateOrderProductionSlaStatus,
+  filterProductionOrdersForStudioQueue,
   formatSoundEngineerProductionSheet,
   issueSoundDropTokenWithSigner,
   issueSoundEngineerEmailGrantWithSigner,
@@ -21,6 +28,7 @@ import {
   resolveStudioKanbanColumn,
   resolveWhoseTurn,
   SOUND_ENGINEER_EMAIL_CTA_LABEL,
+  STUDIO_REWORK_REASON_PRESETS,
   toClientApprovalWorkflowView,
   toSoundDropTaskPublicView,
   verifySoundDropTokenWithSigner,
@@ -398,3 +406,288 @@ test('Однокнопочный токен звукорежиссёра, e-mail
   assert.equal(dirtySheet.telegramMessage.includes('904'), false);
   assert.ok(dirtySheet.telegramMessage.includes('152-ФЗ'));
 });
+
+test('Оперативный возврат на доработку продюсером: отклонение дубля в буфере ОТК, прямая доработка звука и возврат сценария в черновик', () => {
+  const seed = createSeedApprovalWorkflowForOrder({
+    orderNumber: 'FM-2926',
+    createdAt: '2026-11-18T08:00:00.000Z',
+    updatedAt: '2026-11-18T09:00:00.000Z',
+    stage: 'in_production',
+    formatLabel: 'Игровой ролик (30 сек) — 35 000 ₽',
+    briefText: 'Лизинг рефрижераторов',
+    deliverables: [{ id: 'deliv-v2', versionCode: 'v2', versionStage: 'revision' }],
+  });
+
+  // 1. Звукорежиссёр загружает дубль с превышением слота (30,65 с вместо 30,00 с)
+  const withTake = applyRecordEngineerTake(
+    seed,
+    {
+      id: 'take-out-of-slot',
+      engineerId: 'eng-vetrov',
+      engineerName: 'Павел Ветров',
+      fileName: 'spot_30s_draft.wav',
+      mimeType: 'audio/wav',
+      sizeBytes: 2_900_000,
+      storageKey: 'spot_30s_draft.wav',
+      measuredDurationSec: 30.65,
+      engineerNote: 'Черновой микс с хвостом реверберации',
+    },
+    '2026-11-18T10:00:00.000Z'
+  );
+
+  assert.equal(resolveStudioKanbanColumn(withTake), 'col_producer_qc');
+  assert.equal(resolveWhoseTurn(withTake).actor, 'producer');
+
+  // 2. Продюсер на ОТК отклоняет дубль и возвращает звукорежиссёру на доработку
+  const rejectedOnQc = applyRejectEngineerTakeForRework(
+    withTake,
+    {
+      takeId: 'take-out-of-slot',
+      revisionId: 'rev-qc-1',
+      note: 'Подрезать хвост строго под слот 30,00 с (±0,05 с) и сделать музыку тише на 14 с.',
+      kind: 'balance_timecode',
+      timecodeSec: 14,
+    },
+    '2026-11-18T10:05:00.000Z'
+  );
+
+  assert.equal(rejectedOnQc.phase, 'revision_in_progress');
+  assert.equal(rejectedOnQc.pendingEngineerTakes[0]?.status, 'rejected_qc');
+  assert.equal(
+    rejectedOnQc.pendingEngineerTakes[0]?.rejectedReason,
+    'Подрезать хвост строго под слот 30,00 с (±0,05 с) и сделать музыку тише на 14 с.'
+  );
+  assert.equal(rejectedOnQc.spotRevisions[0]?.status, 'sent_to_engineer');
+  assert.equal(resolveStudioKanbanColumn(rejectedOnQc), 'col_with_engineer');
+  assert.equal(resolveWhoseTurn(rejectedOnQc).actor, 'sound_engineer');
+
+  // 3. Продюсер может в любой момент поставить прямую задачу звукорежиссёру по звонку клиента
+  const directRevision = applyProducerDirectSpotRevision(
+    seed,
+    {
+      revisionId: 'rev-prod-direct',
+      kind: 'music_replacement',
+      timecodeSec: 6.5,
+      comment: 'Клиент по телефону попросил заменить подложку на более спокойный темп.',
+    },
+    '2026-11-18T11:00:00.000Z'
+  );
+
+  assert.equal(directRevision.phase, 'revision_in_progress');
+  assert.equal(directRevision.spotRevisions[0]?.status, 'sent_to_engineer');
+  assert.equal(directRevision.spotRevisions[0]?.kind, 'music_replacement');
+  assert.equal(resolveStudioKanbanColumn(directRevision), 'col_with_engineer');
+
+  // 4. Продюсер возвращает утверждённый сценарий на корректировку текста
+  const reopenedScript = applyProducerReopenScriptForRework(
+    directRevision,
+    {
+      reason: 'Обновляем условия акции в финале текста по просьбе коммерческого директора',
+    },
+    '2026-11-18T11:15:00.000Z'
+  );
+
+  assert.equal(reopenedScript.phase, 'script_drafting');
+  assert.equal(reopenedScript.lockedScript, null);
+  assert.equal(resolveStudioKanbanColumn(reopenedScript), 'col_script');
+  assert.equal(resolveWhoseTurn(reopenedScript).actor, 'producer');
+  assert.equal(
+    reopenedScript.scriptVersions[0]?.clientComment,
+    'Обновляем условия акции в финале текста по просьбе коммерческого директора'
+  );
+});
+
+test('Фильтрация очереди цеха озвучки по ответственному («Ваш ход», «У звукорежиссёра», «Ждём клиента») и поисковому запросу', () => {
+  const orderProducerTurn = {
+    orderNumber: 'FM-HOLD-2914',
+    companyOrInn: 'ООО «Квартал Инвест» · ИНН 7707083893',
+    contact: '+7 916 740-28-19',
+    briefText: 'Старт продаж видовых квартир',
+    formatLabel: 'Голос и стиль (15 сек)',
+    approvalWorkflow: createSeedApprovalWorkflowForOrder({
+      orderNumber: 'FM-HOLD-2914',
+      createdAt: '2026-11-18T08:00:00.000Z',
+      updatedAt: '2026-11-18T08:00:00.000Z',
+      stage: 'new_hold',
+      formatLabel: 'Голос и стиль (15 сек)',
+      briefText: 'Старт продаж видовых квартир',
+    }),
+  };
+
+  const orderClientTurn = {
+    orderNumber: 'FM-2948',
+    companyOrInn: 'АО «ТрансФлот Лизинг» · ИНН 7702070139',
+    contact: '+7 925 310-88-42',
+    briefText: 'Лизинг тягачей',
+    formatLabel: 'Продакшн под ключ (20 сек)',
+    approvalWorkflow: createSeedApprovalWorkflowForOrder({
+      orderNumber: 'FM-2948',
+      createdAt: '2026-11-18T08:00:00.000Z',
+      updatedAt: '2026-11-18T08:00:00.000Z',
+      stage: 'in_production',
+      formatLabel: 'Продакшн под ключ (20 сек)',
+      briefText: 'Лизинг тягачей',
+    }),
+  };
+
+  const orderEngineerTurn = {
+    orderNumber: 'FM-2926',
+    companyOrInn: 'АО «ТрансФлот Лизинг» · ИНН 7702070139',
+    contact: '+7 925 310-88-42',
+    briefText: 'Рефрижераторы в лизинг',
+    formatLabel: 'Игровой ролик (30 сек)',
+    approvalWorkflow: applyProducerDirectSpotRevision(
+      createSeedApprovalWorkflowForOrder({
+        orderNumber: 'FM-2926',
+        createdAt: '2026-11-18T08:00:00.000Z',
+        updatedAt: '2026-11-18T08:00:00.000Z',
+        stage: 'in_production',
+        formatLabel: 'Игровой ролик (30 сек)',
+        briefText: 'Рефрижераторы в лизинг',
+      }),
+      {
+        revisionId: 'rev-test',
+        comment: 'Прибрать музыку на 12 с',
+      },
+      '2026-11-18T09:00:00.000Z'
+    ),
+  };
+
+  const queue = [orderProducerTurn, orderClientTurn, orderEngineerTurn];
+
+  const onlyProducer = filterProductionOrdersForStudioQueue(queue, {
+    columnFilter: 'all',
+    turnFilter: 'producer_turn',
+  });
+  assert.deepEqual(
+    onlyProducer.map((o) => o.orderNumber),
+    ['FM-HOLD-2914']
+  );
+
+  const onlyEngineer = filterProductionOrdersForStudioQueue(queue, {
+    columnFilter: 'all',
+    turnFilter: 'engineer_turn',
+  });
+  assert.deepEqual(
+    onlyEngineer.map((o) => o.orderNumber),
+    ['FM-2926']
+  );
+
+  const onlyClient = filterProductionOrdersForStudioQueue(queue, {
+    columnFilter: 'all',
+    turnFilter: 'client_turn',
+  });
+  assert.deepEqual(
+    onlyClient.map((o) => o.orderNumber),
+    ['FM-2948']
+  );
+
+  const bySearch = filterProductionOrdersForStudioQueue(queue, {
+    columnFilter: 'all',
+    turnFilter: 'all',
+    searchQuery: 'Квартал Инвест',
+  });
+  assert.deepEqual(
+    bySearch.map((o) => o.orderNumber),
+    ['FM-HOLD-2914']
+  );
+});
+
+test('Контроль SLA просрочки, фильтр sla_overdue, быстрые ссылки и пресеты возврата (P2)', () => {
+  const nowMs = Date.parse('2026-11-18T20:00:00.000Z');
+
+  // Заказ, который ждёт продюсера 30 часов (> 24 ч -> overdue)
+  const overdueProducerOrder = {
+    orderNumber: 'FM-SLA-OVERDUE',
+    createdAt: '2026-11-17T10:00:00.000Z',
+    updatedAt: '2026-11-17T14:00:00.000Z',
+    approvalWorkflow: createSeedApprovalWorkflowForOrder({
+      orderNumber: 'FM-SLA-OVERDUE',
+      createdAt: '2026-11-17T10:00:00.000Z',
+      updatedAt: '2026-11-17T14:00:00.000Z',
+      stage: 'new_hold',
+      formatLabel: 'Голос и стиль (15 сек)',
+      briefText: 'Срочная акция',
+    }),
+  };
+
+  // Заказ, обновлённый 4 часа назад (ok)
+  const freshOrder = {
+    orderNumber: 'FM-SLA-FRESH',
+    createdAt: '2026-11-18T15:00:00.000Z',
+    updatedAt: '2026-11-18T16:00:00.000Z',
+    approvalWorkflow: createSeedApprovalWorkflowForOrder({
+      orderNumber: 'FM-SLA-FRESH',
+      createdAt: '2026-11-18T15:00:00.000Z',
+      updatedAt: '2026-11-18T16:00:00.000Z',
+      stage: 'new_hold',
+      formatLabel: 'Голос и стиль (15 сек)',
+      briefText: 'Свежая заявка',
+    }),
+  };
+
+  // Заказ, принятый клиентом давно — никогда не считается просроченным
+  const acceptedOldOrder = {
+    orderNumber: 'FM-SLA-DONE',
+    createdAt: '2026-10-01T10:00:00.000Z',
+    updatedAt: '2026-10-01T12:00:00.000Z',
+    approvalWorkflow: createSeedApprovalWorkflowForOrder({
+      orderNumber: 'FM-SLA-DONE',
+      createdAt: '2026-10-01T10:00:00.000Z',
+      updatedAt: '2026-10-01T12:00:00.000Z',
+      stage: 'completed_ltv',
+      formatLabel: 'Голос и стиль (15 сек)',
+      briefText: 'Закрытый заказ',
+    }),
+  };
+
+  const overdueEval = evaluateOrderProductionSlaStatus(overdueProducerOrder, nowMs);
+  assert.equal(overdueEval.level, 'overdue');
+  assert.equal(overdueEval.isOverdue, true);
+  assert.equal(overdueEval.elapsedHours, 30);
+
+  const freshEval = evaluateOrderProductionSlaStatus(freshOrder, nowMs);
+  assert.equal(freshEval.level, 'ok');
+  assert.equal(freshEval.isOverdue, false);
+
+  const doneEval = evaluateOrderProductionSlaStatus(acceptedOldOrder, nowMs);
+  assert.equal(doneEval.level, 'completed');
+  assert.equal(doneEval.isOverdue, false);
+
+  const overdueOnly = filterProductionOrdersForStudioQueue(
+    [overdueProducerOrder, freshOrder, acceptedOldOrder],
+    {
+      columnFilter: 'all',
+      turnFilter: 'sla_overdue',
+      nowMs,
+    }
+  );
+  assert.deepEqual(
+    overdueOnly.map((o) => o.orderNumber),
+    ['FM-SLA-OVERDUE']
+  );
+
+  // Быстрые ссылки из цеха
+  const linksWithEmailAction = buildStudioQuickShareLinks({
+    origin: 'https://fmworks.ru/',
+    latestEngineerEmailActionPath: '/api/sound-drop/from-email?grant=abc123',
+  });
+  assert.equal(linksWithEmailAction.clientCabinetUrl, 'https://fmworks.ru/cabinet');
+  assert.equal(
+    linksWithEmailAction.engineerDropUrl,
+    'https://fmworks.ru/api/sound-drop/from-email?grant=abc123'
+  );
+
+  const linksWithoutEngineer = buildStudioQuickShareLinks({
+    origin: 'https://fmworks.ru',
+  });
+  assert.equal(linksWithoutEngineer.clientCabinetUrl, 'https://fmworks.ru/cabinet');
+  assert.equal(linksWithoutEngineer.engineerDropUrl, null);
+
+  // Пресеты причин возврата не пусты
+  assert.ok(STUDIO_REWORK_REASON_PRESETS.length >= 4);
+  assert.ok(CRM_STAGE_RETURN_NOTE_PRESETS.length >= 3);
+});
+
+
+
