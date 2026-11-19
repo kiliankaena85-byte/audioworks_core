@@ -100,7 +100,7 @@ export function PricingPage({
                 onClick={() => scrollToLocalId('script-chronometer')}
                 className="min-h-[40px] inline-flex items-center hover:text-[#FF4820] transition-colors cursor-pointer whitespace-nowrap"
               >
-                Хронометр и ФЗ-38 ↓
+                Калькулятор хронометража ↓
               </button>
               <button
                 type="button"

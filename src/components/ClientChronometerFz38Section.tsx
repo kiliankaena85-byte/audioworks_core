@@ -2,11 +2,15 @@ import { ArrowRight, Check, Clock, ShieldCheck } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import {
   buildChronometerBriefTransferText,
+  CHARACTER_COUNT_PRESETS,
+  type CharacterCountMode,
   CLIENT_CHRONOMETER_SAMPLES,
   CLIENT_FZ38_SELECTOR_OPTIONS,
   type ClientFz38CategorySelection,
   type ClientScriptFz38Evaluation,
+  evaluateCharacterCountChronometer,
   evaluateClientScriptAndFz38,
+  getRecommendedCharRangesForTempo,
   SCRIPT_TEMPO_OPTIONS,
   type ScriptTempoId,
 } from '../data/clientChronometerAndFz38';
@@ -65,6 +69,10 @@ function FitStatusLine({
 export function ClientChronometerFz38Section(
   props: ClientChronometerFz38SectionProps
 ) {
+  const [inputMode, setInputMode] = useState<'chars' | 'text'>('chars');
+  const [charCountDraft, setCharCountDraft] = useState<number>(250);
+  const [charCountMode, setCharCountMode] =
+    useState<CharacterCountMode>('with_spaces');
   const [localText, setLocalText] = useState<string>(
     CLIENT_CHRONOMETER_SAMPLES[0]?.text ?? ''
   );
@@ -81,15 +89,41 @@ export function ClientChronometerFz38Section(
   const activeSlotSec =
     props.mode === 'inline_order' ? props.spotDurationSec : localSlotSec;
 
-  const evaluation = useMemo(
-    () =>
-      evaluateClientScriptAndFz38({
-        text: activeText,
+  const evaluation = useMemo(() => {
+    if (props.mode !== 'inline_order' && inputMode === 'chars') {
+      return evaluateCharacterCountChronometer({
+        charCount: charCountDraft,
+        countMode: charCountMode,
         tempo,
         categorySelection,
         targetSlotSec: activeSlotSec,
+      });
+    }
+    return evaluateClientScriptAndFz38({
+      text: activeText,
+      tempo,
+      categorySelection,
+      targetSlotSec: activeSlotSec,
+    });
+  }, [
+    props.mode,
+    inputMode,
+    charCountDraft,
+    charCountMode,
+    activeText,
+    tempo,
+    categorySelection,
+    activeSlotSec,
+  ]);
+
+  const tempoCharRanges = useMemo(
+    () =>
+      getRecommendedCharRangesForTempo({
+        tempo,
+        countMode: charCountMode,
+        disclaimerSec: evaluation.disclaimerRequiredSec,
       }),
-    [activeText, tempo, categorySelection, activeSlotSec]
+    [tempo, charCountMode, evaluation.disclaimerRequiredSec]
   );
 
   if (props.mode === 'inline_order') {
@@ -115,6 +149,10 @@ export function ClientChronometerFz38Section(
             />
             <span className="font-semibold text-[#111111] dark:text-[#F4F3EF]">
               Хронометр ФЗ-38:
+            </span>
+            <span>{evaluation.charCountWithSpaces} зн.</span>
+            <span aria-hidden="true" className="opacity-40">
+              ·
             </span>
             <span>{evaluation.wordCount} сл.</span>
             <span aria-hidden="true" className="opacity-40">
@@ -254,8 +292,14 @@ export function ClientChronometerFz38Section(
   }
 
   const handleTransferToOrder = () => {
+    const modeLabel =
+      charCountMode === 'without_spaces' ? 'без пробелов' : 'с пробелами';
     const briefText = buildChronometerBriefTransferText({
-      scriptText: localText,
+      scriptText: inputMode === 'text' ? localText : '',
+      charCountModeNote:
+        inputMode === 'chars'
+          ? `Ориентировочный объём сценария: ${charCountDraft} знаков (${modeLabel}), примерный хронометраж ~${evaluation.totalExactSec} сек.`
+          : undefined,
       evaluation,
       includeSampleDisclaimer: includeDisclaimerInTransfer,
     });
@@ -271,6 +315,34 @@ export function ClientChronometerFz38Section(
     });
   };
 
+  const handleSwitchInputMode = (nextMode: 'chars' | 'text') => {
+    if (nextMode === 'chars' && inputMode === 'text' && localText.trim().length > 0) {
+      const textEval = evaluateClientScriptAndFz38({
+        text: localText,
+        tempo,
+        categorySelection,
+        targetSlotSec: localSlotSec,
+      });
+      setCharCountDraft(
+        charCountMode === 'without_spaces'
+          ? textEval.charCountWithoutSpaces
+          : textEval.charCountWithSpaces
+      );
+    }
+    setInputMode(nextMode);
+  };
+
+  const activeDisplayChars =
+    charCountMode === 'without_spaces'
+      ? evaluation.charCountWithoutSpaces
+      : evaluation.charCountWithSpaces;
+  const activeMaxSlotChars =
+    charCountMode === 'without_spaces'
+      ? evaluation.creativeMaxCharsWithoutSpaces
+      : evaluation.creativeMaxCharsWithSpaces;
+  const activeCharModeSuffix =
+    charCountMode === 'without_spaces' ? 'без пробелов' : 'с пробелами';
+
   return (
     <section
       id="script-chronometer"
@@ -281,11 +353,11 @@ export function ClientChronometerFz38Section(
       <div className="max-w-7xl mx-auto space-y-10">
         <div className="max-w-3xl space-y-3">
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs sm:text-sm font-medium text-[#111111]/58 dark:text-[#F4F3EF]/58">
-            <span>Инженерный онлайн-инструмент</span>
+            <span>Калькулятор хронометража</span>
             <span aria-hidden="true" className="opacity-40">
               ·
             </span>
-            <span className="tabular-nums">Слоговой расчёт + ФЗ-38 «О рекламе»</span>
+            <span className="tabular-nums">По количеству знаков и тексту сценария</span>
             <span aria-hidden="true" className="opacity-40">
               ·
             </span>
@@ -296,84 +368,294 @@ export function ClientChronometerFz38Section(
             id="chronometer-fz38-heading"
             className="text-2xl sm:text-4xl lg:text-[2.75rem] font-bold tracking-tight leading-[1.08] text-[#111111] dark:text-[#F4F3EF] editorial-balance"
           >
-            Онлайн-хронометр сценария и проверка обязательных сносок ФЗ-38.
+            Калькулятор хронометража аудиоролика по знакам и тексту.
           </h2>
           <p className="text-sm sm:text-lg text-[#111111]/70 dark:text-[#F4F3EF]/70 editorial-pretty">
-            Проверьте до оплаты, поместится ли ваш текст вместе с номером телефона и
-            законным предупреждением (ЖК 214-ФЗ, медицина, финансы, акции) в эфирный
-            хронометраж без неразборчивой скороговорки.
+            Укажите количество знаков в тексте сценария или вставьте готовый черновик —
+            калькулятор сразу покажет примерный хронометраж ролика с учётом темпа
+            диктора и обязательной сноски по ФЗ-38.
           </p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
-          {/* Левая колонка: ввод текста, примеры, темп и категория ФЗ-38 */}
+          {/* Левая колонка: выбор режима (по знакам / по тексту), темп и категория ФЗ-38 */}
           <div className="lg:col-span-7 rounded-3xl p-6 sm:p-8 bg-[#EFECE5]/75 dark:bg-[#15151A] border border-[#111111]/10 dark:border-white/10 space-y-6">
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <label
-                  htmlFor="public-chronometer-textarea"
-                  className="text-xs sm:text-sm font-semibold text-[#111111] dark:text-[#F4F3EF]"
+            {/* Переключатель режима расчёта */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div
+                role="tablist"
+                aria-label="Способ расчёта хронометража"
+                className="inline-flex items-center p-1 rounded-2xl bg-[#E4E0D7] dark:bg-[#0D0D0F] border border-[#111111]/8 dark:border-white/10"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={inputMode === 'chars'}
+                  data-testid="chrono-mode-chars"
+                  onClick={() => handleSwitchInputMode('chars')}
+                  className={`min-h-[38px] px-3 sm:px-4 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    inputMode === 'chars'
+                      ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                      : 'text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:text-[#111111] dark:hover:text-white'
+                  }`}
                 >
-                  Текст ролика или черновик оффера
-                </label>
-                <span className="text-xs text-[#111111]/56 dark:text-[#F4F3EF]/56 tabular-nums">
-                  {evaluation.wordCount} сл. · {evaluation.syllableCount} слогов
-                  {evaluation.digitGroupsCount > 0
-                    ? ` · числ. групп: ${evaluation.digitGroupsCount}`
-                    : ''}
-                </span>
+                  По количеству знаков
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={inputMode === 'text'}
+                  data-testid="chrono-mode-text"
+                  onClick={() => handleSwitchInputMode('text')}
+                  className={`min-h-[38px] px-3 sm:px-4 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    inputMode === 'text'
+                      ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                      : 'text-[#111111]/72 dark:text-[#F4F3EF]/72 hover:text-[#111111] dark:hover:text-white'
+                  }`}
+                >
+                  По тексту сценария
+                </button>
               </div>
 
+              <span className="text-xs text-[#111111]/58 dark:text-[#F4F3EF]/58 tabular-nums">
+                {evaluation.charCountWithSpaces} зн. с пробелами ·{' '}
+                {evaluation.charCountWithoutSpaces} без пробелов
+              </span>
+            </div>
+
+            {inputMode === 'chars' ? (
               <div
-                role="group"
-                aria-label="Готовые примеры текстов по отраслям"
-                className="flex flex-wrap items-center gap-1.5 pb-1"
+                data-testid="chrono-char-calculator-panel"
+                className="space-y-4 tabular-nums"
               >
-                {CLIENT_CHRONOMETER_SAMPLES.map((sample) => {
-                  const isCurrent = localText.trim() === sample.text.trim();
-                  return (
+                <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+                  <div className="space-y-1.5 flex-1">
+                    <label
+                      htmlFor="chrono-char-count-input"
+                      className="block text-xs sm:text-sm font-semibold text-[#111111] dark:text-[#F4F3EF]"
+                    >
+                      Количество знаков в сценарии
+                    </label>
+                    <div className="flex items-center gap-2.5">
+                      <input
+                        id="chrono-char-count-input"
+                        data-testid="chrono-char-count-input"
+                        type="number"
+                        min={0}
+                        max={2500}
+                        step={10}
+                        value={charCountDraft}
+                        onChange={(e) => {
+                          const raw = Number(e.target.value);
+                          setCharCountDraft(
+                            Number.isFinite(raw)
+                              ? Math.max(0, Math.min(2500, Math.round(raw)))
+                              : 0
+                          );
+                        }}
+                        className="w-36 min-h-[46px] px-3.5 rounded-2xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/16 dark:border-white/16 text-xl font-bold text-[#111111] dark:text-[#F4F3EF] focus:outline-none focus:border-[#FF4820]"
+                      />
+                      <span className="text-xs sm:text-sm text-[#111111]/64 dark:text-[#F4F3EF]/64">
+                        знаков (~{evaluation.wordCount} сл.)
+                      </span>
+                    </div>
+                  </div>
+
+                  <div
+                    role="group"
+                    aria-label="Учёт пробелов в подсчёте знаков"
+                    className="inline-flex items-center p-1 rounded-xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/12 dark:border-white/12 self-start sm:self-end"
+                  >
                     <button
-                      key={sample.id}
                       type="button"
-                      data-testid={`chrono-sample-${sample.id}`}
-                      onClick={() => {
-                        setLocalText(sample.text);
-                        setTempo(sample.tempo);
-                        setCategorySelection(sample.category);
-                        setLocalSlotSec(sample.targetSlotSec);
-                      }}
-                      aria-pressed={isCurrent}
-                      className={`min-h-[34px] px-3 py-1 rounded-xl text-xs font-semibold border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                        isCurrent
-                          ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] border-transparent'
-                          : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/78 dark:text-[#F4F3EF]/78 border-[#111111]/12 dark:border-white/12 hover:border-[#FF4820]'
+                      data-testid="chrono-char-mode-with-spaces"
+                      aria-pressed={charCountMode === 'with_spaces'}
+                      onClick={() => setCharCountMode('with_spaces')}
+                      className={`min-h-[34px] px-3 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                        charCountMode === 'with_spaces'
+                          ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                          : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:text-[#111111] dark:hover:text-white'
                       }`}
                     >
-                      {sample.label}
+                      С пробелами
                     </button>
-                  );
-                })}
-                {localText.trim().length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setLocalText('')}
-                    className="min-h-[34px] px-2.5 py-1 text-xs font-medium text-[#111111]/56 dark:text-[#F4F3EF]/56 hover:text-[#FF4820] cursor-pointer whitespace-nowrap"
-                  >
-                    Очистить
-                  </button>
-                )}
-              </div>
+                    <button
+                      type="button"
+                      data-testid="chrono-char-mode-without-spaces"
+                      aria-pressed={charCountMode === 'without_spaces'}
+                      onClick={() => setCharCountMode('without_spaces')}
+                      className={`min-h-[34px] px-3 py-1 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                        charCountMode === 'without_spaces'
+                          ? 'bg-[#111111] text-white dark:bg-[#F4F3EF] dark:text-[#0D0D0F]'
+                          : 'text-[#111111]/70 dark:text-[#F4F3EF]/70 hover:text-[#111111] dark:hover:text-white'
+                      }`}
+                    >
+                      Без пробелов
+                    </button>
+                  </div>
+                </div>
 
-              <textarea
-                id="public-chronometer-textarea"
-                data-testid="public-chronometer-textarea"
-                rows={4}
-                value={localText}
-                onChange={(e) => setLocalText(e.target.value)}
-                placeholder="Вставьте готовый сценарий или тезисы рекламной акции с телефоном и сайтом…"
-                className="w-full px-4 py-3.5 rounded-2xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm sm:text-base text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none focus:border-[#FF4820] leading-relaxed"
-              />
-            </div>
+                {/* Ползунок количества знаков */}
+                <div className="space-y-2 pt-1">
+                  <label htmlFor="chrono-char-count-slider" className="sr-only">
+                    Ползунок количества знаков сценария
+                  </label>
+                  <input
+                    id="chrono-char-count-slider"
+                    data-testid="chrono-char-count-slider"
+                    type="range"
+                    min={0}
+                    max={900}
+                    step={10}
+                    value={Math.min(900, charCountDraft)}
+                    onChange={(e) => setCharCountDraft(Number(e.target.value))}
+                    className="w-full h-2 rounded-full accent-[#FF4820] cursor-pointer"
+                  />
+                  <div className="flex items-center justify-between text-[11px] text-[#111111]/52 dark:text-[#F4F3EF]/52">
+                    <span>0</span>
+                    <span>150</span>
+                    <span>300</span>
+                    <span>450</span>
+                    <span>600</span>
+                    <span>900+ зн.</span>
+                  </div>
+                </div>
+
+                {/* Быстрые ориентиры по объёму */}
+                <div
+                  role="group"
+                  aria-label="Типовой объём сценария в знаках"
+                  className="flex flex-wrap items-center gap-1.5"
+                >
+                  {CHARACTER_COUNT_PRESETS.map((preset) => {
+                    const isSelected = charCountDraft === preset.chars;
+                    return (
+                      <button
+                        key={preset.chars}
+                        type="button"
+                        data-testid={`chrono-char-preset-${preset.chars}`}
+                        aria-pressed={isSelected}
+                        onClick={() => setCharCountDraft(preset.chars)}
+                        className={`min-h-[34px] px-3 py-1 rounded-xl text-xs font-semibold border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                          isSelected
+                            ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] border-transparent'
+                            : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/80 dark:text-[#F4F3EF]/80 border-[#111111]/12 dark:border-white/12 hover:border-[#FF4820]'
+                        }`}
+                      >
+                        {preset.label}{' '}
+                        <span className="opacity-65">{preset.approxSlotHint}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Динамическая памятка: сколько знаков помещается в стандартные слоты при выбранном темпе */}
+                <div className="pt-3 border-t border-[#111111]/10 dark:border-white/10 space-y-2">
+                  <p className="text-[11px] font-semibold text-[#111111]/62 dark:text-[#F4F3EF]/62">
+                    Ориентир объёма для выбранного темпа ({activeCharModeSuffix}
+                    {evaluation.disclaimerRequiredSec > 0
+                      ? `, с учётом сноски ${evaluation.disclaimerRequiredSec} с`
+                      : ''}
+                    ) — нажмите, чтобы подставить слот:
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+                    {tempoCharRanges.map((item) => {
+                      const isActiveSlot = localSlotSec === item.slotSec;
+                      return (
+                        <button
+                          key={item.slotSec}
+                          type="button"
+                          data-testid={`chrono-ref-slot-${item.slotSec}`}
+                          onClick={() => {
+                            setLocalSlotSec(item.slotSec);
+                            setCharCountDraft(item.maxChars);
+                          }}
+                          className={`p-2 rounded-xl border text-left transition-colors cursor-pointer ${
+                            isActiveSlot
+                              ? 'bg-[#FF4820]/10 border-[#FF4820] text-[#111111] dark:text-[#F4F3EF]'
+                              : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] border-[#111111]/10 dark:border-white/10 hover:border-[#FF4820] text-[#111111] dark:text-[#F4F3EF]'
+                          }`}
+                        >
+                          <span className="block text-[11px] font-bold text-[#FF4820]">
+                            {item.slotSec} сек
+                          </span>
+                          <span className="block text-xs font-semibold mt-0.5">
+                            до {item.maxChars} зн.
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label
+                    htmlFor="public-chronometer-textarea"
+                    className="text-xs sm:text-sm font-semibold text-[#111111] dark:text-[#F4F3EF]"
+                  >
+                    Текст ролика или черновик оффера
+                  </label>
+                  <span className="text-xs text-[#111111]/56 dark:text-[#F4F3EF]/56 tabular-nums">
+                    {evaluation.wordCount} сл. · {evaluation.syllableCount} слогов
+                    {evaluation.digitGroupsCount > 0
+                      ? ` · числ. групп: ${evaluation.digitGroupsCount}`
+                      : ''}
+                  </span>
+                </div>
+
+                <div
+                  role="group"
+                  aria-label="Готовые примеры текстов по отраслям"
+                  className="flex flex-wrap items-center gap-1.5 pb-1"
+                >
+                  {CLIENT_CHRONOMETER_SAMPLES.map((sample) => {
+                    const isCurrent = localText.trim() === sample.text.trim();
+                    return (
+                      <button
+                        key={sample.id}
+                        type="button"
+                        data-testid={`chrono-sample-${sample.id}`}
+                        onClick={() => {
+                          setLocalText(sample.text);
+                          setTempo(sample.tempo);
+                          setCategorySelection(sample.category);
+                          setLocalSlotSec(sample.targetSlotSec);
+                        }}
+                        aria-pressed={isCurrent}
+                        className={`min-h-[34px] px-3 py-1 rounded-xl text-xs font-semibold border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                          isCurrent
+                            ? 'bg-[#111111] text-[#F7F6F2] dark:bg-[#F4F3EF] dark:text-[#0D0D0F] border-transparent'
+                            : 'bg-[#F7F6F2] dark:bg-[#0D0D0F] text-[#111111]/78 dark:text-[#F4F3EF]/78 border-[#111111]/12 dark:border-white/12 hover:border-[#FF4820]'
+                        }`}
+                      >
+                        {sample.label}
+                      </button>
+                    );
+                  })}
+                  {localText.trim().length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setLocalText('')}
+                      className="min-h-[34px] px-2.5 py-1 text-xs font-medium text-[#111111]/56 dark:text-[#F4F3EF]/56 hover:text-[#FF4820] cursor-pointer whitespace-nowrap"
+                    >
+                      Очистить
+                    </button>
+                  )}
+                </div>
+
+                <textarea
+                  id="public-chronometer-textarea"
+                  data-testid="public-chronometer-textarea"
+                  rows={4}
+                  value={localText}
+                  onChange={(e) => setLocalText(e.target.value)}
+                  placeholder="Вставьте готовый сценарий или тезисы рекламной акции с телефоном и сайтом…"
+                  className="w-full px-4 py-3.5 rounded-2xl bg-[#F7F6F2] dark:bg-[#0D0D0F] border border-[#111111]/14 dark:border-white/14 text-sm sm:text-base text-[#111111] dark:text-[#F4F3EF] placeholder:text-[#111111]/42 dark:placeholder:text-[#F4F3EF]/42 focus:outline-none focus:border-[#FF4820] leading-relaxed"
+                />
+              </div>
+            )}
 
             {/* Выбор темпа подачи */}
             <div className="space-y-2">
@@ -401,8 +683,10 @@ export function ClientChronometerFz38Section(
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2 text-xs font-bold tabular-nums">
-                        <span>{opt.label}</span>
-                        <span className="opacity-70">{opt.wordsPerMinute} сл/м</span>
+                        <span className="leading-snug">{opt.label}</span>
+                        <span className="opacity-70 whitespace-nowrap shrink-0">
+                          {opt.wordsPerMinute} сл/м
+                        </span>
                       </div>
                       <p className="text-[11px] opacity-72 mt-1 leading-snug">
                         {opt.hint}
@@ -430,8 +714,13 @@ export function ClientChronometerFz38Section(
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {CLIENT_FZ38_SELECTOR_OPTIONS.map((opt) => {
-                  const isSelected = categorySelection === opt.id;
+                {CLIENT_FZ38_SELECTOR_OPTIONS.filter(
+                  (opt) => !(inputMode === 'chars' && opt.id === 'auto')
+                ).map((opt) => {
+                  const isSelected =
+                    inputMode === 'chars'
+                      ? evaluation.resolvedCategory === opt.id
+                      : categorySelection === opt.id;
                   return (
                     <button
                       key={opt.id}
@@ -475,6 +764,13 @@ export function ClientChronometerFz38Section(
                 <p className="text-xs text-white/62 mt-1.5">
                   Речь диктора: {evaluation.spokenCreativeSec} с · Сноска ФЗ-38:{' '}
                   {evaluation.disclaimerRequiredSec} с
+                </p>
+                <p
+                  data-testid="public-chrono-char-capacity"
+                  className="text-xs text-white/75 mt-1"
+                >
+                  {activeDisplayChars} зн. ({activeCharModeSuffix}) · лимит слота{' '}
+                  {localSlotSec} с: до ~{activeMaxSlotChars} зн.
                 </p>
               </div>
 
