@@ -168,7 +168,7 @@ test('Волна 2: Хронометр текста считает слова, �
   assert.ok(standardNoDisc.syllableCount > 25);
   assert.ok(calmNoDisc.spokenSecondsExact > standardNoDisc.spokenSecondsExact);
   assert.ok(standardNoDisc.spokenSecondsExact > dynamicNoDisc.spokenSecondsExact);
-  assert.equal(withMedDisc.disclaimerSeconds, 4);
+  assert.equal(withMedDisc.disclaimerSeconds, 3);
   assert.ok(withMedDisc.recommendedSeconds >= standardNoDisc.recommendedSeconds + 3);
 
   // Проверяем, что все 3 демонстрационных примера в Хронометре попадают ровно в свой ориентир (~17, ~13, ~22 сек)

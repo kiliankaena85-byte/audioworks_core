@@ -13,9 +13,13 @@ const TIER_TEXT_BLOCK_MAP: Partial<Record<OrderFormatId, SiteTextBlockId>> = {
 
 interface PricingSectionProps {
   onSelectFormat: (formatId: OrderFormatId) => void;
+  hideHeader?: boolean;
 }
 
-export function PricingSection({ onSelectFormat }: PricingSectionProps) {
+export function PricingSection({
+  onSelectFormat,
+  hideHeader = false,
+}: PricingSectionProps) {
   const { decision } = useLayaDecision();
   const { snapshot } = useStudioCms();
   const { getBlock } = useSiteTextBlocks();
@@ -25,28 +29,34 @@ export function PricingSection({ onSelectFormat }: PricingSectionProps) {
   return (
     <section
       id="pricing"
-      aria-labelledby="pricing-heading"
-      className="scroll-mt-24 py-20 sm:py-28 lg:py-40 border-t border-[#111111]/8 dark:border-[#F4F3EF]/10"
+      aria-labelledby={hideHeader ? undefined : 'pricing-heading'}
+      aria-label={hideHeader ? 'Тарифы на производство аудиороликов' : undefined}
+      className={
+        hideHeader
+          ? 'scroll-mt-24 pt-2 pb-16 sm:pb-24'
+          : 'scroll-mt-24 py-20 sm:py-28 lg:py-40 border-t border-[#111111]/8 dark:border-[#F4F3EF]/10'
+      }
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12">
-        {/* Spacious Editorial Header (Koto Studio Two-Tone Typography) */}
-        <div className="max-w-4xl mb-12 sm:mb-16 lg:mb-24">
-          <p className="text-sm font-medium text-[#111111]/55 dark:text-[#F4F3EF]/55 mb-4 sm:mb-5">
-            {pricingHeader.eyebrow}
-          </p>
-          <h2
-            id="pricing-heading"
-            className="text-3xl sm:text-5xl lg:text-[3.5rem] font-bold tracking-tight leading-[1.06] text-[#111111] dark:text-[#F4F3EF] mb-5 sm:mb-6"
-          >
-            <span className="block">{pricingHeader.title}</span>
-            <span className="block text-[#111111]/42 dark:text-[#F4F3EF]/42">
-              {pricingHeader.subtitle}
-            </span>
-          </h2>
-          <p className="text-lg sm:text-xl text-[#111111]/68 dark:text-[#F4F3EF]/68 max-w-3xl editorial-pretty">
-            {pricingHeader.description}
-          </p>
-        </div>
+        {!hideHeader && (
+          <div className="max-w-4xl mb-12 sm:mb-16 lg:mb-24">
+            <p className="text-sm font-medium text-[#111111]/55 dark:text-[#F4F3EF]/55 mb-4 sm:mb-5">
+              {pricingHeader.eyebrow}
+            </p>
+            <h2
+              id="pricing-heading"
+              className="text-3xl sm:text-5xl lg:text-[3.5rem] font-bold tracking-tight leading-[1.06] text-[#111111] dark:text-[#F4F3EF] mb-5 sm:mb-6"
+            >
+              <span className="block">{pricingHeader.title}</span>
+              <span className="block text-[#111111]/42 dark:text-[#F4F3EF]/42">
+                {pricingHeader.subtitle}
+              </span>
+            </h2>
+            <p className="text-lg sm:text-xl text-[#111111]/68 dark:text-[#F4F3EF]/68 max-w-3xl editorial-pretty">
+              {pricingHeader.description}
+            </p>
+          </div>
+        )}
 
         {/* 3 Fixed Editorial Rows + 4th Negotiable Consultation Row */}
         <div className="border-b border-[#111111]/12 dark:border-[#F4F3EF]/14">
